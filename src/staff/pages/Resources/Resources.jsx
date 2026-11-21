@@ -51,8 +51,8 @@ export function TeacherResources() {
       teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
       teachers[0] || { name: 'Teaching Staff' };
     setCurrentTeacher(teacher);
-    setResources(schoolStore.getResourcesForUser('teacher'));
-    const subs = schoolStore.getSubjectNames();
+    setResources(schoolStore.getResourcesForUser('teacher', '', [], teacher));
+    const subs = schoolStore.getSubjectsForTeacher(teacher);
     setSubjectNames(subs);
     setForm((prev) => ({ ...prev, subject: prev.subject || subs[0] || 'Mathematics' }));
   };
@@ -222,8 +222,8 @@ export function TeacherResources() {
             onChange={(e) => setSelectedClass(e.target.value)}
             className="h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-xs text-[#1c1c14]"
           >
-            <option value="all">All Classes</option>
-            {SCHOOL_CLASSES.map((cls) => (
+            <option value="all">All Assigned Classes</option>
+            {schoolStore.getClassesForTeacher(currentTeacher).map((cls) => (
               <option key={cls} value={cls}>
                 {cls}
               </option>

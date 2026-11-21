@@ -19,9 +19,9 @@ export function ClassScheduling() {
   const [slots, setSlots] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [currentTeacher, setCurrentTeacher] = useState(null);
-  const [selectedClass, setSelectedClass] = useState('SSS 2');
+  const [selectedClass, setSelectedClass] = useState('All Classes');
   const [selectedDay, setSelectedDay] = useState('Full Week');
-  const [viewMode, setViewMode] = useState('all'); // 'all' | 'mine'
+  const [viewMode, setViewMode] = useState('mine'); // 'all' | 'mine'
   const [rescheduleSlot, setRescheduleSlot] = useState(null);
   const [rescheduleForm, setRescheduleForm] = useState({
     day: 'Monday',
@@ -279,8 +279,8 @@ export function ClassScheduling() {
             onChange={(e) => setSelectedClass(e.target.value)}
             className="h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-xs font-semibold text-[#1c1c14]"
           >
-            <option value="All Classes">All Classes</option>
-            {SCHOOL_CLASSES.map((cls) => (
+            <option value="All Classes">All My Classes</option>
+            {schoolStore.getClassesForTeacher(currentTeacher).map((cls) => (
               <option key={cls} value={cls}>
                 {cls}
               </option>

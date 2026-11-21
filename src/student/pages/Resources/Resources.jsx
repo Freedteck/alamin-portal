@@ -34,7 +34,8 @@ export function StudentResources() {
         (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
       ) || students[0];
     setActiveStudent(matched);
-    setResources(schoolStore.getResourcesForUser('student', matched?.class || 'SSS 2'));
+    const studentSubjects = matched?.enrolledSubjects || schoolStore.getSubjectsForClass(matched?.class);
+    setResources(schoolStore.getResourcesForUser('student', matched?.class || 'SSS 2', studentSubjects));
   };
 
   useEffect(() => {

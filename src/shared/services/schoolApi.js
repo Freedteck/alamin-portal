@@ -152,6 +152,32 @@ export const schoolStore = {
       .filter((s) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(className)))
       .map((s) => s.name);
   },
+  getClassesForTeacher(teacher) {
+    const assigned = teacher?.assignedClasses || [];
+    const classes = Array.from(new Set(assigned.map((a) => a.class).filter(Boolean)));
+    return classes.length > 0 ? classes : this.getClasses();
+  },
+  getSubjectsForTeacher(teacher) {
+    const assigned = teacher?.assignedClasses || [];
+    const subjects = Array.from(new Set(assigned.map((a) => a.subject).filter(Boolean)));
+    if (subjects.length > 0) return subjects;
+    if (teacher?.primarySubject) return [teacher.primarySubject];
+    return this.getSubjectNames();
+  },
+  getSubjectsForClassForTeacher(className, teacher) {
+    const assigned = (teacher?.assignedClasses || []).filter((a) => !className || a.class === className);
+    const subjects = Array.from(new Set(assigned.map((a) => a.subject).filter(Boolean)));
+    if (subjects.length > 0) return subjects;
+    return this.getSubjectsForClass(className);
+  },
+  getStudentsForTeacher(teacher) {
+    const assignedClasses = this.getClassesForTeacher(teacher);
+    const allStudents = this.getStudents();
+    if (!teacher?.assignedClasses || teacher.assignedClasses.length === 0) {
+      return allStudents;
+    }
+    return allStudents.filter((s) => assignedClasses.includes(s.class));
+  },
   async addSubject(subject) {
     const res = await apiClient.post('/subjects', subject);
     if (res && !res.error) {
@@ -306,28 +332,74 @@ export const schoolStore = {
   getAttendance() {
     return state.attendance || {};
   },
+  getAttendanceLogs() {
+    const att = state.attendance || {};
+    return Array.isArray(att) ? att : Object.values(att);
+  },
   getAttendanceForDateAndClass(date, className) {
     const att = state.attendance || {};
-    return (att[date] && att[date][className]) || [];
+    const key = `${date}_${className}`;
+    if (att[key]) return att[key];
+    if (att[date] && att[date][className]) return { records: att[date][className] };
+    return null;
   },
   getStudentAttendanceHistory(studentId) {
-    const history = [];
     const att = state.attendance || {};
-    Object.keys(att).forEach((d) => {
-      Object.keys(att[d]).forEach((cls) => {
-        const records = att[d][cls] || [];
-        const found = records.find((r) => r.studentId === studentId);
-        if (found) {
-          history.push({ date: d, class: cls, ...found });
-        }
-      });
+    const logs = [];
+    const entries = Array.isArray(att) ? att : Object.values(att);
+    entries.forEach((entry) => {
+      if (entry && entry.records && entry.records[studentId]) {
+        logs.push({
+          date: entry.date,
+          className: entry.className || entry.class,
+          status: entry.records[studentId],
+          submittedBy: entry.submittedBy,
+          timestamp: entry.timestamp
+        });
+      }
     });
-    return history.sort((a, b) => (a.date > b.date ? -1 : 1));
+    logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const total = logs.length || 1;
+    const presentCount = logs.filter((l) => l.status === 'present').length;
+    const lateCount = logs.filter((l) => l.status === 'late').length;
+    const absentCount = logs.filter((l) => l.status === 'absent').length;
+    const student = this.getStudentById ? this.getStudentById(studentId) : null;
+    const rate = logs.length > 0 ? Math.round(((presentCount + lateCount) / total) * 100) : 0;
+    const punctuality = logs.length > 0 ? Math.round((presentCount / total) * 100) : 0;
+    return {
+      student,
+      logs,
+      totalDays: logs.length,
+      presentCount,
+      lateCount,
+      absentCount,
+      attendanceRate: rate,
+      punctualityRate: punctuality
+    };
   },
-  async saveAttendance({ date, class: className, records }) {
-    const res = await apiClient.post('/attendance', { date, class: className, records });
-    if (!state.attendance[date]) state.attendance[date] = {};
-    state.attendance[date][className] = records;
+  async saveAttendance(arg1, arg2, arg3, arg4) {
+    let date, className, submittedBy, records;
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      date = arg1.date;
+      className = arg1.class || arg1.className;
+      submittedBy = arg1.submittedBy;
+      records = arg1.records;
+    } else {
+      date = arg1;
+      className = arg2;
+      submittedBy = arg3;
+      records = arg4;
+    }
+    const res = await apiClient.post('/attendance', { date, className, submittedBy, records });
+    const key = `${date}_${className}`;
+    if (!state.attendance) state.attendance = {};
+    state.attendance[key] = {
+      date,
+      className,
+      class: className,
+      submittedBy: submittedBy || 'Staff',
+      records: records || {}
+    };
     notifyChange('attendance');
     return res;
   },
@@ -424,8 +496,31 @@ export const schoolStore = {
   getResources() {
     return state.resources || [];
   },
-  getResourcesForUser(user) {
-    return state.resources || [];
+  getResourcesForUser(role, studentClass, studentSubjects, teacherObj) {
+    const all = state.resources || [];
+    if (role === 'student') {
+      const subjects = studentSubjects || [];
+      return all.filter(
+        (r) =>
+          r.accessLevel === 'students' &&
+          (r.allClasses || (r.classes && r.classes.includes(studentClass))) &&
+          (!r.subject || r.subject === 'General' || subjects.length === 0 || subjects.includes(r.subject))
+      );
+    }
+    if (role === 'teacher') {
+      const teacherSubjects = this.getSubjectsForTeacher(teacherObj);
+      const teacherClasses = this.getClassesForTeacher(teacherObj);
+      if (teacherObj?.assignedClasses && teacherObj.assignedClasses.length > 0) {
+        return all.filter(
+          (r) =>
+            r.uploadedBy === teacherObj?.name ||
+            teacherSubjects.includes(r.subject) ||
+            r.allClasses ||
+            (r.classes && r.classes.some((c) => teacherClasses.includes(c)))
+        );
+      }
+    }
+    return all;
   },
   async addResource(data) {
     const res = await apiClient.post('/resources', data);

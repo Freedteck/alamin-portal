@@ -327,34 +327,51 @@ export const backendStore = {
     if (user.role === 'student') {
       const studentObj = db.students.find((s) => s.id === user.studentId) || null;
       const studentClass = studentObj?.class || '';
+      const enrolledSubjects = studentObj?.enrolledSubjects || [];
       const studentGrades = user.studentId ? (db.grades[user.studentId] || {}) : {};
 
       const scopedAttendance: Record<string, any> = {};
-      Object.keys(db.attendance || {}).forEach((date) => {
-        const classRecords = db.attendance[date]?.[studentClass] || [];
-        const studentRecord = classRecords.filter((r: any) => r.studentId === user.studentId);
-        if (studentRecord.length > 0) {
-          if (!scopedAttendance[date]) scopedAttendance[date] = {};
-          scopedAttendance[date][studentClass] = studentRecord;
+      Object.keys(db.attendance || {}).forEach((key) => {
+        const entry = db.attendance[key];
+        if (entry && entry.records && entry.records[user.studentId]) {
+          scopedAttendance[key] = entry;
         }
       });
 
+      const studentSubjects = db.subjects.filter((s) =>
+        enrolledSubjects.length > 0
+          ? enrolledSubjects.includes(s.name)
+          : (s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass)))
+      );
+      const studentSubjectNames = studentSubjects.map((s) => s.name);
+
       return {
-        classes: db.classes || [],
-        subjects: db.subjects.filter((s) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass))),
+        classes: (db.classes || []).filter((c) => !studentClass || c.name === studentClass),
+        subjects: studentSubjects,
         students: studentObj ? [studentObj] : [],
-        teachers: db.teachers.map(({ phone, email, qualification, staffId, ...safe }) => safe),
+        teachers: db.teachers
+          .filter((t) => (t.assignedClasses || []).some((ac: any) => ac.class === studentClass))
+          .map(({ phone, email, qualification, staffId, ...safe }) => safe),
         timetable: db.timetable.filter((t) => t.class === studentClass),
         alerts: db.alerts.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'student'),
         attendance: scopedAttendance,
         grades: { [user.studentId]: studentGrades },
-        resources: db.resources.filter((r) => !r.class || r.class === studentClass),
+        resources: db.resources.filter(
+          (r) =>
+            r.accessLevel === 'students' &&
+            (r.allClasses || (r.classes && r.classes.includes(studentClass))) &&
+            (!r.subject || r.subject === 'General' || studentSubjectNames.includes(r.subject))
+        ),
         equipment: [],
         maintenance: [],
         documents: db.documents.filter((d) => d.access === 'all' || d.access === 'student'),
         announcements: db.announcements.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'student'),
         availability: db.availability,
-        assignments: db.assignments.filter((a) => !a.class || a.class === studentClass),
+        assignments: db.assignments.filter(
+          (a) =>
+            (!a.class || a.class === 'All Classes' || a.class === studentClass) &&
+            (!a.subject || a.subject === 'General' || studentSubjectNames.includes(a.subject))
+        ),
         requests: db.requests.filter((r) => r.studentId === user.studentId)
       };
     }
@@ -362,23 +379,65 @@ export const backendStore = {
     if (user.role === 'teacher') {
       const teacherObj = db.teachers.find((t) => t.id === user.teacherId) || null;
       const assigned = teacherObj?.assignedClasses || [];
-      const assignedClassNames = assigned.map((a: any) => a.class);
+      const assignedClassNames = Array.from(new Set(assigned.map((a: any) => a.class).filter(Boolean)));
+      const assignedSubjectNames = Array.from(new Set(assigned.map((a: any) => a.subject).filter(Boolean)));
+
+      const teacherSubjects = assignedSubjectNames.length > 0
+        ? db.subjects.filter((s) => assignedSubjectNames.includes(s.name))
+        : db.subjects;
+
+      const teacherClasses = assignedClassNames.length > 0
+        ? (db.classes || []).filter((c) => assignedClassNames.includes(c.name))
+        : (db.classes || []);
+
+      const teacherStudents = assignedClassNames.length > 0
+        ? db.students.filter((s) => assignedClassNames.includes(s.class))
+        : db.students;
+
+      const scopedAttendance: Record<string, any> = {};
+      Object.keys(db.attendance || {}).forEach((key) => {
+        const entry = db.attendance[key];
+        if (
+          assignedClassNames.length === 0 ||
+          assignedClassNames.includes(entry?.className) ||
+          assignedClassNames.includes(entry?.class)
+        ) {
+          scopedAttendance[key] = entry;
+        }
+      });
+
       return {
-        classes: db.classes || [],
-        subjects: db.subjects,
-        students: db.students.filter((s) => assignedClassNames.includes(s.class)),
+        classes: teacherClasses,
+        subjects: teacherSubjects,
+        students: teacherStudents,
         teachers: db.teachers,
-        timetable: db.timetable.filter((t) => t.teacherId === user.teacherId || assignedClassNames.includes(t.class)),
+        timetable: db.timetable.filter(
+          (t) =>
+            t.teacherId === user.teacherId ||
+            (teacherObj?.name && t.teacher === teacherObj.name) ||
+            assignedClassNames.includes(t.class)
+        ),
         alerts: db.alerts.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'teacher'),
-        attendance: db.attendance,
+        attendance: scopedAttendance,
         grades: db.grades,
-        resources: db.resources,
+        resources: db.resources.filter(
+          (r) =>
+            r.uploadedBy === teacherObj?.name ||
+            assignedSubjectNames.includes(r.subject) ||
+            r.accessLevel === 'teachers' ||
+            (r.classes && r.classes.some((c: string) => assignedClassNames.includes(c)))
+        ),
         equipment: db.equipment,
         maintenance: db.maintenance,
         documents: db.documents.filter((d) => d.access !== 'admin'),
         announcements: db.announcements.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'teacher'),
         availability: db.availability.filter((a) => a.teacherId === user.teacherId),
-        assignments: db.assignments.filter((a) => a.teacherId === user.teacherId || assignedClassNames.includes(a.class)),
+        assignments: db.assignments.filter(
+          (a) =>
+            a.teacherId === user.teacherId ||
+            a.author === teacherObj?.name ||
+            (assignedClassNames.includes(a.class) && assignedSubjectNames.includes(a.subject))
+        ),
         requests: db.requests.filter((r) => r.teacherId === user.teacherId)
       };
     }

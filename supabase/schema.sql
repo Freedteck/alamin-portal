@@ -562,19 +562,5 @@ END $$;
 -- ============================================================
 INSERT INTO public.subjects (id, name, all_classes, classes, all_departments, departments) VALUES
   ('sub-1', 'Mathematics', true, '["JSS 1","JSS 2","JSS 3","SSS 1","SSS 2","SSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb),
-  ('sub-2', 'English Language', true, '["JSS 1","JSS 2","JSS 3","SSS 1","SSS 2","SSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb),
-  ('sub-3', 'Islamic Religious Studies', true, '["JSS 1","JSS 2","JSS 3","SSS 1","SSS 2","SSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb),
-  ('sub-4', 'Arabic Language', true, '["JSS 1","JSS 2","JSS 3","SSS 1","SSS 2","SSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb),
-  ('sub-5', 'Civic Education', true, '["JSS 1","JSS 2","JSS 3","SSS 1","SSS 2","SSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb),
-  ('sub-6', 'Computer Studies / ICT', true, '["JSS 1","JSS 2","JSS 3","SSS 1","SSS 2","SSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb),
-  ('sub-7', 'Basic Science', false, '["JSS 1","JSS 2","JSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb),
-  ('sub-8', 'Basic Technology', false, '["JSS 1","JSS 2","JSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb),
-  ('sub-9', 'Social Studies', false, '["JSS 1","JSS 2","JSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb),
-  ('sub-10', 'Physics', false, '["SSS 1","SSS 2","SSS 3"]'::jsonb, false, '["Science"]'::jsonb),
-  ('sub-11', 'Chemistry', false, '["SSS 1","SSS 2","SSS 3"]'::jsonb, false, '["Science"]'::jsonb),
-  ('sub-12', 'Biology', false, '["SSS 1","SSS 2","SSS 3"]'::jsonb, false, '["Science"]'::jsonb),
-  ('sub-13', 'Agricultural Science', false, '["JSS 1","JSS 2","JSS 3","SSS 1","SSS 2","SSS 3"]'::jsonb, false, '["Science"]'::jsonb),
-  ('sub-14', 'Economics', false, '["SSS 1","SSS 2","SSS 3"]'::jsonb, false, '["Humanities","Business"]'::jsonb),
-  ('sub-15', 'Literature in English', false, '["SSS 1","SSS 2","SSS 3"]'::jsonb, false, '["Humanities"]'::jsonb),
-  ('sub-16', 'Government', false, '["SSS 1","SSS 2","SSS 3"]'::jsonb, false, '["Humanities","Business"]'::jsonb)
+  ('sub-2', 'English Language', true, '["JSS 1","JSS 2","JSS 3","SSS 1","SSS 2","SSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb)
 ON CONFLICT (id) DO NOTHING;

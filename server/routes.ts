@@ -148,8 +148,28 @@ router.delete('/classes/:id', requireAuth, requireRole('admin'), (req: Request, 
 
 /* ── Subjects ────────────────────────────────────────────────────────────── */
 
-router.get('/subjects', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getSubjects());
+router.get('/subjects', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const all = backendStore.getSubjects();
+  if (req.user?.role === 'student') {
+    const student = backendStore.getStudentById(req.user.studentId || '');
+    const enrolled = student?.enrolledSubjects || [];
+    if (enrolled.length > 0) {
+      return res.json(all.filter((s: any) => enrolled.includes(s.name)));
+    }
+    const studentClass = student?.class || '';
+    return res.json(
+      all.filter((s: any) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass)))
+    );
+  }
+  if (req.user?.role === 'teacher') {
+    const teacher = backendStore.getTeacherById(req.user.teacherId || '');
+    const assigned = teacher?.assignedClasses || [];
+    const assignedSubjects = Array.from(new Set(assigned.map((a: any) => a.subject).filter(Boolean)));
+    if (assignedSubjects.length > 0) {
+      return res.json(all.filter((s: any) => assignedSubjects.includes(s.name)));
+    }
+  }
+  res.json(all);
 });
 
 router.post('/subjects', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
@@ -179,6 +199,13 @@ router.get('/students', requireAuth, (req: AuthenticatedRequest, res: Response) 
   if (req.user?.role === 'student') {
     const student = backendStore.getStudentById(req.user.studentId || '');
     return res.json(student ? [student] : []);
+  }
+  if (req.user?.role === 'teacher') {
+    const teacher = backendStore.getTeacherById(req.user.teacherId || '');
+    const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
+    if (teacherClasses.length > 0) {
+      return res.json(backendStore.getStudents().filter((s: any) => teacherClasses.includes(s.class)));
+    }
   }
   res.json(backendStore.getStudents());
 });
@@ -313,9 +340,27 @@ router.delete('/teachers/:id', requireAuth, requireRole('admin'), (req: Request,
 
 /* ── Timetable & Alerts ──────────────────────────────────────────────────── */
 
-router.get('/timetable', requireAuth, (req: Request, res: Response) => {
-  const className = typeof req.query.class === 'string' ? req.query.class : undefined;
-  res.json(backendStore.getTimetableSlots(className));
+router.get('/timetable', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const queryClass = typeof req.query.class === 'string' ? req.query.class : undefined;
+  if (req.user?.role === 'student') {
+    const student = backendStore.getStudentById(req.user.studentId || '');
+    const studentClass = student?.class || queryClass;
+    return res.json(backendStore.getTimetableSlots(studentClass));
+  }
+  if (req.user?.role === 'teacher') {
+    const teacher = backendStore.getTeacherById(req.user.teacherId || '');
+    const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
+    const allSlots = backendStore.getTimetableSlots(queryClass);
+    return res.json(
+      allSlots.filter(
+        (t: any) =>
+          t.teacherId === req.user?.teacherId ||
+          (teacher?.name && t.teacher === teacher.name) ||
+          (teacherClasses.length > 0 && teacherClasses.includes(t.class))
+      )
+    );
+  }
+  res.json(backendStore.getTimetableSlots(queryClass));
 });
 
 router.post('/timetable', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
@@ -416,8 +461,38 @@ router.get('/reports/:studentId', requireAuth, (req: AuthenticatedRequest, res: 
 
 /* ── Resources, Equipment & Maintenance ──────────────────────────────────── */
 
-router.get('/resources', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getResources());
+router.get('/resources', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const all = backendStore.getResources();
+  if (req.user?.role === 'student') {
+    const student = backendStore.getStudentById(req.user.studentId || '');
+    const studentClass = student?.class || '';
+    const studentSubjects = student?.enrolledSubjects || [];
+    return res.json(
+      all.filter(
+        (r: any) =>
+          r.accessLevel === 'students' &&
+          (r.allClasses || (r.classes && r.classes.includes(studentClass))) &&
+          (!r.subject || r.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(r.subject))
+      )
+    );
+  }
+  if (req.user?.role === 'teacher') {
+    const teacher = backendStore.getTeacherById(req.user.teacherId || '');
+    const teacherSubjects = (teacher?.assignedClasses || []).map((ac: any) => ac.subject);
+    const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
+    if (teacherSubjects.length > 0) {
+      return res.json(
+        all.filter(
+          (r: any) =>
+            r.uploadedBy === teacher?.name ||
+            teacherSubjects.includes(r.subject) ||
+            r.allClasses ||
+            (r.classes && r.classes.some((c: string) => teacherClasses.includes(c)))
+        )
+      );
+    }
+  }
+  res.json(all);
 });
 
 router.post('/resources', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
@@ -561,8 +636,36 @@ router.delete('/availability/:id', requireAuth, requireRole('admin', 'teacher'),
 
 /* ── Assignments ─────────────────────────────────────────────────────────── */
 
-router.get('/assignments', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getAssignments());
+router.get('/assignments', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const all = backendStore.getAssignments();
+  if (req.user?.role === 'student') {
+    const student = backendStore.getStudentById(req.user.studentId || '');
+    const studentClass = student?.class || '';
+    const studentSubjects = student?.enrolledSubjects || [];
+    return res.json(
+      all.filter(
+        (a: any) =>
+          (!studentClass || a.class === 'All Classes' || a.class === studentClass) &&
+          (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
+      )
+    );
+  }
+  if (req.user?.role === 'teacher') {
+    const teacher = backendStore.getTeacherById(req.user.teacherId || '');
+    const teacherSubjects = (teacher?.assignedClasses || []).map((ac: any) => ac.subject);
+    const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
+    if (teacherClasses.length > 0 || teacherSubjects.length > 0) {
+      return res.json(
+        all.filter(
+          (a: any) =>
+            a.author === teacher?.name ||
+            teacherClasses.includes(a.class) ||
+            teacherSubjects.includes(a.subject)
+        )
+      );
+    }
+  }
+  res.json(all);
 });
 
 router.post('/assignments', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { User } from 'lucide-react';
-import defaultAvatar from '../../assets/images/default_profile_avatar_1794597986437.jpg';
 
 const SIZE_CLASSES = {
   xs: 'w-6 h-6',
@@ -31,22 +30,23 @@ export const ProfileAvatar = ({
 
   const sizeClass = SIZE_CLASSES[size] || SIZE_CLASSES.sm;
   const shapeClass = shape === 'rounded' ? 'rounded-lg' : 'rounded-full';
-  const imageSrc = !hasError ? src || defaultAvatar : null;
+  const hasValidImage = Boolean(src && !hasError);
 
   return (
     <div
       className={`${sizeClass} ${shapeClass} shrink-0 overflow-hidden border border-[#c9c7b6] bg-[#faf8f0] flex items-center justify-center ${className}`}
+      title={name}
     >
-      {imageSrc ? (
+      {hasValidImage ? (
         <img
-          src={imageSrc}
+          src={src}
           alt={name}
           referrerPolicy="no-referrer"
           onError={() => setHasError(true)}
           className="w-full h-full object-cover"
         />
       ) : (
-        <User size={ICON_SIZES[size] || 14} className="text-[#797869]" />
+        <User size={ICON_SIZES[size] || 14} className="text-[#616218]" />
       )}
     </div>
   );

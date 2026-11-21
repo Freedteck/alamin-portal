@@ -37,8 +37,11 @@ export function StudentAssignments() {
       ) || students[0];
     setActiveStudent(matched);
     const allAsg = schoolStore.getAssignments();
+    const studentSubjects = matched?.enrolledSubjects || schoolStore.getSubjectsForClass(matched?.class);
     const relevant = allAsg.filter(
-      (a) => !matched?.class || a.class === 'All Classes' || a.class === matched.class
+      (a) =>
+        (!matched?.class || a.class === 'All Classes' || a.class === matched.class) &&
+        (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
     );
     setAssignments(relevant);
   };

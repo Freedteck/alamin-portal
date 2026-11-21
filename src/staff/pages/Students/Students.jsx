@@ -37,9 +37,7 @@ export function StaffStudents() {
 
   const loadData = () => {
     const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const allStudents = schoolStore.getStudents();
     const allTeachers = schoolStore.getTeachers();
-    setStudents(allStudents);
 
     const teacher =
       allTeachers.find(
@@ -50,6 +48,8 @@ export function StaffStudents() {
       allTeachers[0] ||
       null;
     setCurrentTeacher(teacher);
+    const teacherStudents = schoolStore.getStudentsForTeacher(teacher);
+    setStudents(teacherStudents);
   };
 
   useEffect(() => {
@@ -68,6 +68,9 @@ export function StaffStudents() {
     setTimeout(() => setToast(null), 3000);
   };
 
+  const teacherClasses = schoolStore.getClassesForTeacher(currentTeacher);
+  const teacherSubjects = schoolStore.getSubjectsForTeacher(currentTeacher);
+
   const filteredStudents = students.filter((student) => {
     const matchesSearch =
       student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -76,7 +79,11 @@ export function StaffStudents() {
 
     const matchesClass = selectedClass === 'all' || student.class === selectedClass;
     const matchesSubject =
-      selectedSubject === 'all' || (student.enrolledSubjects || []).includes(selectedSubject);
+      selectedSubject === 'all' ||
+      (student.enrolledSubjects || []).includes(selectedSubject) ||
+      (currentTeacher?.assignedClasses || []).some(
+        (ac) => ac.class === student.class && ac.subject === selectedSubject
+      );
 
     return matchesSearch && matchesClass && matchesSubject;
   });
@@ -183,8 +190,8 @@ export function StaffStudents() {
               onChange={(e) => setSelectedClass(e.target.value)}
               className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
             >
-              <option value="all">All Classes</option>
-              {SCHOOL_CLASSES.map((cls) => (
+              <option value="all">All Assigned Classes</option>
+              {teacherClasses.map((cls) => (
                 <option key={cls} value={cls}>
                   {cls}
                 </option>
@@ -198,8 +205,8 @@ export function StaffStudents() {
               onChange={(e) => setSelectedSubject(e.target.value)}
               className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
             >
-              <option value="all">All Subjects</option>
-              {schoolStore.getSubjectNames().map((sub) => (
+              <option value="all">All Assigned Subjects</option>
+              {teacherSubjects.map((sub) => (
                 <option key={sub} value={sub}>
                   {sub}
                 </option>

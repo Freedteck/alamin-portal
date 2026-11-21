@@ -60,21 +60,7 @@ export const generateAdmissionNumber = (className: string, existingStudents: any
 
 export const INITIAL_SUBJECT_CATALOG = [
   { id: 'sub-1', name: 'Mathematics', allClasses: true, classes: [...SCHOOL_CLASSES], allDepartments: true, departments: [...SSS_DEPARTMENTS] },
-  { id: 'sub-2', name: 'English Language', allClasses: true, classes: [...SCHOOL_CLASSES], allDepartments: true, departments: [...SSS_DEPARTMENTS] },
-  { id: 'sub-3', name: 'Islamic Religious Studies', allClasses: true, classes: [...SCHOOL_CLASSES], allDepartments: true, departments: [...SSS_DEPARTMENTS] },
-  { id: 'sub-4', name: 'Arabic Language', allClasses: true, classes: [...SCHOOL_CLASSES], allDepartments: true, departments: [...SSS_DEPARTMENTS] },
-  { id: 'sub-5', name: 'Civic Education', allClasses: true, classes: [...SCHOOL_CLASSES], allDepartments: true, departments: [...SSS_DEPARTMENTS] },
-  { id: 'sub-6', name: 'Computer Studies / ICT', allClasses: true, classes: [...SCHOOL_CLASSES], allDepartments: true, departments: [...SSS_DEPARTMENTS] },
-  { id: 'sub-7', name: 'Basic Science', allClasses: false, classes: ['JSS 1', 'JSS 2', 'JSS 3'], allDepartments: true, departments: [...SSS_DEPARTMENTS] },
-  { id: 'sub-8', name: 'Basic Technology', allClasses: false, classes: ['JSS 1', 'JSS 2', 'JSS 3'], allDepartments: true, departments: [...SSS_DEPARTMENTS] },
-  { id: 'sub-9', name: 'Social Studies', allClasses: false, classes: ['JSS 1', 'JSS 2', 'JSS 3'], allDepartments: true, departments: [...SSS_DEPARTMENTS] },
-  { id: 'sub-10', name: 'Physics', allClasses: false, classes: ['SSS 1', 'SSS 2', 'SSS 3'], allDepartments: false, departments: ['Science'] },
-  { id: 'sub-11', name: 'Chemistry', allClasses: false, classes: ['SSS 1', 'SSS 2', 'SSS 3'], allDepartments: false, departments: ['Science'] },
-  { id: 'sub-12', name: 'Biology', allClasses: false, classes: ['SSS 1', 'SSS 2', 'SSS 3'], allDepartments: false, departments: ['Science'] },
-  { id: 'sub-13', name: 'Agricultural Science', allClasses: false, classes: ['JSS 1', 'JSS 2', 'JSS 3', 'SSS 1', 'SSS 2', 'SSS 3'], allDepartments: false, departments: ['Science'] },
-  { id: 'sub-14', name: 'Economics', allClasses: false, classes: ['SSS 1', 'SSS 2', 'SSS 3'], allDepartments: false, departments: ['Humanities', 'Business'] },
-  { id: 'sub-15', name: 'Literature in English', allClasses: false, classes: ['SSS 1', 'SSS 2', 'SSS 3'], allDepartments: false, departments: ['Humanities'] },
-  { id: 'sub-16', name: 'Government', allClasses: false, classes: ['SSS 1', 'SSS 2', 'SSS 3'], allDepartments: false, departments: ['Humanities', 'Business'] }
+  { id: 'sub-2', name: 'English Language', allClasses: true, classes: [...SCHOOL_CLASSES], allDepartments: true, departments: [...SSS_DEPARTMENTS] }
 ];
 
 export const INITIAL_CLASSES = SCHOOL_CLASSES.map((name, i) => ({

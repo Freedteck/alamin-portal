@@ -146,6 +146,8 @@ export function StaffAttendance() {
   const total = students.length;
   const attendanceRate = total > 0 ? Math.round(((presentCount + lateCount) / total) * 100) : 0;
 
+  const teacherClasses = schoolStore.getClassesForTeacher(currentTeacher);
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-16">
       {toast && (
@@ -229,7 +231,7 @@ export function StaffAttendance() {
                   onChange={(e) => setSelectedClass(e.target.value)}
                   className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                 >
-                  {SCHOOL_CLASSES.map((cls) => (
+                  {teacherClasses.map((cls) => (
                     <option key={cls} value={cls}>
                       {cls}
                     </option>
@@ -438,8 +440,8 @@ export function StaffAttendance() {
                   }}
                   className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                 >
-                  <option value="all">All Classes</option>
-                  {SCHOOL_CLASSES.map((cls) => (
+                  <option value="all">All Assigned Classes</option>
+                  {teacherClasses.map((cls) => (
                     <option key={cls} value={cls}>
                       {cls}
                     </option>

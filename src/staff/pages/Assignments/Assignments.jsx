@@ -31,6 +31,7 @@ export function StaffAssignments() {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [toast, setToast] = useState(null);
 
+  const [currentTeacher, setCurrentTeacher] = useState(null);
   const [form, setForm] = useState({
     title: '',
     class: 'SSS 2',
@@ -46,7 +47,28 @@ export function StaffAssignments() {
   });
 
   const refreshData = () => {
-    setAssignments(schoolStore.getAssignments());
+    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+    const teachers = schoolStore.getTeachers();
+    const teacher =
+      teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
+      teachers[0] ||
+      null;
+    setCurrentTeacher(teacher);
+    const teacherClasses = schoolStore.getClassesForTeacher(teacher);
+    const teacherSubjects = schoolStore.getSubjectsForTeacher(teacher);
+    const all = schoolStore.getAssignments();
+    if (teacher?.assignedClasses && teacher.assignedClasses.length > 0) {
+      setAssignments(
+        all.filter(
+          (a) =>
+            a.author === teacher.name ||
+            teacherClasses.includes(a.class) ||
+            teacherSubjects.includes(a.subject)
+        )
+      );
+    } else {
+      setAssignments(all);
+    }
   };
 
   useEffect(() => {
@@ -63,15 +85,17 @@ export function StaffAssignments() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const classSubjects = schoolStore.getSubjectsForClass(form.class);
-  const subjectOptions = classSubjects.length > 0 ? classSubjects : schoolStore.getSubjectNames();
+  const teacherClasses = schoolStore.getClassesForTeacher(currentTeacher);
+  const teacherSubjects = schoolStore.getSubjectsForClassForTeacher(form.class, currentTeacher);
+  const subjectOptions = teacherSubjects.length > 0 ? teacherSubjects : schoolStore.getSubjectsForClass(form.class);
 
   const openCreateModal = () => {
-    const subs = schoolStore.getSubjectsForClass('SSS 2');
+    const defaultCls = teacherClasses[0] || 'SSS 2';
+    const subs = schoolStore.getSubjectsForClassForTeacher(defaultCls, currentTeacher);
     setEditingId(null);
     setForm({
       title: '',
-      class: 'SSS 2',
+      class: defaultCls,
       subject: subs[0] || 'Mathematics',
       dueDate: '',
       totalMarks: '20',
@@ -216,8 +240,8 @@ export function StaffAssignments() {
           onChange={(e) => setFilterClass(e.target.value)}
           className="h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-xs text-[#1c1c14]"
         >
-          <option value="all">All Classes</option>
-          {SCHOOL_CLASSES.map((cls) => (
+          <option value="all">All Assigned Classes</option>
+          {teacherClasses.map((cls) => (
             <option key={cls} value={cls}>
               {cls}
             </option>
@@ -346,7 +370,7 @@ export function StaffAssignments() {
                 value={form.class}
                 onChange={(e) => {
                   const nextCls = e.target.value;
-                  const nextSubs = schoolStore.getSubjectsForClass(nextCls);
+                  const nextSubs = schoolStore.getSubjectsForClassForTeacher(nextCls, currentTeacher);
                   setForm({
                     ...form,
                     class: nextCls,
@@ -355,7 +379,7 @@ export function StaffAssignments() {
                 }}
                 className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-xs text-[#1c1c14]"
               >
-                {SCHOOL_CLASSES.map((cls) => (
+                {teacherClasses.map((cls) => (
                   <option key={cls} value={cls}>
                     {cls}
                   </option>

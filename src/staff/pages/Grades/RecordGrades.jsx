@@ -18,6 +18,7 @@ export function RecordGrades() {
   const [selectedClass, setSelectedClass] = useState('SSS 2');
   const [selectedSubject, setSelectedSubject] = useState('Mathematics');
   const [selectedTerm, setSelectedTerm] = useState('Term1');
+  const [currentTeacher, setCurrentTeacher] = useState(null);
   const [students, setStudents] = useState([]);
   const [gradesInput, setGradesInput] = useState({});
   const [toast, setToast] = useState(null);
@@ -41,19 +42,27 @@ export function RecordGrades() {
       allTeachers[0] ||
       null;
 
+    setCurrentTeacher(teacher);
     if (teacher && teacher.assignedClasses?.length > 0) {
       setSelectedClass(teacher.assignedClasses[0].class);
       setSelectedSubject(teacher.assignedClasses[0].subject);
     }
   }, [syncTick]);
 
-  const availableSubjects = schoolStore.getSubjectsForClass(selectedClass);
+  const teacherClasses = schoolStore.getClassesForTeacher(currentTeacher);
+  const teacherSubjects = schoolStore.getSubjectsForClassForTeacher(selectedClass, currentTeacher);
 
   useEffect(() => {
-    if (availableSubjects.length > 0 && !availableSubjects.includes(selectedSubject)) {
-      setSelectedSubject(availableSubjects[0]);
+    if (teacherClasses.length > 0 && !teacherClasses.includes(selectedClass)) {
+      setSelectedClass(teacherClasses[0]);
     }
-  }, [selectedClass, availableSubjects.length]);
+  }, [teacherClasses]);
+
+  useEffect(() => {
+    if (teacherSubjects.length > 0 && !teacherSubjects.includes(selectedSubject)) {
+      setSelectedSubject(teacherSubjects[0]);
+    }
+  }, [selectedClass, teacherSubjects.length]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -204,7 +213,7 @@ export function RecordGrades() {
               onChange={(e) => setSelectedClass(e.target.value)}
               className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
             >
-              {SCHOOL_CLASSES.map((cls) => (
+              {teacherClasses.map((cls) => (
                 <option key={cls} value={cls}>
                   {cls}
                 </option>
@@ -219,7 +228,7 @@ export function RecordGrades() {
               onChange={(e) => setSelectedSubject(e.target.value)}
               className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
             >
-              {availableSubjects.map((sub) => (
+              {teacherSubjects.map((sub) => (
                 <option key={sub} value={sub}>
                   {sub}
                 </option>

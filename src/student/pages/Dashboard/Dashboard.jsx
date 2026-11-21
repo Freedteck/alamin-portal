@@ -47,9 +47,14 @@ export function StudentDashboard() {
         .slice(0, 4);
       setUpcomingClasses(classSlots);
 
+      const studentSubjects = activeStudent.enrolledSubjects || schoolStore.getSubjectsForClass(activeStudent.class);
       const asgs = schoolStore
         .getAssignments()
-        .filter((a) => a.class === 'All Classes' || a.class === activeStudent.class)
+        .filter(
+          (a) =>
+            (a.class === 'All Classes' || a.class === activeStudent.class) &&
+            (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
+        )
         .slice(0, 4)
         .map((a) => {
           const submitted = a.submissions?.some((sub) => sub.studentId === activeStudent.id);
