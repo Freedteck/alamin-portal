@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '../../../shared/components/Button/Button';
 import { Modal } from '../../../shared/components/Modal/Modal';
 import { ProfileAvatar } from '../../../shared/components/ProfileAvatar/ProfileAvatar';
@@ -9,7 +9,8 @@ import {
   Plus,
   Trash2,
   Upload,
-  Download
+  Download,
+  Camera
 } from 'lucide-react';
 import {
   schoolStore,
@@ -39,6 +40,7 @@ export function StaffProfile() {
     dateOfBirth: '',
     startDate: '',
     position: 'Subject Teacher',
+    avatarUrl: '',
     qualifications: [],
     emergencyContact: {
       name: '',
@@ -47,6 +49,7 @@ export function StaffProfile() {
     },
     department: 'Academic Staff'
   });
+  const avatarInputRef = useRef(null);
 
   const [assignedClasses, setAssignedClasses] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState(() => {
@@ -108,6 +111,7 @@ export function StaffProfile() {
       dateOfBirth: extraForUser.dateOfBirth || '',
       startDate: extraForUser.startDate || '',
       position: matchedTeacher?.qualification || extraForUser.position || 'Subject Teacher',
+      avatarUrl: matchedTeacher?.avatarUrl || savedUser?.avatarUrl || '',
       qualifications: matchedTeacher?.qualification
         ? [matchedTeacher.qualification]
         : (extraForUser.qualifications || []),
@@ -149,6 +153,21 @@ export function StaffProfile() {
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      showToast('Uploading profile picture...');
+      const res = await schoolStore.uploadProfileAvatar(file);
+      if (res?.avatarUrl) {
+        setStaffData((prev) => ({ ...prev, avatarUrl: res.avatarUrl }));
+        showToast('Profile picture updated successfully!');
+      }
+    } catch (err) {
+      showToast(err?.message || 'Failed to update profile picture.');
+    }
   };
 
   const handleSaveProfile = (e) => {
@@ -367,7 +386,24 @@ export function StaffProfile() {
         <div className="space-y-6">
           <div className="p-5 rounded-lg border border-[#c9c7b6] bg-white shadow-xs">
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 pb-4 border-b border-[#c9c7b6]/40">
-              <ProfileAvatar name={staffData.name} size="xl" shape="rounded" />
+              <div className="relative group shrink-0">
+                <ProfileAvatar src={staffData.avatarUrl} name={staffData.name} size="xl" shape="rounded" />
+                <button
+                  type="button"
+                  onClick={() => avatarInputRef.current?.click()}
+                  title="Update profile picture"
+                  className="absolute -bottom-1 -right-1 w-7 h-7 bg-[#616218] hover:bg-[#494900] text-white rounded-full flex items-center justify-center shadow-md cursor-pointer transition-transform hover:scale-105"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                </button>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleAvatarChange}
+                />
+              </div>
               <div className="flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-lg font-bold text-[#1c1c14]">{staffData.name}</h2>

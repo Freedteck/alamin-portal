@@ -680,6 +680,30 @@ export const openApiSpec = {
         responses: { 200: { description: 'Binary file stream' }, 404: { description: 'File not found' } }
       }
     },
+    '/auth/profile/avatar': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Upload and update profile avatar photo',
+        security: bearerSecurity,
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                properties: {
+                  avatar: { type: 'string', format: 'binary', description: 'Avatar image file' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Avatar updated successfully' },
+          400: { description: 'No image uploaded' }
+        }
+      }
+    },
     '/classes': {
       get: {
         tags: ['Classes'],

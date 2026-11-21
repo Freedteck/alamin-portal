@@ -121,24 +121,67 @@ router.post('/auth/reset-password', (req: Request, res: Response) => {
   res.json(result);
 });
 
-router.post(
-  '/auth/profile/avatar',
-  requireAuth,
-  upload.single('avatar'),
-  async (req: AuthenticatedRequest, res: Response) => {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No image file uploaded.' });
-    }
-    try {
-      const uploaded = await uploadFileToBackendStorage('avatars', req.file);
-      const avatarUrl = uploaded.fileUrl || `/files/download/${uploaded.filePath}`;
-      const updatedUser = backendStore.updateUserAvatar(req.user!.id, avatarUrl);
-      res.json({ success: true, avatarUrl, user: updatedUser });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to update avatar photo.' });
+const handleAvatarUpload = async (req: AuthenticatedRequest, res: Response) => {
+  let file = req.file;
+  if (!file && req.files) {
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      file = req.files[0];
+    } else if (typeof req.files === 'object') {
+      const filesObj = req.files as Record<string, Express.Multer.File[]>;
+      const firstKey = Object.keys(filesObj)[0];
+      if (firstKey && filesObj[firstKey]?.[0]) {
+        file = filesObj[firstKey][0];
+      }
     }
   }
-);
+
+  const rawUrl = req.body?.avatarUrl || req.body?.imageUrl || req.body?.photoUrl || req.body?.image;
+  if (!file && !rawUrl) {
+    return res.status(400).json({ error: 'No image file or photo URL provided.' });
+  }
+
+  try {
+    let avatarUrl = rawUrl || '';
+    if (file) {
+      const uploaded = await uploadFileToBackendStorage('avatars', file);
+      avatarUrl = uploaded.fileUrl || `/files/download/${uploaded.filePath}`;
+    }
+
+    const targetUserId = paramStr(req.params.id) || req.user?.id || '';
+    if (!targetUserId) {
+      return res.status(400).json({ error: 'User target could not be identified.' });
+    }
+
+    const updatedUser = backendStore.updateUserAvatar(targetUserId, avatarUrl);
+    res.json({ success: true, avatarUrl, user: updatedUser });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to update avatar photo.' });
+  }
+};
+
+const avatarEndpoints = [
+  '/auth/profile/avatar',
+  '/auth/avatar',
+  '/profile/avatar',
+  '/profile/picture',
+  '/profile/photo',
+  '/users/avatar',
+  '/users/profile/avatar',
+  '/avatar'
+];
+
+avatarEndpoints.forEach((routePath) => {
+  router.post(routePath, requireAuth, upload.any(), handleAvatarUpload);
+  router.put(routePath, requireAuth, upload.any(), handleAvatarUpload);
+  router.patch(routePath, requireAuth, upload.any(), handleAvatarUpload);
+});
+
+router.post('/teachers/:id/avatar', requireAuth, upload.any(), handleAvatarUpload);
+router.put('/teachers/:id/avatar', requireAuth, upload.any(), handleAvatarUpload);
+router.post('/students/:id/avatar', requireAuth, upload.any(), handleAvatarUpload);
+router.put('/students/:id/avatar', requireAuth, upload.any(), handleAvatarUpload);
+router.post('/users/:id/avatar', requireAuth, upload.any(), handleAvatarUpload);
+router.put('/users/:id/avatar', requireAuth, upload.any(), handleAvatarUpload);
 
 /* ── Classes ─────────────────────────────────────────────────────────────── */
 
@@ -325,7 +368,9 @@ router.put('/teachers/:id', requireAuth, requireRole('admin', 'teacher'), (req: 
 });
 
 router.post('/teachers/:id/assign-class', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
-  const { class: className, subject } = req.body || {};
+  const body = req.body || {};
+  const className = String(body.class || body.className || body.classSubject?.class || '');
+  const subject = String(body.subject || body.subjectName || body.classSubject?.subject || '');
   if (!className || !subject) {
     return res.status(400).json({ error: 'Both class and subject are required.' });
   }
@@ -470,16 +515,25 @@ router.get('/grades', requireAuth, (_req: Request, res: Response) => {
 });
 
 router.post('/grades', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const { studentId, term, subject, ca1, ca2, exam, remark, session } = req.body || {};
+  const body = req.body || {};
+  const studentId = body.studentId;
+  const term = body.term;
+  const subject = body.subject;
   if (!studentId || !term || !subject) {
     return res.status(400).json({ error: 'studentId, term, and subject are required.' });
   }
+  const gradeData = body.grade && typeof body.grade === 'object' ? body.grade : body;
   const saved = backendStore.saveGrade(
     studentId,
     term,
     subject,
-    { ca1, ca2, exam, remark },
-    session || '2026/2027'
+    {
+      ca1: Number(gradeData.ca1 ?? 0),
+      ca2: Number(gradeData.ca2 ?? 0),
+      exam: Number(gradeData.exam ?? 0),
+      remark: gradeData.remark || ''
+    },
+    body.session || gradeData.session || '2026/2027'
   );
   res.status(201).json(saved);
 });

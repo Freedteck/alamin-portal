@@ -295,8 +295,24 @@ export const schoolStore = {
   async resetTeacherCredentials(teacherId, payload) {
     return await apiClient.post(`/teachers/${teacherId}/credentials`, payload);
   },
-  async assignTeacherClass(teacherId, classSubject) {
-    const res = await apiClient.post(`/teachers/${teacherId}/assign-class`, classSubject);
+  async assignTeacherClass(teacherId, classSubject, subjectArg) {
+    let payload = { class: '', subject: '' };
+    if (typeof classSubject === 'object' && classSubject !== null) {
+      payload = {
+        class: classSubject.class || classSubject.className || '',
+        subject: classSubject.subject || classSubject.subjectName || ''
+      };
+    } else if (typeof classSubject === 'string') {
+      if (subjectArg) {
+        payload = { class: classSubject, subject: subjectArg };
+      } else if (classSubject.includes('-')) {
+        const parts = classSubject.split('-');
+        payload = { class: parts[0].trim(), subject: parts.slice(1).join('-').trim() };
+      } else {
+        payload = { class: classSubject, subject: '' };
+      }
+    }
+    const res = await apiClient.post(`/teachers/${teacherId}/assign-class`, payload);
     if (res?.teacher) {
       state.teachers = (state.teachers || []).map((t) => (t.id === teacherId ? res.teacher : t));
       notifyChange('teachers');
@@ -819,14 +835,20 @@ export const schoolStore = {
   async uploadProfileAvatar(file) {
     const formData = new FormData();
     formData.append('avatar', file);
+    formData.append('file', file);
     const res = await apiClient.request('/auth/profile/avatar', {
       method: 'POST',
       body: formData
     });
-    if (res?.user) {
+    if (res?.user || res?.avatarUrl) {
       try {
         const current = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-        localStorage.setItem('alamin_user', JSON.stringify({ ...current, ...res.user }));
+        const updated = {
+          ...current,
+          ...(res.user || {}),
+          avatarUrl: res.avatarUrl || res.user?.avatarUrl || current.avatarUrl
+        };
+        localStorage.setItem('alamin_user', JSON.stringify(updated));
       } catch {}
       await refreshCloudData();
     }

@@ -2152,29 +2152,35 @@ export const backendStore = {
   },
 
   updateUserAvatar(userId: string, avatarUrl: string) {
-    const user = db.users.find((u) => u.id === userId);
-    if (!user) return null;
-    user.avatarUrl = avatarUrl;
-
-    if (user.studentId) {
-      const student = db.students.find((s) => s.id === user.studentId);
-      if (student) {
-        student.avatarUrl = avatarUrl;
-        supabaseMirrorUpsert('students', { id: student.id, avatar_url: avatarUrl });
-      }
+    let user = db.users.find((u) => u.id === userId);
+    if (!user) {
+      user = db.users.find((u) => u.teacherId === userId || u.studentId === userId);
     }
-    if (user.teacherId) {
-      const teacher = db.teachers.find((t) => t.id === user.teacherId);
-      if (teacher) {
-        teacher.avatarUrl = avatarUrl;
-        supabaseMirrorUpsert('teachers', { id: teacher.id, avatar_url: avatarUrl });
-      }
+    if (user) {
+      user.avatarUrl = avatarUrl;
+      supabaseMirrorUpsert('portal_users', { id: user.id, avatar_url: avatarUrl });
+      broadcastChange('users', 'updated');
     }
 
-    supabaseMirrorUpsert('portal_users', { id: user.id, avatar_url: avatarUrl });
-    broadcastChange('users', 'updated');
-    const { passwordHash: _ignored, ...safeUser } = user;
-    return safeUser;
+    const student = db.students.find((s) => s.id === userId || (user && s.id === user.studentId));
+    if (student) {
+      student.avatarUrl = avatarUrl;
+      supabaseMirrorUpsert('students', { id: student.id, avatar_url: avatarUrl });
+      broadcastChange('students', 'updated');
+    }
+
+    const teacher = db.teachers.find((t) => t.id === userId || (user && t.id === user.teacherId));
+    if (teacher) {
+      teacher.avatarUrl = avatarUrl;
+      supabaseMirrorUpsert('teachers', { id: teacher.id, avatar_url: avatarUrl });
+      broadcastChange('teachers', 'updated');
+    }
+
+    if (user) {
+      const { passwordHash: _ignored, ...safeUser } = user;
+      return safeUser;
+    }
+    return { id: userId, avatarUrl };
   },
 
   getPromotionCandidates(currentSession = '2026/2027') {
