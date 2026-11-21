@@ -21,21 +21,12 @@ function writeSnapshotToLocal(_storageKeys, payload) {
   return Boolean(payload && typeof payload === 'object');
 }
 
-export async function hydrateAllFromApi(storageKeys) {
-  if (!apiClient.getToken()) return false;
-  try {
-    const payload = await apiClient.get('/bootstrap');
-    const ok = writeSnapshotToLocal(storageKeys, payload);
-    if (ok) {
-      emitSchoolSync('hydration');
-    }
-    return ok;
-  } catch {
-    return false;
-  }
+export async function hydrateAllFromApi(_storageKeys) {
+  // Monolithic /bootstrap eager-loading eliminated in favor of route-level on-demand queries
+  return true;
 }
 
-export function startRealtimeSync(storageKeys) {
+export function startRealtimeSync(_storageKeys) {
   if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
     return () => {};
   }
@@ -66,12 +57,13 @@ export function startRealtimeSync(storageKeys) {
       try {
         const parsed = JSON.parse(msg.data || '{}');
         if (parsed.action === 'connected') return;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          emitSchoolSync(parsed.resource || 'all');
+        }, 120);
       } catch {
+        emitSchoolSync('all');
       }
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        hydrateAllFromApi(storageKeys);
-      }, 120);
     };
 
     eventSource.onerror = () => {

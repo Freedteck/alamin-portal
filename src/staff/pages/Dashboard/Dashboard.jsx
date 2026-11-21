@@ -26,46 +26,77 @@ export function StaffDashboard() {
   const [assignments, setAssignments] = useState([]);
 
   useEffect(() => {
-    const sync = () => {
-      const saved = JSON.parse(localStorage.getItem("alamin_user") || "{}");
-      const allTeachers = schoolStore.getTeachers();
-      const matched =
-        allTeachers.find(
-          (t) =>
-            (saved.email &&
-              t.email?.toLowerCase() === saved.email.toLowerCase()) ||
-            (saved.name && t.name?.toLowerCase() === saved.name.toLowerCase()),
-        ) ||
-        allTeachers[0] ||
-        (saved.name
-          ? { name: saved.name, email: saved.email, assignedClasses: [] }
-          : null);
-      setCurrentTeacher(matched);
-      const teacherStudents = schoolStore.getStudentsForTeacher(matched);
-      setStudents(teacherStudents);
-      setRequests(schoolStore.getRequests());
-      const rawAtt = schoolStore.getAttendance();
-      const logs = Array.isArray(rawAtt) ? rawAtt : Object.values(rawAtt || {});
-      setAttendanceLogs(logs);
-      setGradesMap(schoolStore.getGrades());
-      const teacherClasses = schoolStore.getClassesForTeacher(matched);
-      const teacherSubjects = schoolStore.getSubjectsForTeacher(matched);
-      const allAsg = schoolStore.getAssignments();
-      if (matched?.assignedClasses && matched.assignedClasses.length > 0) {
-        setAssignments(
-          allAsg.filter(
-            (a) =>
-              a.author === matched.name ||
-              teacherClasses.includes(a.class) ||
-              teacherSubjects.includes(a.subject)
-          )
-        );
-      } else {
-        setAssignments(allAsg);
+    let active = true;
+    const sync = async () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("alamin_user") || "{}");
+        const [teachersRes, stuRes, reqRes, rawAtt, grRes, allAsg] = await Promise.all([
+          schoolStore.fetchTeachers(),
+          schoolStore.fetchStudents(),
+          schoolStore.fetchRequests(),
+          schoolStore.fetchAttendance(),
+          schoolStore.fetchGrades(),
+          schoolStore.fetchAssignments()
+        ]);
+        if (!active) return;
+
+        const allTeachers = Array.isArray(teachersRes) ? teachersRes : (teachersRes?.data || []);
+        const matched =
+          allTeachers.find(
+            (t) =>
+              (saved.email &&
+                t.email?.toLowerCase() === saved.email.toLowerCase()) ||
+              (saved.name && t.name?.toLowerCase() === saved.name.toLowerCase()),
+          ) ||
+          allTeachers[0] ||
+          (saved.name
+            ? { name: saved.name, email: saved.email, assignedClasses: [] }
+            : null);
+        setCurrentTeacher(matched);
+
+        const allStudentsList = Array.isArray(stuRes) ? stuRes : (stuRes?.data || []);
+        setStudents(allStudentsList);
+        setRequests(Array.isArray(reqRes) ? reqRes : []);
+        const logs = Array.isArray(rawAtt) ? rawAtt : Object.values(rawAtt || {});
+        setAttendanceLogs(logs);
+        setGradesMap(grRes || {});
+
+        const teacherClasses = schoolStore.getClassesForTeacher(matched);
+        const teacherSubjects = schoolStore.getSubjectsForTeacher(matched);
+        const assignmentsList = Array.isArray(allAsg) ? allAsg : [];
+        if (matched?.assignedClasses && matched.assignedClasses.length > 0) {
+          setAssignments(
+            assignmentsList.filter(
+              (a) =>
+                a.author === matched.name ||
+                teacherClasses.includes(a.class) ||
+                teacherSubjects.includes(a.subject)
+            )
+          );
+        } else {
+          setAssignments(assignmentsList);
+        }
+      } catch {
+        const saved = JSON.parse(localStorage.getItem("alamin_user") || "{}");
+        const allTeachers = schoolStore.getTeachers();
+        const matched =
+          allTeachers.find(
+            (t) =>
+              (saved.email &&
+                t.email?.toLowerCase() === saved.email.toLowerCase()) ||
+              (saved.name && t.name?.toLowerCase() === saved.name.toLowerCase()),
+          ) ||
+          allTeachers[0] ||
+          null;
+        setCurrentTeacher(matched);
       }
     };
     sync();
-    return subscribeSchoolSync(sync);
+    const unsubscribe = subscribeSchoolSync(sync);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   const pendingRequests = requests.filter((r) => r.status === "pending");

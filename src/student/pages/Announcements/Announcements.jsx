@@ -18,15 +18,30 @@ export function StudentAnnouncements() {
   const pageSize = 6;
 
   useEffect(() => {
-    const loadNotices = () => {
-      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-      const students = schoolStore.getStudents();
-      const matched =
-        students.find(
-          (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
-        ) || students[0];
-      setActiveStudent(matched);
-      setAnnouncements(schoolStore.getAnnouncementsForUser('student', matched?.class || ''));
+    const loadNotices = async () => {
+      try {
+        const [sRes, aRes] = await Promise.all([
+          schoolStore.fetchStudents(),
+          schoolStore.fetchAnnouncements()
+        ]);
+        const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+        const students = Array.isArray(sRes) ? sRes : (sRes?.data || []);
+        const matched =
+          students.find(
+            (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
+          ) || students[0];
+        setActiveStudent(matched);
+        setAnnouncements(Array.isArray(aRes) ? aRes.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'student') : []);
+      } catch {
+        const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+        const students = schoolStore.getStudents();
+        const matched =
+          students.find(
+            (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
+          ) || students[0];
+        setActiveStudent(matched);
+        setAnnouncements(schoolStore.getAnnouncementsForUser('student', matched?.class || ''));
+      }
     };
     loadNotices();
     return subscribeSchoolSync(loadNotices);

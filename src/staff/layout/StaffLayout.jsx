@@ -15,36 +15,37 @@ import {
 } from 'lucide-react';
 import { Sidebar } from '../../shared/components/Sidebar/Sidebar';
 import { apiClient } from '../../shared/lib/apiClient';
-import { refreshCloudData, schoolStore, subscribeSchoolSync } from '../../shared/data/schoolData';
+import { subscribeSchoolSync } from '../../shared/data/schoolData';
 
 export function TeacherLayout() {
   const navigate = useNavigate();
   const storedUser = JSON.parse(localStorage.getItem('alamin_user') || 'null');
   const hasToken = Boolean(apiClient.getToken());
-  const [currentTeacher, setCurrentTeacher] = useState(null);
+  const [currentTeacher, setCurrentTeacher] = useState(storedUser || null);
 
   useEffect(() => {
-    if (hasToken) {
-      refreshCloudData();
-    }
-  }, [hasToken]);
-
-  useEffect(() => {
-    const updateTeacherInfo = () => {
-      const u = JSON.parse(localStorage.getItem('alamin_user') || 'null');
-      if (u) {
-        const teachers = schoolStore.getTeachers();
-        const t = teachers.find(
-          (tch) =>
-            (tch.id && tch.id === u.teacherId) ||
-            (tch.email && u.email && tch.email.toLowerCase() === u.email.toLowerCase())
-        );
-        setCurrentTeacher(t || null);
-      }
+    const updateTeacherInfo = async () => {
+      if (!hasToken) return;
+      try {
+        const res = await apiClient.get('/auth/me');
+        if (res?.user) {
+          const u = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+          const updated = {
+            ...u,
+            ...res.user
+          };
+          localStorage.setItem('alamin_user', JSON.stringify(updated));
+          setCurrentTeacher(res.user);
+        }
+      } catch {}
     };
     updateTeacherInfo();
-    return subscribeSchoolSync(updateTeacherInfo);
-  }, []);
+    return subscribeSchoolSync((topic) => {
+      if (topic === 'teachers' || topic === 'classes' || !topic) {
+        updateTeacherInfo();
+      }
+    });
+  }, [hasToken]);
 
   if (!storedUser || !storedUser.role || !hasToken) {
     return <Navigate to="/login" replace />;

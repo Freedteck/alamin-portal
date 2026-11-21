@@ -75,31 +75,46 @@ export function RecordGrades() {
   }, [selectedClass, selectedSubject, selectedTerm, selectedSession]);
 
   useEffect(() => {
-    const allStudents = schoolStore
-      .getStudents()
-      .filter((s) => s.class === selectedClass && (s.enrolledSubjects || []).includes(selectedSubject));
-    setStudents(allStudents);
+    let active = true;
+    const loadClassGrades = async () => {
+      try {
+        const [stuRes] = await Promise.all([
+          schoolStore.fetchStudents({ class: selectedClass, subject: selectedSubject }),
+          schoolStore.fetchGrades()
+        ]);
+        if (!active) return;
+        const allStudents = Array.isArray(stuRes) ? stuRes : (stuRes?.data || []);
+        setStudents(allStudents);
 
-    const existing = {};
-    allStudents.forEach((student) => {
-      const record = schoolStore.getStudentSubjectGrade(student.id, selectedTerm, selectedSubject, selectedSession);
-      if (record && record.isRecorded) {
-        existing[student.id] = {
-          ca1: record.ca1,
-          ca2: record.ca2,
-          exam: record.exam,
-          remark: record.remark
-        };
-      } else {
-        existing[student.id] = {
-          ca1: 0,
-          ca2: 0,
-          exam: 0,
-          remark: ''
-        };
+        const existing = {};
+        allStudents.forEach((student) => {
+          const record = schoolStore.getStudentSubjectGrade(student.id, selectedTerm, selectedSubject, selectedSession);
+          if (record && record.isRecorded) {
+            existing[student.id] = {
+              ca1: record.ca1,
+              ca2: record.ca2,
+              exam: record.exam,
+              remark: record.remark
+            };
+          } else {
+            existing[student.id] = {
+              ca1: 0,
+              ca2: 0,
+              exam: 0,
+              remark: ''
+            };
+          }
+        });
+        setGradesInput(existing);
+      } catch {
+        const allStudents = schoolStore
+          .getStudents()
+          .filter((s) => s.class === selectedClass && (s.enrolledSubjects || []).includes(selectedSubject));
+        setStudents(allStudents);
       }
-    });
-    setGradesInput(existing);
+    };
+    loadClassGrades();
+    return () => { active = false; };
   }, [selectedClass, selectedSubject, selectedTerm, selectedSession, syncTick]);
 
   const handleScoreChange = (studentId, field, value) => {

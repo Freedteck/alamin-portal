@@ -19,10 +19,19 @@ export function StudentTimetable() {
   const [slots, setSlots] = useState([]);
   const [alerts, setAlerts] = useState([]);
 
-  const loadTimetable = (cls) => {
+  const loadTimetable = async (cls) => {
     if (!cls) return;
-    setSlots(schoolStore.getTimetableForClass(cls));
-    setAlerts(schoolStore.getAlertsForUser('student', { class: cls }));
+    try {
+      const [ttRes, alRes] = await Promise.all([
+        schoolStore.fetchTimetable(cls),
+        schoolStore.fetchAlerts()
+      ]);
+      setSlots(Array.isArray(ttRes) ? ttRes.filter((s) => s.class === cls || s.class === 'All Classes') : []);
+      setAlerts(Array.isArray(alRes) ? alRes.filter((a) => !a.targetRole || a.targetRole === 'student') : []);
+    } catch {
+      setSlots(schoolStore.getTimetableForClass(cls));
+      setAlerts(schoolStore.getAlertsForUser('student', { class: cls }));
+    }
   };
 
   useEffect(() => {

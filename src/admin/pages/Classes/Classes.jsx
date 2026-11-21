@@ -77,12 +77,28 @@ export function ClassScheduling() {
 
   const availableClasses = classesList.length > 0 ? classesList : SCHOOL_CLASSES;
 
-  const loadData = () => {
-    setTeachersList(schoolStore.getTeachers());
-    setStudentsList(schoolStore.getStudents());
-    setSubjectsList(schoolStore.getSubjects());
-    setClassesList(schoolStore.getClasses());
-    setClassObjects(schoolStore.getClassObjects());
+  const loadData = async () => {
+    try {
+      const [t, s, sub, cls] = await Promise.all([
+        schoolStore.fetchTeachers(),
+        schoolStore.fetchStudents(),
+        schoolStore.fetchSubjects(),
+        schoolStore.fetchClasses()
+      ]);
+      if (t) setTeachersList(Array.isArray(t) ? t : (t.data || []));
+      if (s) setStudentsList(Array.isArray(s) ? s : (s.data || []));
+      if (sub) setSubjectsList(sub);
+      if (cls) {
+        setClassesList(cls.map((c) => c.name || c));
+        setClassObjects(cls);
+      }
+    } catch {
+      setTeachersList(schoolStore.getTeachers());
+      setStudentsList(schoolStore.getStudents());
+      setSubjectsList(schoolStore.getSubjects());
+      setClassesList(schoolStore.getClasses());
+      setClassObjects(schoolStore.getClassObjects());
+    }
   };
 
   const openAssignClassTeacherModal = (className, currentTeacherId = '') => {

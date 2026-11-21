@@ -42,15 +42,30 @@ export function StaffAnnouncements() {
     isPinned: false
   });
 
-  const refreshData = () => {
-    const teachers = schoolStore.getTeachers();
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const teacher =
-      teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
-      teachers[0] ||
-      { name: saved.name || 'Teaching Staff' };
-    setCurrentTeacher(teacher);
-    setAnnouncements(schoolStore.getAnnouncementsForUser('teacher'));
+  const refreshData = async () => {
+    try {
+      const [tRes, aRes] = await Promise.all([
+        schoolStore.fetchTeachers(),
+        schoolStore.fetchAnnouncements()
+      ]);
+      const teachers = Array.isArray(tRes) ? tRes : (tRes?.data || []);
+      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+      const teacher =
+        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
+        teachers[0] ||
+        { name: saved.name || 'Teaching Staff' };
+      setCurrentTeacher(teacher);
+      setAnnouncements(Array.isArray(aRes) ? aRes.filter((a) => a.targetRole === 'all' || a.targetRole === 'teacher') : []);
+    } catch {
+      const teachers = schoolStore.getTeachers();
+      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+      const teacher =
+        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
+        teachers[0] ||
+        { name: saved.name || 'Teaching Staff' };
+      setCurrentTeacher(teacher);
+      setAnnouncements(schoolStore.getAnnouncementsForUser('teacher'));
+    }
   };
 
   useEffect(() => {

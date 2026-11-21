@@ -28,22 +28,37 @@ export function StudentAssignments() {
   const [submitForm, setSubmitForm] = useState({ notes: '', fileName: '', fileObj: null });
   const [toast, setToast] = useState(null);
 
-  const loadData = () => {
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const students = schoolStore.getStudents();
-    const matched =
-      students.find(
-        (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
-      ) || students[0];
-    setActiveStudent(matched);
-    const allAsg = schoolStore.getAssignments();
-    const studentSubjects = matched?.enrolledSubjects || schoolStore.getSubjectsForClass(matched?.class);
-    const relevant = allAsg.filter(
-      (a) =>
-        (!matched?.class || a.class === 'All Classes' || a.class === matched.class) &&
-        (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
-    );
-    setAssignments(relevant);
+  const loadData = async () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+      const [sRes, aRes] = await Promise.all([
+        schoolStore.fetchStudents(),
+        schoolStore.fetchAssignments()
+      ]);
+      const students = Array.isArray(sRes) ? sRes : (sRes?.data || []);
+      const matched =
+        students.find(
+          (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
+        ) || students[0];
+      setActiveStudent(matched);
+      const allAsg = Array.isArray(aRes) ? aRes : [];
+      const studentSubjects = matched?.enrolledSubjects || schoolStore.getSubjectsForClass(matched?.class);
+      const relevant = allAsg.filter(
+        (a) =>
+          (!matched?.class || a.class === 'All Classes' || a.class === matched.class) &&
+          (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
+      );
+      setAssignments(relevant);
+    } catch {
+      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+      const students = schoolStore.getStudents();
+      const matched =
+        students.find(
+          (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
+        ) || students[0];
+      setActiveStudent(matched);
+      setAssignments(schoolStore.getAssignments());
+    }
   };
 
   useEffect(() => {

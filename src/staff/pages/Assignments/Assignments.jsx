@@ -46,28 +46,43 @@ export function StaffAssignments() {
     fileObj: null
   });
 
-  const refreshData = () => {
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const teachers = schoolStore.getTeachers();
-    const teacher =
-      teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
-      teachers[0] ||
-      null;
-    setCurrentTeacher(teacher);
-    const teacherClasses = schoolStore.getClassesForTeacher(teacher);
-    const teacherSubjects = schoolStore.getSubjectsForTeacher(teacher);
-    const all = schoolStore.getAssignments();
-    if (teacher?.assignedClasses && teacher.assignedClasses.length > 0) {
-      setAssignments(
-        all.filter(
-          (a) =>
-            a.author === teacher.name ||
-            teacherClasses.includes(a.class) ||
-            teacherSubjects.includes(a.subject)
-        )
-      );
-    } else {
-      setAssignments(all);
+  const refreshData = async () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+      const [tRes, aRes] = await Promise.all([
+        schoolStore.fetchTeachers(),
+        schoolStore.fetchAssignments()
+      ]);
+      const teachers = Array.isArray(tRes) ? tRes : (tRes?.data || []);
+      const teacher =
+        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
+        teachers[0] ||
+        null;
+      setCurrentTeacher(teacher);
+      const teacherClasses = schoolStore.getClassesForTeacher(teacher);
+      const teacherSubjects = schoolStore.getSubjectsForTeacher(teacher);
+      const all = Array.isArray(aRes) ? aRes : [];
+      if (teacher?.assignedClasses && teacher.assignedClasses.length > 0) {
+        setAssignments(
+          all.filter(
+            (a) =>
+              a.author === teacher.name ||
+              teacherClasses.includes(a.class) ||
+              teacherSubjects.includes(a.subject)
+          )
+        );
+      } else {
+        setAssignments(all);
+      }
+    } catch {
+      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+      const teachers = schoolStore.getTeachers();
+      const teacher =
+        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
+        teachers[0] ||
+        null;
+      setCurrentTeacher(teacher);
+      setAssignments(schoolStore.getAssignments());
     }
   };
 

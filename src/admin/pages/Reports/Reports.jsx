@@ -21,35 +21,52 @@ export function AdminReports() {
   const [reportCard, setReportCard] = useState(null);
 
   useEffect(() => {
-    const sync = () => {
-      const list = schoolStore.getStudents();
-      setStudents(list);
-      if (studentParam && list.some((s) => s.id === studentParam)) {
-        const target = list.find((s) => s.id === studentParam);
-        setSelectedStudentId(studentParam);
-        if (target) setSelectedClassFilter(target.class);
-      } else if (list.length > 0 && !selectedStudentId) {
-        setSelectedStudentId(list[0].id);
-      } else if (list.length === 0) {
-        setSelectedStudentId('');
-        setReportCard(null);
+    let active = true;
+    const sync = async () => {
+      try {
+        const res = await schoolStore.fetchStudents();
+        if (!active) return;
+        const list = Array.isArray(res) ? res : (res?.data || []);
+        setStudents(list);
+        if (studentParam && list.some((s) => s.id === studentParam)) {
+          const target = list.find((s) => s.id === studentParam);
+          setSelectedStudentId(studentParam);
+          if (target) setSelectedClassFilter(target.class);
+        } else if (list.length > 0 && !selectedStudentId) {
+          setSelectedStudentId(list[0].id);
+        } else if (list.length === 0) {
+          setSelectedStudentId('');
+          setReportCard(null);
+        }
+      } catch {
+        const list = schoolStore.getStudents();
+        setStudents(list);
       }
     };
     sync();
-    return subscribeSchoolSync(sync);
+    const unsubscribe = subscribeSchoolSync(sync);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [studentParam]);
 
   useEffect(() => {
-    const updateCard = () => {
+    let active = true;
+    const updateCard = async () => {
       if (selectedStudentId) {
-        const generated = schoolStore.getStudentReportCard(selectedStudentId, selectedTerm, selectedSession);
-        setReportCard(generated);
+        const generated = await schoolStore.getStudentReportCard(selectedStudentId, selectedTerm, selectedSession);
+        if (active) setReportCard(generated);
       } else {
-        setReportCard(null);
+        if (active) setReportCard(null);
       }
     };
     updateCard();
-    return subscribeSchoolSync(updateCard);
+    const unsubscribe = subscribeSchoolSync(updateCard);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [selectedStudentId, selectedTerm, selectedSession]);
 
   return (

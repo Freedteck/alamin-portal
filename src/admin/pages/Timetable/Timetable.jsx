@@ -38,16 +38,32 @@ export function AdminTimetable() {
     notes: ''
   });
 
-  const loadData = () => {
-    setRevision((n) => n + 1);
-    setTeachers(schoolStore.getTeachers());
-    setAlerts(schoolStore.getAlertsForUser('admin'));
+  const loadData = async () => {
+    try {
+      const [tRes, , alRes] = await Promise.all([
+        schoolStore.fetchTeachers(),
+        schoolStore.fetchTimetable(selectedClass),
+        schoolStore.fetchAlerts()
+      ]);
+      setRevision((n) => n + 1);
+      if (tRes) setTeachers(Array.isArray(tRes) ? tRes : (tRes.data || []));
+      if (alRes) setAlerts(alRes);
+    } catch {
+      setRevision((n) => n + 1);
+      setTeachers(schoolStore.getTeachers());
+      setAlerts(schoolStore.getAlertsForUser('admin'));
+    }
   };
 
   useEffect(() => {
     loadData();
-    return subscribeSchoolSync(loadData);
-  }, []);
+    const unsubscribe = subscribeSchoolSync((topic) => {
+      if (topic === 'timetable' || topic === 'alerts' || topic === 'teachers' || !topic) {
+        loadData();
+      }
+    });
+    return unsubscribe;
+  }, [selectedClass]);
 
   const showToast = (msg) => {
     setToast(msg);

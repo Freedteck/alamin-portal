@@ -14,18 +14,11 @@ import {
 } from 'lucide-react';
 import { Sidebar } from '../../shared/components/Sidebar/Sidebar';
 import { apiClient } from '../../shared/lib/apiClient';
-import { refreshCloudData } from '../../shared/data/schoolData';
 
 export function AdminLayout() {
   const navigate = useNavigate();
   const storedUser = JSON.parse(localStorage.getItem('alamin_user') || 'null');
   const hasToken = Boolean(apiClient.getToken());
-
-  useEffect(() => {
-    if (hasToken) {
-      refreshCloudData();
-    }
-  }, [hasToken]);
 
   if (!storedUser || !storedUser.role || !hasToken) {
     return <Navigate to="/login" replace />;

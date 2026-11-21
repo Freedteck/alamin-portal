@@ -30,21 +30,43 @@ export function ClassScheduling() {
   });
   const [toast, setToast] = useState(null);
 
-  const loadScheduleData = () => {
-    const teachers = schoolStore.getTeachers();
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const teacher =
-      teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
-      teachers[0] ||
-      { name: saved.name || 'Teaching Staff' };
-    setCurrentTeacher(teacher);
-    setSlots(schoolStore.getTimetableSlots());
-    setAlerts(schoolStore.getAlertsForUser('teacher', { name: teacher.name }));
+  const loadScheduleData = async () => {
+    try {
+      const [tRes, ttRes, alRes] = await Promise.all([
+        schoolStore.fetchTeachers(),
+        schoolStore.fetchTimetable(),
+        schoolStore.fetchAlerts()
+      ]);
+      const teachers = Array.isArray(tRes) ? tRes : (tRes?.data || []);
+      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+      const teacher =
+        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
+        teachers[0] ||
+        { name: saved.name || 'Teaching Staff' };
+      setCurrentTeacher(teacher);
+      setSlots(Array.isArray(ttRes) ? ttRes : []);
+      setAlerts(Array.isArray(alRes) ? alRes : []);
+    } catch {
+      const teachers = schoolStore.getTeachers();
+      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+      const teacher =
+        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
+        teachers[0] ||
+        { name: saved.name || 'Teaching Staff' };
+      setCurrentTeacher(teacher);
+      setSlots(schoolStore.getTimetableSlots());
+      setAlerts(schoolStore.getAlertsForUser('teacher', { name: teacher.name }));
+    }
   };
 
   useEffect(() => {
     loadScheduleData();
-    return subscribeSchoolSync(loadScheduleData);
+    const unsubscribe = subscribeSchoolSync((topic) => {
+      if (topic === 'timetable' || topic === 'alerts' || topic === 'teachers' || !topic) {
+        loadScheduleData();
+      }
+    });
+    return unsubscribe;
   }, []);
 
   const showToast = (msg) => {

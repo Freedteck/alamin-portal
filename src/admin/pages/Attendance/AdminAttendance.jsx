@@ -41,28 +41,61 @@ export function AdminAttendance() {
   const [studentAuditData, setStudentAuditData] = useState(null);
 
   useEffect(() => {
-    const sync = () => {
-      const students = schoolStore.getStudents();
-      setAllStudents(students);
-      setAllAttendance(schoolStore.getAttendance());
-      if (!selectedStudentId && students.length > 0) {
-        setSelectedStudentId(students[0].id);
-      } else if (students.length === 0) {
-        setSelectedStudentId('');
+    let active = true;
+    const sync = async () => {
+      try {
+        const [studentsRes, attRes] = await Promise.all([
+          schoolStore.fetchStudents(),
+          schoolStore.fetchAttendance({ date: selectedDate })
+        ]);
+        if (!active) return;
+        const students = Array.isArray(studentsRes) ? studentsRes : (studentsRes?.data || []);
+        setAllStudents(students);
+        setAllAttendance(attRes || {});
+        if (!selectedStudentId && students.length > 0) {
+          setSelectedStudentId(students[0].id);
+        } else if (students.length === 0) {
+          setSelectedStudentId('');
+        }
+      } catch {
+        const students = schoolStore.getStudents();
+        setAllStudents(students);
+        setAllAttendance(schoolStore.getAttendance());
       }
     };
     sync();
-    return subscribeSchoolSync(sync);
+    const unsubscribe = subscribeSchoolSync((topic) => {
+      if (topic === 'attendance' || topic === 'students' || !topic) {
+        sync();
+      }
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [selectedDate]);
 
   useEffect(() => {
+    let active = true;
     if (selectedStudentId) {
-      const audit = schoolStore.getStudentAttendanceHistory(selectedStudentId);
-      setStudentAuditData(audit?.student ? audit : null);
-      setAuditPage(1);
+      schoolStore.fetchStudentAttendanceHistory(selectedStudentId).then((audit) => {
+        if (active) {
+          setStudentAuditData(audit?.student ? audit : null);
+          setAuditPage(1);
+        }
+      }).catch(() => {
+        if (active) {
+          const audit = schoolStore.getStudentAttendanceHistory(selectedStudentId);
+          setStudentAuditData(audit?.student ? audit : null);
+          setAuditPage(1);
+        }
+      });
     } else {
       setStudentAuditData(null);
     }
+    return () => {
+      active = false;
+    };
   }, [selectedStudentId, allAttendance]);
 
   const classStatus = SCHOOL_CLASSES.map((cls) => {

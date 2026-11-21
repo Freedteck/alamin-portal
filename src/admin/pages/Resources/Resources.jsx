@@ -75,16 +75,29 @@ export function AdminResources() {
     priority: 'medium'
   });
 
-  const refreshData = () => {
-    setResources(schoolStore.getResources());
-    setEquipment(schoolStore.getEquipment());
-    setMaintenance(schoolStore.getMaintenance());
-    const subs = schoolStore.getSubjectNames();
-    setSubjectNames(subs);
-    setResourceForm((prev) => ({
-      ...prev,
-      subject: prev.subject || subs[0] || 'Mathematics'
-    }));
+  const refreshData = async () => {
+    try {
+      const [rRes, eRes, mRes, subRes] = await Promise.all([
+        schoolStore.fetchResources(),
+        schoolStore.fetchEquipment(),
+        schoolStore.fetchMaintenance(),
+        schoolStore.fetchSubjects()
+      ]);
+      setResources(Array.isArray(rRes) ? rRes : []);
+      setEquipment(Array.isArray(eRes) ? eRes : []);
+      setMaintenance(Array.isArray(mRes) ? mRes : []);
+      const subs = Array.isArray(subRes) ? subRes.map((s) => s.name || s) : schoolStore.getSubjectNames();
+      setSubjectNames(subs);
+      setResourceForm((prev) => ({
+        ...prev,
+        subject: prev.subject || subs[0] || 'Mathematics'
+      }));
+    } catch {
+      setResources(schoolStore.getResources());
+      setEquipment(schoolStore.getEquipment());
+      setMaintenance(schoolStore.getMaintenance());
+      setSubjectNames(schoolStore.getSubjectNames());
+    }
   };
 
   useEffect(() => {

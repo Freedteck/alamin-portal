@@ -23,102 +23,103 @@ export function StudentDashboard() {
   const [averageGrade, setAverageGrade] = useState('—');
   const [toast, setToast] = useState(null);
 
-  const loadStudentDashboard = () => {
+  const loadStudentDashboard = async () => {
     const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
     if (saved.name) setAccountName(saved.name);
 
-    const students = schoolStore.getStudents();
-    const activeStudent =
-      students.find(
-        (s) =>
-          (saved.email && s.email?.toLowerCase() === saved.email.toLowerCase()) ||
-          s.id === saved.id ||
-          (saved.name && s.name?.toLowerCase() === saved.name.toLowerCase())
-      ) ||
-      students[0] ||
-      null;
-    setUser(activeStudent);
+    try {
+      const [studentsRes] = await Promise.all([
+        schoolStore.fetchStudents(),
+        schoolStore.fetchTimetable(),
+        schoolStore.fetchAssignments(),
+        schoolStore.fetchAnnouncements()
+      ]);
+      const students = Array.isArray(studentsRes) ? studentsRes : (studentsRes?.data || []);
+      const activeStudent =
+        students.find(
+          (s) =>
+            (saved.email && s.email?.toLowerCase() === saved.email.toLowerCase()) ||
+            s.id === saved.id ||
+            (saved.name && s.name?.toLowerCase() === saved.name.toLowerCase())
+        ) ||
+        students[0] ||
+        null;
+      setUser(activeStudent);
 
-    if (activeStudent) {
-      setAttendanceSummary(schoolStore.getStudentAttendanceHistory(activeStudent.id));
-      const classSlots = schoolStore
-        .getTimetableForClass(activeStudent.class)
-        .filter((s) => s.type === 'lesson')
-        .slice(0, 4);
-      setUpcomingClasses(classSlots);
+      if (activeStudent) {
+        const historyAudit = await schoolStore.fetchStudentAttendanceHistory(activeStudent.id).catch(() => null);
+        setAttendanceSummary(historyAudit || schoolStore.getStudentAttendanceHistory(activeStudent.id));
+        const classSlots = schoolStore
+          .getTimetableForClass(activeStudent.class)
+          .filter((s) => s.type === 'lesson')
+          .slice(0, 4);
+        setUpcomingClasses(classSlots);
 
-      const studentSubjects = activeStudent.enrolledSubjects || schoolStore.getSubjectsForClass(activeStudent.class);
-      const asgs = schoolStore
-        .getAssignments()
-        .filter(
-          (a) =>
-            (a.class === 'All Classes' || a.class === activeStudent.class) &&
-            (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
-        )
-        .slice(0, 4)
-        .map((a) => {
-          const submitted = a.submissions?.some((sub) => sub.studentId === activeStudent.id);
-          return {
-            id: a.id,
-            subject: a.subject,
-            title: a.title,
-            dueDate: a.dueDate,
-            status: submitted ? 'submitted' : 'not-started'
-          };
-        });
-      setPendingAssignments(asgs);
+        const studentSubjects = activeStudent.enrolledSubjects || schoolStore.getSubjectsForClass(activeStudent.class);
+        const asgs = schoolStore
+          .getAssignments()
+          .filter(
+            (a) =>
+              (a.class === 'All Classes' || a.class === activeStudent.class) &&
+              (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
+          )
+          .slice(0, 4)
+          .map((a) => {
+            const submitted = a.submissions?.some((sub) => sub.studentId === activeStudent.id);
+            return {
+              id: a.id,
+              subject: a.subject,
+              title: a.title,
+              dueDate: a.dueDate,
+              status: submitted ? 'submitted' : 'not-started'
+            };
+          });
+        setPendingAssignments(asgs);
 
-      const notices = schoolStore
-        .getAnnouncementsForUser('student', activeStudent.class)
-        .slice(0, 3)
-        .map((n) => ({
-          title: n.title,
-          message: n.content,
-          date: n.date,
-          priority: n.priority || 'medium'
-        }));
-      setAnnouncements(notices);
-
-      const report = schoolStore.getStudentReportCard(activeStudent.id, 'Term1', ACADEMIC_SESSIONS[0]);
-      const recordedScores = (report?.subjectScores || []).filter((s) => s.isRecorded);
-      setRecentGrades(
-        recordedScores.slice(0, 4).map((s) => ({
-          subject: s.subject,
-          assessment: 'Continuous Assessment & Exam',
-          grade: s.grade,
-          score: `${s.total}%`,
-          date: `${report.session} · ${report.term}`
-        }))
-      );
-      setSubjectProgress(
-        recordedScores.slice(0, 4).map((s) => ({
-          name: s.subject,
-          classLabel: activeStudent.class,
-          pct: Math.min(100, Math.max(0, s.total)),
-          note: s.remark || 'Assessment recorded'
-        }))
-      );
-      setAverageGrade(
-        recordedScores.length > 0 ? computeGrade(Number(report.average || 0)).grade : '—'
-      );
-    } else {
-      setAttendanceSummary(null);
-      setUpcomingClasses([]);
-      setPendingAssignments([]);
-      setAnnouncements(
-        schoolStore
-          .getAnnouncementsForUser('student')
+        const notices = schoolStore
+          .getAnnouncementsForUser('student', activeStudent.class)
           .slice(0, 3)
           .map((n) => ({
             title: n.title,
             message: n.content,
             date: n.date,
             priority: n.priority || 'medium'
+          }));
+        setAnnouncements(notices);
+
+        const report = await schoolStore.getStudentReportCard(activeStudent.id, 'Term1', ACADEMIC_SESSIONS[0]);
+        const recordedScores = (report?.subjectScores || []).filter((s) => s.isRecorded);
+        setRecentGrades(
+          recordedScores.slice(0, 4).map((s) => ({
+            subject: s.subject,
+            assessment: 'Continuous Assessment & Exam',
+            grade: s.grade,
+            score: `${s.total}%`,
+            date: `${report.session} · ${report.term}`
           }))
-      );
-      setRecentGrades([]);
-      setSubjectProgress([]);
-      setAverageGrade('—');
+        );
+        setSubjectProgress(
+          recordedScores.slice(0, 4).map((s) => ({
+            name: s.subject,
+            classLabel: activeStudent.class,
+            pct: Math.min(100, Math.max(0, s.total)),
+            note: s.remark || 'Assessment recorded'
+          }))
+        );
+        setAverageGrade(
+          recordedScores.length > 0 ? computeGrade(Number(report.average || 0)).grade : '—'
+        );
+      } else {
+        setAttendanceSummary(null);
+        setUpcomingClasses([]);
+        setPendingAssignments([]);
+        setAnnouncements([]);
+        setRecentGrades([]);
+        setSubjectProgress([]);
+        setAverageGrade('—');
+      }
+    } catch {
+      setUser(null);
     }
   };
 

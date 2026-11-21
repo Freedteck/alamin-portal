@@ -86,20 +86,45 @@ export function StaffAttendance() {
 
   useEffect(() => {
     if (!selectedClass) return;
-    const allStudents = schoolStore.getStudents().filter((s) => s.class === selectedClass);
-    setStudents(allStudents);
+    let active = true;
+    const loadClassAttendance = async () => {
+      try {
+        const [stuRes, attRes] = await Promise.all([
+          schoolStore.fetchStudents({ class: selectedClass }),
+          schoolStore.fetchAttendance({ date: selectedDate, class: selectedClass })
+        ]);
+        if (!active) return;
+        const classStudents = Array.isArray(stuRes) ? stuRes : (stuRes?.data || []);
+        setStudents(classStudents);
 
-    const existing = schoolStore.getAttendanceForDateAndClass(selectedDate, selectedClass);
-    if (existing && existing.records) {
-      setAttendanceRecords(existing.records);
-    } else {
-      // Clean slate for unrecorded date: default unchecked (absent)
-      const defaults = {};
-      allStudents.forEach((s) => {
-        defaults[s.id] = 'absent';
-      });
-      setAttendanceRecords(defaults);
-    }
+        const key = `${selectedDate}_${selectedClass}`;
+        const existing = attRes && (attRes[key] || (attRes[selectedDate] && attRes[selectedDate][selectedClass]));
+        if (existing && existing.records) {
+          setAttendanceRecords(existing.records);
+        } else {
+          const defaults = {};
+          classStudents.forEach((s) => {
+            defaults[s.id] = 'absent';
+          });
+          setAttendanceRecords(defaults);
+        }
+      } catch {
+        const allStudents = schoolStore.getStudents().filter((s) => s.class === selectedClass);
+        setStudents(allStudents);
+        const existing = schoolStore.getAttendanceForDateAndClass(selectedDate, selectedClass);
+        if (existing && existing.records) {
+          setAttendanceRecords(existing.records);
+        } else {
+          const defaults = {};
+          allStudents.forEach((s) => {
+            defaults[s.id] = 'absent';
+          });
+          setAttendanceRecords(defaults);
+        }
+      }
+    };
+    loadClassAttendance();
+    return () => { active = false; };
   }, [selectedClass, selectedDate, syncTick]);
 
   useEffect(() => {
@@ -107,20 +132,22 @@ export function StaffAttendance() {
   }, [selectedStudentId]);
 
   useEffect(() => {
-    const eligibleStudents = schoolStore
-      .getStudents()
-      .filter((s) => teacherClasses.length === 0 || teacherClasses.includes(s.class));
-
-    if (selectedStudentId && eligibleStudents.some((s) => s.id === selectedStudentId)) {
-      const audit = schoolStore.getStudentAttendanceHistory(selectedStudentId);
-      setStudentAuditData(audit);
-    } else if (eligibleStudents.length > 0) {
-      setSelectedStudentId(eligibleStudents[0].id);
-      setStudentAuditData(schoolStore.getStudentAttendanceHistory(eligibleStudents[0].id));
-    } else {
-      setStudentAuditData(null);
-    }
-  }, [selectedStudentId, teacherClasses.join(','), syncTick]);
+    let active = true;
+    const loadAudit = async () => {
+      if (!selectedStudentId) {
+        setStudentAuditData(null);
+        return;
+      }
+      try {
+        const audit = await schoolStore.fetchStudentAttendanceHistory(selectedStudentId);
+        if (active) setStudentAuditData(audit);
+      } catch {
+        if (active) setStudentAuditData(schoolStore.getStudentAttendanceHistory(selectedStudentId));
+      }
+    };
+    loadAudit();
+    return () => { active = false; };
+  }, [selectedStudentId, syncTick]);
 
   // If user is not assigned as a Class Teacher
   if (!isClassTeacher && savedUser.role === 'teacher') {

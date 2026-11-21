@@ -15,7 +15,7 @@ import { Logo } from '../components/Logo/Logo';
 import { Modal } from '../components/Modal/Modal';
 import { apiClient } from '../lib/apiClient';
 import { submitPublicEnquiry } from '../lib/schoolSync';
-import { refreshCloudData, schoolStore } from '../data/schoolData';
+import { schoolStore } from '../data/schoolData';
 
 export function Login({ initialModal = null }) {
   const navigate = useNavigate();
@@ -93,7 +93,6 @@ export function Login({ initialModal = null }) {
 
       apiClient.setToken(response.token);
       localStorage.setItem('alamin_user', JSON.stringify(response.user));
-      await refreshCloudData();
       navigate(`/${resolvedRole}/dashboard`);
     } catch (err) {
       setErrorMsg(err?.message || 'Authentication failed. Please try again.');

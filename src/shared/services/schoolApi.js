@@ -49,35 +49,55 @@ function notifyChange(resource = 'all') {
 }
 
 export async function refreshCloudData() {
-  const token = apiClient.getToken();
-  if (!token) return false;
-  try {
-    const payload = await apiClient.get('/bootstrap');
-    if (payload && typeof payload === 'object') {
-      state = {
-        ...state,
-        ...payload
-      };
-      notifyChange('bootstrap');
-      return true;
-    }
-  } catch (err) {
-    console.warn('[Al-Amin Portal] Failed to refresh data from server:', err?.message || err);
-  }
-  return false;
+  // Global /bootstrap eager-loading eliminated in favor of route-level on-demand queries
+  return true;
 }
 
 export function initializeSchoolSync() {
   if (typeof window === 'undefined') return () => {};
 
-  if (apiClient.getToken()) {
-    refreshCloudData();
-  }
+  let eventSource = null;
+  const connectSSE = () => {
+    const token = apiClient.getToken();
+    if (!token) {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+      return;
+    }
+    if (eventSource) return;
+
+    try {
+      const url = apiClient.resolveUrl(`/events?token=${encodeURIComponent(token)}`);
+      eventSource = new EventSource(url);
+      eventSource.onmessage = (msg) => {
+        try {
+          const parsed = JSON.parse(msg.data || '{}');
+          if (parsed.action === 'connected') return;
+          notifyChange(parsed.resource || 'all');
+        } catch {}
+      };
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
+        }
+      };
+    } catch {}
+  };
+
+  connectSSE();
 
   const unbindAuth = apiClient.onAuthChange(({ authenticated }) => {
     if (authenticated) {
-      refreshCloudData();
+      connectSSE();
+      notifyChange('auth');
     } else {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
       state = {
         classes: [],
         subjects: [],
@@ -102,11 +122,26 @@ export function initializeSchoolSync() {
 
   return () => {
     unbindAuth();
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
   };
 }
 
 export const schoolStore = {
   // Classes
+  async fetchClasses() {
+    try {
+      const res = await apiClient.get('/classes');
+      if (Array.isArray(res)) {
+        state.classes = res;
+        notifyChange('classes');
+        return res;
+      }
+    } catch {}
+    return state.classes || [];
+  },
   getClasses() {
     if (state.classes && state.classes.length > 0) {
       return state.classes.map((c) => c.name || c);
@@ -142,23 +177,30 @@ export const schoolStore = {
   async assignClassTeacher(className, teacherId) {
     const res = await apiClient.post(`/classes/${encodeURIComponent(className)}/class-teacher`, { teacherId });
     if (res && !res.error) {
-      await refreshCloudData();
-      notifyChange('classes');
-      notifyChange('teachers');
+      await Promise.all([this.fetchClasses(), this.fetchTeachers()]);
     }
     return res;
   },
   async setTeacherClassTeacherOf(teacherId, classes) {
     const res = await apiClient.post(`/teachers/${teacherId}/class-teacher-of`, { classes });
     if (res && !res.error) {
-      await refreshCloudData();
-      notifyChange('teachers');
-      notifyChange('classes');
+      await Promise.all([this.fetchTeachers(), this.fetchClasses()]);
     }
     return res;
   },
 
   // Subjects
+  async fetchSubjects() {
+    try {
+      const res = await apiClient.get('/subjects');
+      if (Array.isArray(res)) {
+        state.subjects = res;
+        notifyChange('subjects');
+        return res;
+      }
+    } catch {}
+    return state.subjects || [];
+  },
   getSubjects() {
     return state.subjects || [];
   },
@@ -405,6 +447,18 @@ export const schoolStore = {
   },
 
   // Timetable
+  async fetchTimetable(className) {
+    try {
+      const qs = className ? `?class=${encodeURIComponent(className)}` : '';
+      const res = await apiClient.get(`/timetable${qs}`);
+      if (Array.isArray(res)) {
+        state.timetable = res;
+        notifyChange('timetable');
+        return res;
+      }
+    } catch {}
+    return state.timetable || [];
+  },
   getTimetableSlots() {
     return state.timetable || [];
   },
@@ -447,11 +501,33 @@ export const schoolStore = {
       };
     }
     const res = await apiClient.post('/timetable/reschedule', payload);
-    await refreshCloudData();
+    await this.fetchTimetable();
     return res || { success: true };
   },
 
   // Attendance
+  async fetchAttendance(params = {}) {
+    try {
+      const query = new URLSearchParams();
+      if (params.date) query.set('date', params.date);
+      if (params.class) query.set('class', params.class);
+      const qs = query.toString();
+      const res = await apiClient.get(`/attendance${qs ? `?${qs}` : ''}`);
+      if (res && typeof res === 'object') {
+        state.attendance = res;
+        notifyChange('attendance');
+        return res;
+      }
+    } catch {}
+    return state.attendance || {};
+  },
+  async fetchStudentAttendanceHistory(studentId) {
+    try {
+      return await apiClient.get(`/attendance/student/${studentId}`);
+    } catch {
+      return null;
+    }
+  },
   getAttendance() {
     return state.attendance || {};
   },
@@ -528,6 +604,17 @@ export const schoolStore = {
   },
 
   // Grades & Reports
+  async fetchGrades() {
+    try {
+      const res = await apiClient.get('/grades');
+      if (res && typeof res === 'object') {
+        state.grades = res;
+        notifyChange('grades');
+        return res;
+      }
+    } catch {}
+    return state.grades || {};
+  },
   getGrades() {
     return state.grades || {};
   },
@@ -625,6 +712,17 @@ export const schoolStore = {
   },
 
   // Announcements
+  async fetchAnnouncements() {
+    try {
+      const res = await apiClient.get('/announcements');
+      if (Array.isArray(res)) {
+        state.announcements = res;
+        notifyChange('announcements');
+        return res;
+      }
+    } catch {}
+    return state.announcements || [];
+  },
   getAnnouncements() {
     return state.announcements || [];
   },
@@ -658,6 +756,17 @@ export const schoolStore = {
   },
 
   // Assignments
+  async fetchAssignments() {
+    try {
+      const res = await apiClient.get('/assignments');
+      if (Array.isArray(res)) {
+        state.assignments = res;
+        notifyChange('assignments');
+        return res;
+      }
+    } catch {}
+    return state.assignments || [];
+  },
   getAssignments() {
     return state.assignments || [];
   },
@@ -685,11 +794,22 @@ export const schoolStore = {
   },
   async submitStudentAssignment(assignmentId, submission) {
     const res = await apiClient.post(`/assignments/${assignmentId}/submit`, submission);
-    await refreshCloudData();
+    await this.fetchAssignments();
     return res;
   },
 
   // Resources
+  async fetchResources() {
+    try {
+      const res = await apiClient.get('/resources');
+      if (Array.isArray(res)) {
+        state.resources = res;
+        notifyChange('resources');
+        return res;
+      }
+    } catch {}
+    return state.resources || [];
+  },
   getResources() {
     return state.resources || [];
   },
@@ -735,6 +855,17 @@ export const schoolStore = {
   },
 
   // Documents
+  async fetchDocuments() {
+    try {
+      const res = await apiClient.get('/documents');
+      if (Array.isArray(res)) {
+        state.documents = res;
+        notifyChange('documents');
+        return res;
+      }
+    } catch {}
+    return state.documents || [];
+  },
   getDocuments() {
     return state.documents || [];
   },
@@ -765,6 +896,17 @@ export const schoolStore = {
   },
 
   // Equipment & Maintenance
+  async fetchEquipment() {
+    try {
+      const res = await apiClient.get('/equipment');
+      if (Array.isArray(res)) {
+        state.equipment = res;
+        notifyChange('equipment');
+        return res;
+      }
+    } catch {}
+    return state.equipment || [];
+  },
   getEquipment() {
     return state.equipment || [];
   },
@@ -781,6 +923,17 @@ export const schoolStore = {
     state.equipment = (state.equipment || []).filter((e) => e.id !== id);
     notifyChange('equipment');
     return state.equipment;
+  },
+  async fetchMaintenance() {
+    try {
+      const res = await apiClient.get('/maintenance');
+      if (Array.isArray(res)) {
+        state.maintenance = res;
+        notifyChange('maintenance');
+        return res;
+      }
+    } catch {}
+    return state.maintenance || [];
   },
   getMaintenance() {
     return state.maintenance || [];
@@ -803,6 +956,17 @@ export const schoolStore = {
   },
 
   // Requests
+  async fetchRequests() {
+    try {
+      const res = await apiClient.get('/requests');
+      if (Array.isArray(res)) {
+        state.requests = res;
+        notifyChange('requests');
+        return res;
+      }
+    } catch {}
+    return state.requests || [];
+  },
   getRequests() {
     return state.requests || [];
   },
@@ -824,6 +988,17 @@ export const schoolStore = {
   },
 
   // Teacher Availability
+  async fetchAvailability() {
+    try {
+      const res = await apiClient.get('/availability');
+      if (Array.isArray(res)) {
+        state.availability = res;
+        notifyChange('availability');
+        return res;
+      }
+    } catch {}
+    return state.availability || [];
+  },
   getTeacherAvailability() {
     return state.availability || [];
   },
@@ -858,6 +1033,17 @@ export const schoolStore = {
   },
 
   // Alerts
+  async fetchAlerts() {
+    try {
+      const res = await apiClient.get('/alerts');
+      if (Array.isArray(res)) {
+        state.alerts = res;
+        notifyChange('alerts');
+        return res;
+      }
+    } catch {}
+    return state.alerts || [];
+  },
   getAlertsForUser(user) {
     return state.alerts || [];
   },
@@ -893,7 +1079,7 @@ export const schoolStore = {
         };
         localStorage.setItem('alamin_user', JSON.stringify(updated));
       } catch {}
-      await refreshCloudData();
+      notifyChange('users');
     }
     return res;
   },
@@ -904,7 +1090,8 @@ export const schoolStore = {
   },
   async executeSessionRollover(payload) {
     const res = await apiClient.post('/academic/rollover-session', payload);
-    await refreshCloudData();
+    await this.fetchStudents();
+    notifyChange('students');
     return res;
   },
 

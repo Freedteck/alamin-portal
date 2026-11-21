@@ -24,15 +24,37 @@ export function Dashboard() {
   const [assignments, setAssignments] = useState([]);
 
   useEffect(() => {
-    const sync = () => {
-      setStudents(schoolStore.getStudents());
-      setTeachers(schoolStore.getTeachers());
-      setAttendanceMap(schoolStore.getAttendance());
-      setAnnouncements(schoolStore.getAnnouncements());
-      setAssignments(schoolStore.getAssignments());
+    let active = true;
+    const sync = async () => {
+      try {
+        const [studentsRes, teachersRes, attendanceRes, announcementsRes, assignmentsRes] = await Promise.all([
+          schoolStore.fetchStudents(),
+          schoolStore.fetchTeachers(),
+          schoolStore.fetchAttendance(),
+          schoolStore.fetchAnnouncements(),
+          schoolStore.fetchAssignments()
+        ]);
+        if (!active) return;
+        setStudents(Array.isArray(studentsRes) ? studentsRes : (studentsRes?.data || []));
+        setTeachers(Array.isArray(teachersRes) ? teachersRes : (teachersRes?.data || []));
+        setAttendanceMap(attendanceRes || {});
+        setAnnouncements(announcementsRes || []);
+        setAssignments(assignmentsRes || []);
+      } catch {
+        if (!active) return;
+        setStudents(schoolStore.getStudents());
+        setTeachers(schoolStore.getTeachers());
+        setAttendanceMap(schoolStore.getAttendance());
+        setAnnouncements(schoolStore.getAnnouncements());
+        setAssignments(schoolStore.getAssignments());
+      }
     };
     sync();
-    return subscribeSchoolSync(sync);
+    const unsubscribe = subscribeSchoolSync(sync);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   const totalStudents = students.length;
