@@ -35,7 +35,7 @@ export function StudentResources() {
       ) || students[0];
     setActiveStudent(matched);
     const studentSubjects = matched?.enrolledSubjects || schoolStore.getSubjectsForClass(matched?.class);
-    setResources(schoolStore.getResourcesForUser('student', matched?.class || 'SSS 2', studentSubjects));
+    setResources(schoolStore.getResourcesForUser('student', matched?.class || '', studentSubjects));
   };
 
   useEffect(() => {

@@ -34,7 +34,7 @@ export function StaffAssignments() {
   const [currentTeacher, setCurrentTeacher] = useState(null);
   const [form, setForm] = useState({
     title: '',
-    class: 'SSS 2',
+    class: 'JSS 1',
     subject: 'Mathematics',
     dueDate: '',
     totalMarks: '20',
@@ -90,7 +90,7 @@ export function StaffAssignments() {
   const subjectOptions = teacherSubjects.length > 0 ? teacherSubjects : schoolStore.getSubjectsForClass(form.class);
 
   const openCreateModal = () => {
-    const defaultCls = teacherClasses[0] || 'SSS 2';
+    const defaultCls = teacherClasses[0] || schoolStore.getClasses()[0] || 'JSS 1';
     const subs = schoolStore.getSubjectsForClassForTeacher(defaultCls, currentTeacher);
     setEditingId(null);
     setForm({
@@ -110,10 +110,11 @@ export function StaffAssignments() {
   };
 
   const openEditModal = (asg) => {
+    const defaultCls = teacherClasses[0] || schoolStore.getClasses()[0] || 'JSS 1';
     setEditingId(asg.id);
     setForm({
       title: asg.title || '',
-      class: asg.class || 'SSS 2',
+      class: asg.class || defaultCls,
       subject: asg.subject || 'Mathematics',
       dueDate: asg.dueDate || '',
       totalMarks: String(asg.totalMarks || 20),
@@ -283,7 +284,7 @@ export function StaffAssignments() {
                             <span>{fileLabel}</span>
                           </span>
                         ) : (
-                          'None'
+                          '-'
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-[#44443b]">{asg.dueDate}</td>

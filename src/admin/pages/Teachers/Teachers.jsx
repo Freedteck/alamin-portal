@@ -36,7 +36,6 @@ export function TeacherManagement() {
   const [allocSubject, setAllocSubject] = useState('Mathematics');
 
   const [newTeacher, setNewTeacher] = useState({
-    title: 'Mr.',
     firstName: '',
     lastName: '',
     email: '',
@@ -126,14 +125,13 @@ export function TeacherManagement() {
       return;
     }
 
-    const titlePrefix = newTeacher.title ? `${newTeacher.title} ` : '';
-    const fullName = `${titlePrefix}${newTeacher.firstName.trim()} ${newTeacher.lastName.trim()}`.trim();
+    const fullName = `${newTeacher.firstName.trim()} ${newTeacher.lastName.trim()}`.trim();
 
     const teacherObj = {
       name: fullName,
       email: newTeacher.email.trim().toLowerCase(),
-      phone: newTeacher.phone.trim() || '+234 800 000 0000',
-      qualification: newTeacher.qualification.trim() || 'B.Sc. Ed / PGDE',
+      phone: newTeacher.phone.trim() || '-',
+      qualification: newTeacher.qualification.trim() || '-',
       status: 'active',
       assignedClasses: [
         { class: newTeacher.primaryClass, subject: newTeacher.primarySubject }
@@ -367,7 +365,7 @@ export function TeacherManagement() {
                   return (
                     <tr key={teacher.id} className="hover:bg-[#fbf8ed] transition-colors">
                       <td className="py-3.5 px-5 font-mono text-xs font-bold text-[#616218]">
-                        {teacher.staffId || 'ASS/staff/001'}
+                        {teacher.staffId || '-'}
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
@@ -466,28 +464,8 @@ export function TeacherManagement() {
             </div>
           )}
           <div className="grid grid-cols-1 gap-4">
-            <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-              <div className="space-y-1.5 sm:col-span-1">
-                <label className="text-xs font-semibold text-[#1c1c14]" htmlFor="t-title">
-                  Title
-                </label>
-                <select
-                  id="t-title"
-                  className="w-full h-10 px-2 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
-                  value={newTeacher.title}
-                  onChange={(e) => setNewTeacher({ ...newTeacher, title: e.target.value })}
-                >
-                  <option value="Mr.">Mr.</option>
-                  <option value="Mrs.">Mrs.</option>
-                  <option value="Ms.">Ms.</option>
-                  <option value="Ustaz">Ustaz</option>
-                  <option value="Mal.">Mal.</option>
-                  <option value="Dr.">Dr.</option>
-                  <option value="Engr.">Engr.</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5 sm:col-span-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-[#1c1c14]" htmlFor="t-fname">
                   First Name *
                 </label>
@@ -501,7 +479,7 @@ export function TeacherManagement() {
                 />
               </div>
 
-              <div className="space-y-1.5 sm:col-span-2">
+              <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-[#1c1c14]" htmlFor="t-lname">
                   Surname (Last Name) *
                 </label>
@@ -785,20 +763,20 @@ export function TeacherManagement() {
                   <div>
                     <span className="text-[#797869] block">Staff ID</span>
                     <span className="font-mono font-bold text-[#616218]">
-                      {selectedTeacher.staffId || 'ASS/staff/001'}
+                      {selectedTeacher.staffId || '-'}
                     </span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Qualification</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedTeacher.qualification}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedTeacher.qualification || '-'}</span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Phone Number</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedTeacher.phone}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedTeacher.phone || '-'}</span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Email Address</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedTeacher.email}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedTeacher.email || '-'}</span>
                   </div>
                 </div>
               </div>

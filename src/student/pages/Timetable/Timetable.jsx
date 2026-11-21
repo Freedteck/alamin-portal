@@ -14,12 +14,13 @@ import {
 } from '../../../shared/data/schoolData';
 
 export function StudentTimetable() {
-  const [selectedClass, setSelectedClass] = useState('SSS 2');
+  const [selectedClass, setSelectedClass] = useState('');
   const [selectedDay, setSelectedDay] = useState('Full Week');
   const [slots, setSlots] = useState([]);
   const [alerts, setAlerts] = useState([]);
 
   const loadTimetable = (cls) => {
+    if (!cls) return;
     setSlots(schoolStore.getTimetableForClass(cls));
     setAlerts(schoolStore.getAlertsForUser('student', { class: cls }));
   };
@@ -31,7 +32,7 @@ export function StudentTimetable() {
       students.find(
         (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
       ) || students[0];
-    const initialClass = matched?.class || 'SSS 2';
+    const initialClass = matched?.class || schoolStore.getClasses()[0] || 'JSS 1';
     setSelectedClass(initialClass);
   }, []);
 

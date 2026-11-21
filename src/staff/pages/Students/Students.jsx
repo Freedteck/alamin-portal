@@ -478,25 +478,25 @@ export function StaffStudents() {
             <div className="grid grid-cols-2 gap-4 p-4 rounded-xl border border-[#c9c7b6]/60 bg-white">
               <div>
                 <span className="text-[#797869] block mb-0.5">State of Origin</span>
-                <span className="font-semibold text-[#1c1c14]">{selectedStudent.stateOfOrigin}</span>
+                <span className="font-semibold text-[#1c1c14]">{selectedStudent.stateOfOrigin || '-'}</span>
               </div>
               <div>
                 <span className="text-[#797869] block mb-0.5">Local Government Area</span>
-                <span className="font-semibold text-[#1c1c14]">{selectedStudent.lga}</span>
+                <span className="font-semibold text-[#1c1c14]">{selectedStudent.lga || '-'}</span>
               </div>
               <div>
                 <span className="text-[#797869] block mb-0.5">Date of Birth</span>
                 <span className="font-semibold text-[#1c1c14]">
-                  {selectedStudent.dateOfBirth || selectedStudent.dob || 'Not Provided'}
+                  {selectedStudent.dateOfBirth || selectedStudent.dob || '-'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block mb-0.5">Guardian Name</span>
-                <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentName}</span>
+                <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentName || '-'}</span>
               </div>
               <div className="col-span-2">
                 <span className="text-[#797869] block mb-0.5">Guardian Phone</span>
-                <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentPhone}</span>
+                <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentPhone || '-'}</span>
               </div>
             </div>
 

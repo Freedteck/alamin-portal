@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS public.teachers (
 
 CREATE TABLE IF NOT EXISTS public.timetable_slots (
   id TEXT PRIMARY KEY,
-  class TEXT NOT NULL DEFAULT 'SSS 2',
+  class TEXT NOT NULL DEFAULT '',
   day TEXT NOT NULL,
   start_time TEXT NOT NULL,
   end_time TEXT NOT NULL,
@@ -235,7 +235,7 @@ CREATE TABLE IF NOT EXISTS public.assignments (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   subject TEXT NOT NULL,
-  class TEXT NOT NULL DEFAULT 'SSS 2',
+  class TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
   due_date TEXT NOT NULL DEFAULT '',
   total_marks NUMERIC NOT NULL DEFAULT 20,

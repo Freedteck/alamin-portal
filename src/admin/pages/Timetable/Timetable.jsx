@@ -17,7 +17,7 @@ import {
 } from '../../../shared/data/schoolData';
 
 export function AdminTimetable() {
-  const [selectedClass, setSelectedClass] = useState('SSS 2');
+  const [selectedClass, setSelectedClass] = useState(SCHOOL_CLASSES[0] || 'JSS 1');
   const [, setRevision] = useState(0);
   const [teachers, setTeachers] = useState([]);
   const [alerts, setAlerts] = useState([]);
@@ -27,7 +27,7 @@ export function AdminTimetable() {
   const [toast, setToast] = useState('');
 
   const [formState, setFormState] = useState({
-    class: 'SSS 2',
+    class: SCHOOL_CLASSES[0] || 'JSS 1',
     day: 'Monday',
     type: 'lesson',
     subject: 'Mathematics',
@@ -57,7 +57,7 @@ export function AdminTimetable() {
   const classTimetable = schoolStore.getTimetableForClass(selectedClass);
 
   const openAddModal = (preset = {}) => {
-    const targetClass = selectedClass === 'All Classes' ? 'SSS 2' : selectedClass;
+    const targetClass = selectedClass === 'All Classes' ? (SCHOOL_CLASSES[0] || 'JSS 1') : selectedClass;
     const classSubjects = schoolStore.getSubjectsForClass(targetClass);
     setEditingSlot(null);
     setFormState({

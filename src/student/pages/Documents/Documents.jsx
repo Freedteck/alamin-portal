@@ -32,7 +32,7 @@ export function StudentDocuments() {
         (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
       ) || students[0];
     setActiveStudent(matched);
-    setDocuments(schoolStore.getDocumentsForUser('student', matched?.class || 'SSS 2'));
+    setDocuments(schoolStore.getDocumentsForUser('student', matched?.class || ''));
   };
 
   useEffect(() => {

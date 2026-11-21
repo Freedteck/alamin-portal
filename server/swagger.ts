@@ -679,6 +679,200 @@ export const openApiSpec = {
         ],
         responses: { 200: { description: 'Binary file stream' }, 404: { description: 'File not found' } }
       }
+    },
+    '/classes': {
+      get: {
+        tags: ['Classes'],
+        summary: 'List all academic classes',
+        security: bearerSecurity,
+        responses: { 200: { description: 'Array of classes' } }
+      },
+      post: {
+        tags: ['Classes'],
+        summary: 'Create a new class',
+        security: bearerSecurity,
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name'],
+                properties: {
+                  name: { type: 'string', example: 'SSS 1' },
+                  category: { type: 'string', example: 'Senior' }
+                }
+              }
+            }
+          }
+        },
+        responses: { 201: { description: 'Class created' }, 400: { description: 'Invalid payload' } }
+      }
+    },
+    '/classes/{id}': {
+      delete: {
+        tags: ['Classes'],
+        summary: 'Delete an academic class',
+        security: bearerSecurity,
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Class removed' }, 404: { description: 'Class not found' } }
+      }
+    },
+    '/students/{id}/credentials': {
+      post: {
+        tags: ['Students'],
+        summary: 'Generate or reset student login credentials',
+        security: bearerSecurity,
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  password: { type: 'string', example: 'studentPass123' }
+                }
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Credentials updated' } }
+      }
+    },
+    '/teachers/{id}/credentials': {
+      post: {
+        tags: ['Teachers'],
+        summary: 'Generate or reset teacher login credentials',
+        security: bearerSecurity,
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  password: { type: 'string', example: 'teacherPass123' }
+                }
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Credentials updated' } }
+      }
+    },
+    '/auth/forgot-password': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Request password reset OTP code',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['identifier'],
+                properties: {
+                  identifier: { type: 'string', example: 'staff@alaminschools.edu' }
+                }
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'OTP dispatched' } }
+      }
+    },
+    '/auth/reset-password': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Reset password using verified OTP code',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['identifier', 'otp', 'newPassword'],
+                properties: {
+                  identifier: { type: 'string', example: 'staff@alaminschools.edu' },
+                  otp: { type: 'string', example: '123456' },
+                  newPassword: { type: 'string', example: 'newSecret123' }
+                }
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Password reset successful' } }
+      }
+    },
+    '/academic/promotion-candidates': {
+      get: {
+        tags: ['Academic'],
+        summary: 'Fetch students eligible for end-of-year promotion',
+        security: bearerSecurity,
+        responses: { 200: { description: 'Candidates list' } }
+      }
+    },
+    '/academic/rollover-session': {
+      post: {
+        tags: ['Academic'],
+        summary: 'Execute annual session rollover and batch student promotion',
+        security: bearerSecurity,
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['nextSession', 'promotions'],
+                properties: {
+                  nextSession: { type: 'string', example: '2026/2027' },
+                  promotions: { type: 'array', items: { type: 'object' } }
+                }
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Session rollover executed' } }
+      }
+    },
+    '/academic/sessions': {
+      get: {
+        tags: ['Academic'],
+        summary: 'List academic sessions and terms',
+        security: bearerSecurity,
+        responses: { 200: { description: 'Academic sessions and active term' } }
+      }
+    },
+    '/settings': {
+      get: {
+        tags: ['Settings'],
+        summary: 'Get institution settings',
+        security: bearerSecurity,
+        responses: { 200: { description: 'Current institution settings' } }
+      },
+      put: {
+        tags: ['Settings'],
+        summary: 'Update institution settings',
+        security: bearerSecurity,
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  institutionName: { type: 'string' },
+                  officialEmail: { type: 'string' },
+                  phone: { type: 'string' },
+                  address: { type: 'string' },
+                  website: { type: 'string' },
+                  registrationNumber: { type: 'string' }
+                }
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Updated settings' } }
+      }
     }
   }
 };

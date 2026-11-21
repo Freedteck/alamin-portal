@@ -239,7 +239,7 @@ export function AdmitStudent() {
     const parentFullName = `${formData.parentFirstName.trim()} ${formData.parentLastName.trim()}`.trim();
     const emergencyFullName = `${formData.emergencyContactFirstName.trim()} ${formData.emergencyContactLastName.trim()}`.trim();
     const emergencySummary = emergencyFullName
-      ? `${emergencyFullName} (${formData.emergencyContactPhone || 'No Phone'}${formData.emergencyContactRelationship ? ` - ${formData.emergencyContactRelationship}` : ''})`
+      ? `${emergencyFullName} (${formData.emergencyContactPhone || '-'}${formData.emergencyContactRelationship ? ` - ${formData.emergencyContactRelationship}` : ''})`
       : '';
 
     const studentToSave = {
@@ -1234,24 +1234,24 @@ export function AdmitStudent() {
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <span className="text-[#797869] block">Guardian Name:</span>
-                      <span className="font-semibold">{`${formData.parentFirstName} ${formData.parentLastName}`.trim() || 'Not specified'}</span>
+                      <span className="font-semibold">{`${formData.parentFirstName} ${formData.parentLastName}`.trim() || '-'}</span>
                     </div>
                     <div>
                       <span className="text-[#797869] block">Relationship:</span>
-                      <span className="font-semibold">{formData.parentRelationship}</span>
+                      <span className="font-semibold">{formData.parentRelationship || '-'}</span>
                     </div>
                     <div>
                       <span className="text-[#797869] block">Primary Phone:</span>
-                      <span className="font-semibold">{formData.parentPhone || 'Not specified'}</span>
+                      <span className="font-semibold">{formData.parentPhone || '-'}</span>
                     </div>
                     <div>
                       <span className="text-[#797869] block">Occupation:</span>
-                      <span className="font-semibold">{formData.parentOccupation || 'Not specified'}</span>
+                      <span className="font-semibold">{formData.parentOccupation || '-'}</span>
                     </div>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Email:</span>
-                    <span className="font-semibold">{formData.parentEmail || 'Not specified'}</span>
+                    <span className="font-semibold">{formData.parentEmail || '-'}</span>
                   </div>
                 </div>
 
@@ -1269,15 +1269,15 @@ export function AdmitStudent() {
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <span className="text-[#797869] block">Contact Name:</span>
-                      <span className="font-semibold">{`${formData.emergencyContactFirstName} ${formData.emergencyContactLastName}`.trim() || 'None provided'}</span>
+                      <span className="font-semibold">{`${formData.emergencyContactFirstName} ${formData.emergencyContactLastName}`.trim() || '-'}</span>
                     </div>
                     <div>
                       <span className="text-[#797869] block">Relationship:</span>
-                      <span className="font-semibold">{formData.emergencyContactRelationship || 'N/A'}</span>
+                      <span className="font-semibold">{formData.emergencyContactRelationship || '-'}</span>
                     </div>
                     <div>
                       <span className="text-[#797869] block">Emergency Phone:</span>
-                      <span className="font-semibold">{formData.emergencyContactPhone || 'N/A'}</span>
+                      <span className="font-semibold">{formData.emergencyContactPhone || '-'}</span>
                     </div>
                   </div>
                 </div>

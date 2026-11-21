@@ -66,6 +66,7 @@ export interface SchoolDatabase {
   assignments: any[];
   requests: any[];
   enquiries: any[];
+  settings?: Record<string, any>;
 }
 
 type SseListener = (event: { resource: string; action: string; timestamp: string }) => void;
@@ -987,10 +988,11 @@ export const backendStore = {
   },
 
   addTimetableSlot(slotData: any) {
+    const defaultCls = (db.classes && db.classes[0]?.name) || 'JSS 1';
     const newSlot = {
       id: slotData.id || `tt_${Date.now()}`,
       type: 'lesson',
-      class: 'SSS 2',
+      class: slotData.class || defaultCls,
       ...slotData,
       updatedAt: new Date().toISOString()
     };
@@ -1400,7 +1402,7 @@ export const backendStore = {
     };
 
     const classStudents = db.students.filter((s) => s.class === student.class);
-    let position = 'N/A';
+    let position = '-';
     if (recordedScores.length > 0 && classStudents.length > 0) {
       const cohortTotals = classStudents
         .map((cs) =>
@@ -1828,12 +1830,14 @@ export const backendStore = {
   },
 
   addAssignment(data: any) {
+    const defaultClass = (db.classes && db.classes[0]?.name) || 'JSS 1';
     const newItem = {
       id: data.id || `asg_${Date.now()}`,
       status: 'published',
       submittedStudents: 0,
       totalStudents: 35,
       submissions: [],
+      class: data.class || defaultClass,
       ...data
     };
     db.assignments = [newItem, ...db.assignments];
@@ -1842,7 +1846,7 @@ export const backendStore = {
       id: newItem.id,
       title: newItem.title,
       subject: newItem.subject || '',
-      class: newItem.class || 'SSS 2',
+      class: newItem.class || defaultClass,
       description: newItem.description || '',
       due_date: newItem.dueDate || '',
       total_marks: Number(newItem.totalMarks ?? newItem.maxMarks ?? 20),
@@ -1872,11 +1876,12 @@ export const backendStore = {
     });
     if (!target) return null;
     persistDb();
+    const defaultClass = (db.classes && db.classes[0]?.name) || 'JSS 1';
     supabaseMirrorUpsert('assignments', {
       id: target.id,
       title: target.title,
       subject: target.subject || '',
-      class: target.class || 'SSS 2',
+      class: target.class || defaultClass,
       description: target.description || '',
       due_date: target.dueDate || '',
       total_marks: Number(target.totalMarks ?? target.maxMarks ?? 20),
@@ -2250,5 +2255,33 @@ export const backendStore = {
       graduatedCount,
       totalProcessed: promotions.length
     };
+  },
+
+  getSettings() {
+    return (
+      db.settings || {
+        institutionName: 'Al-Amin Group of Schools',
+        establishedYear: '2010',
+        officialEmail: 'info@alaminschools.edu.ng',
+        phone: '+234 803 456 7890',
+        address: 'Al-Amin Campus, 14 Ahmadu Bello Way, Nassarawa GRA',
+        website: 'www.alaminschools.edu.ng',
+        registrationNumber: 'ASS-2010-008920',
+        timezone: 'wat',
+        currentSession: '2026/2027',
+        currentTerm: 'Term 1'
+      }
+    );
+  },
+
+  updateSettings(data: any) {
+    db.settings = {
+      ...this.getSettings(),
+      ...(data || {}),
+      updatedAt: new Date().toISOString()
+    };
+    persistDb();
+    broadcastChange('settings');
+    return db.settings;
   }
 };

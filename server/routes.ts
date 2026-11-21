@@ -24,6 +24,20 @@ const paramStr = (val: string | string[] | undefined): string =>
 
 /* ── System & Health ─────────────────────────────────────────────────────── */
 
+router.get('/', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    service: 'Al-Amin Group of Schools REST API',
+    docs: '/api/docs',
+    health: '/api/health',
+    version: '1.0.0'
+  });
+});
+
+router.get('/ping', (_req: Request, res: Response) => {
+  res.json({ pong: true, time: new Date().toISOString() });
+});
+
 router.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
@@ -779,6 +793,34 @@ router.post('/academic/rollover-session', requireAuth, requireRole('admin'), (re
   }
   const result = backendStore.executeSessionRollover({ nextSession, promotions });
   res.json(result);
+});
+
+/* ── Academic Sessions & Terms ───────────────────────────────────────────── */
+
+router.get('/academic/sessions', requireAuth, (_req: Request, res: Response) => {
+  const settings = backendStore.getSettings();
+  res.json({
+    sessions: ['2026/2027', '2025/2026', '2024/2025'],
+    currentSession: settings.currentSession || '2026/2027',
+    terms: ['Term 1', 'Term 2', 'Term 3'],
+    currentTerm: settings.currentTerm || 'Term 1'
+  });
+});
+
+/* ── Institution Settings ─────────────────────────────────────────────────── */
+
+router.get('/settings', requireAuth, (_req: Request, res: Response) => {
+  res.json(backendStore.getSettings());
+});
+
+router.put('/settings', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+  const updated = backendStore.updateSettings(req.body || {});
+  res.json(updated);
+});
+
+router.post('/settings', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+  const updated = backendStore.updateSettings(req.body || {});
+  res.json(updated);
 });
 
 export default router;

@@ -26,7 +26,7 @@ export function StudentAnnouncements() {
           (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
         ) || students[0];
       setActiveStudent(matched);
-      setAnnouncements(schoolStore.getAnnouncementsForUser('student', matched?.class || 'SSS 2'));
+      setAnnouncements(schoolStore.getAnnouncementsForUser('student', matched?.class || ''));
     };
     loadNotices();
     return subscribeSchoolSync(loadNotices);

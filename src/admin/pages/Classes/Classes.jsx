@@ -24,7 +24,7 @@ import {
 
 export function ClassScheduling() {
   const [activeTab, setActiveTab] = useState('classes'); // 'classes' | 'teachers' | 'subjects'
-  const [selectedClass, setSelectedClass] = useState('SSS 2');
+  const [selectedClass, setSelectedClass] = useState(SCHOOL_CLASSES[0] || 'JSS 1');
   const [teachersList, setTeachersList] = useState([]);
   const [studentsList, setStudentsList] = useState([]);
   const [subjectsList, setSubjectsList] = useState([]);
@@ -34,11 +34,11 @@ export function ClassScheduling() {
   const [assignMode, setAssignMode] = useState('teacher');
   const [assignForm, setAssignForm] = useState({
     teacherId: '',
-    class: 'SSS 2',
+    class: SCHOOL_CLASSES[0] || 'JSS 1',
     subject: ''
   });
 
-  const [enrollClassFilter, setEnrollClassFilter] = useState('SSS 2');
+  const [enrollClassFilter, setEnrollClassFilter] = useState(SCHOOL_CLASSES[0] || 'JSS 1');
   const [enrollForm, setEnrollForm] = useState({
     studentId: '',
     subject: ''

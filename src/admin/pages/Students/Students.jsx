@@ -345,28 +345,28 @@ export function StudentManagement() {
                   )}
                   <div>
                     <span className="text-[#797869] block">Enrollment Date</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.enrollmentDate}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.enrollmentDate || '-'}</span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Gender</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.gender || 'Not specified'}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.gender || '-'}</span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Date of Birth</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.dateOfBirth || '—'}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.dateOfBirth || '-'}</span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">State of Origin</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.stateOfOrigin}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.stateOfOrigin || '-'}</span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Local Government Area</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.lga || '—'}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.lga || '-'}</span>
                   </div>
                 </div>
                 <div className="pt-1">
                   <span className="text-[#797869] block">Residential Address</span>
-                  <span className="font-semibold text-[#1c1c14]">{selectedStudent.address || '—'}</span>
+                  <span className="font-semibold text-[#1c1c14]">{selectedStudent.address || '-'}</span>
                 </div>
               </div>
 
@@ -377,19 +377,19 @@ export function StudentManagement() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <span className="text-[#797869] block">Guardian Name</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentName}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentName || '-'}</span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Contact Phone</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentPhone}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentPhone || '-'}</span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Email Address</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentEmail || '—'}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentEmail || '-'}</span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Occupation</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentOccupation || '—'}</span>
+                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentOccupation || '-'}</span>
                   </div>
                 </div>
               </div>

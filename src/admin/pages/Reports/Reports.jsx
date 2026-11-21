@@ -188,7 +188,7 @@ export function AdminReports() {
               <div>
                 <span className="text-[#797869] block text-[11px]">Class</span>
                 <span className="font-bold text-sm text-[#1c1c14]">
-                  {reportCard.student?.class || '—'}
+                  {reportCard.student?.class || '-'}
                 </span>
               </div>
               <div>
@@ -198,25 +198,25 @@ export function AdminReports() {
               <div>
                 <span className="text-[#797869] block text-[11px]">State of Origin</span>
                 <span className="font-medium text-[#1c1c14]">
-                  {reportCard.student?.stateOfOrigin || 'Not Provided'}
+                  {reportCard.student?.stateOfOrigin || '-'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Local Government Area</span>
                 <span className="font-medium text-[#1c1c14]">
-                  {reportCard.student?.lga || 'Not Provided'}
+                  {reportCard.student?.lga || '-'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Date of Birth</span>
                 <span className="font-medium text-[#1c1c14]">
-                  {reportCard.student?.dateOfBirth || reportCard.student?.dob || 'Not Provided'}
+                  {reportCard.student?.dateOfBirth || reportCard.student?.dob || '-'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Gender</span>
                 <span className="font-medium text-[#1c1c14]">
-                  {reportCard.student?.gender || 'Male'}
+                  {reportCard.student?.gender || '-'}
                 </span>
               </div>
               <div>
@@ -228,7 +228,7 @@ export function AdminReports() {
               <div>
                 <span className="text-[#797869] block text-[11px]">Parent / Guardian</span>
                 <span className="font-medium text-[#1c1c14] truncate block">
-                  {reportCard.student?.parentName || 'Not Provided'}
+                  {reportCard.student?.parentName || '-'}
                 </span>
               </div>
             </div>

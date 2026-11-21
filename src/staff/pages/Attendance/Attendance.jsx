@@ -27,7 +27,7 @@ export function StaffAttendance() {
 
   const [activeTab, setActiveTab] = useState(initialStudentId ? 'student' : 'rollcall');
   const [currentTeacher, setCurrentTeacher] = useState(null);
-  const [selectedClass, setSelectedClass] = useState('SSS 2');
+  const [selectedClass, setSelectedClass] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [attendanceRecords, setAttendanceRecords] = useState({});
   const [toast, setToast] = useState(null);
@@ -62,6 +62,9 @@ export function StaffAttendance() {
 
     if (defaultTeacher && defaultTeacher.assignedClasses?.length > 0) {
       setSelectedClass(defaultTeacher.assignedClasses[0].class);
+    } else {
+      const availableClasses = schoolStore.getClasses();
+      setSelectedClass(availableClasses[0] || 'JSS 1');
     }
   }, [syncTick]);
 

@@ -137,25 +137,25 @@ export function StudentProgressReports() {
               <div>
                 <span className="text-[#797869] block text-[11px]">Date of Birth</span>
                 <span className="font-semibold text-[#1c1c14]">
-                  {reportCard.student?.dateOfBirth || reportCard.student?.dob || 'Not Provided'}
+                  {reportCard.student?.dateOfBirth || reportCard.student?.dob || '-'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Gender</span>
                 <span className="font-semibold text-[#1c1c14]">
-                  {reportCard.student?.gender || 'Not Specified'}
+                  {reportCard.student?.gender || '-'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">State of Origin</span>
                 <span className="font-semibold text-[#1c1c14]">
-                  {reportCard.student?.stateOfOrigin || 'Not Provided'}
+                  {reportCard.student?.stateOfOrigin || '-'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Local Government Area</span>
                 <span className="font-semibold text-[#1c1c14]">
-                  {reportCard.student?.lga || 'Not Provided'}
+                  {reportCard.student?.lga || '-'}
                 </span>
               </div>
             </div>

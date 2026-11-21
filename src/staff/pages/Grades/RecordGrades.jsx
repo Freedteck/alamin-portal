@@ -15,7 +15,7 @@ import {
 
 export function RecordGrades() {
   const [selectedSession, setSelectedSession] = useState(ACADEMIC_SESSIONS[0]);
-  const [selectedClass, setSelectedClass] = useState('SSS 2');
+  const [selectedClass, setSelectedClass] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('Mathematics');
   const [selectedTerm, setSelectedTerm] = useState('Term1');
   const [currentTeacher, setCurrentTeacher] = useState(null);
@@ -46,6 +46,12 @@ export function RecordGrades() {
     if (teacher && teacher.assignedClasses?.length > 0) {
       setSelectedClass(teacher.assignedClasses[0].class);
       setSelectedSubject(teacher.assignedClasses[0].subject);
+    } else {
+      const cls = schoolStore.getClasses();
+      const firstClass = cls[0] || 'JSS 1';
+      setSelectedClass(firstClass);
+      const subs = schoolStore.getSubjectsForClass(firstClass);
+      setSelectedSubject(subs[0] || 'Mathematics');
     }
   }, [syncTick]);
 

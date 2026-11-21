@@ -183,7 +183,7 @@ export function ClassScheduling() {
             onClick={() => {
               setViewMode('all');
               if (selectedClass === 'All Classes') {
-                setSelectedClass(currentTeacher?.assignedClasses?.[0] || 'SSS 2');
+                setSelectedClass(currentTeacher?.assignedClasses?.[0]?.class || schoolStore.getClasses()[0] || 'JSS 1');
               }
             }}
             className={`h-10 px-4 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
