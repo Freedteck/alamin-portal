@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 112" width="300" height="54">
+  <!-- Left Crest Icon -->
+  <g transform="translate(4, 2) scale(0.245)">
+    <polygon points="48,295 16,408 54,382 68,408 82,320" fill="#616218" stroke="#e7e78f" stroke-width="5" />
+    <polygon points="352,295 384,408 346,382 332,408 318,320" fill="#616218" stroke="#e7e78f" stroke-width="5" />
+    <path d="M 52,20 L 348,20 L 348,215 C 348,305 280,368 200,398 C 120,368 52,305 52,215 Z" fill="#616218" stroke="#e7e78f" stroke-width="8" />
+    <text x="200" y="56" text-anchor="middle" fill="#ffffff" font-family="'Poppins', Arial, sans-serif" font-weight="800" font-size="25">AL - AMIN GROUP OF</text>
+    <text x="200" y="88" text-anchor="middle" fill="#e7e78f" font-family="'Poppins', Arial, sans-serif" font-weight="800" font-size="27">SCHOOLS</text>
+    <rect x="62" y="102" width="276" height="110" rx="22" ry="22" fill="#fdf9ec" />
+    <g transform="translate(200, 157)">
+      <g fill="#494900">
+        <rect x="-7" y="-50" width="14" height="100" rx="2" />
+        <rect x="-7" y="-50" width="14" height="100" rx="2" transform="rotate(25.71)" />
+        <rect x="-7" y="-50" width="14" height="100" rx="2" transform="rotate(51.43)" />
+        <rect x="-7" y="-50" width="14" height="100" rx="2" transform="rotate(77.14)" />
+        <rect x="-7" y="-50" width="14" height="100" rx="2" transform="rotate(102.86)" />
+        <rect x="-7" y="-50" width="14" height="100" rx="2" transform="rotate(128.57)" />
+        <rect x="-7" y="-50" width="14" height="100" rx="2" transform="rotate(154.29)" />
+      </g>
+      <circle cx="0" cy="0" r="41" fill="#494900" />
+      <circle cx="0" cy="0" r="31" fill="#fdf9ec" />
+      <rect x="-20" y="-21" width="40" height="31" rx="3" fill="none" stroke="#494900" stroke-width="3.5" />
+      <rect x="-16" y="-17" width="32" height="21" fill="#616218" />
+      <rect x="-11" y="-10" width="22" height="9" fill="#fdf9ec" />
+      <path d="M -8,10 L -16,18 L 16,18 L 8,10 Z" fill="none" stroke="#494900" stroke-width="3" stroke-linejoin="round" />
+    </g>
+    <polygon points="158,236 170,221 177,228 186,214 194,225 200,211 206,225 214,214 223,228 230,221 242,236" fill="#e7e78f" />
+    <path d="M 118,242 C 118,236 124,235 132,235 C 155,230 182,232 200,242 C 218,232 245,230 268,235 C 276,235 282,236 282,242 L 282,324 C 282,329 277,332 270,331 C 246,328 220,329 200,336 C 180,329 154,328 130,331 C 123,332 118,329 118,324 Z" fill="#494900" stroke="#fdf9ec" stroke-width="6" stroke-linejoin="round" />
+    <path d="M 129,246 C 152,240 179,242 196,251 L 196,324 C 178,317 152,316 129,319 Z" fill="#fdf9ec" />
+    <path d="M 271,246 C 248,240 221,242 204,251 L 204,324 C 222,317 248,316 271,319 Z" fill="#fdf9ec" />
+    <path d="M 55,282 Q 200,425 345,282 L 366,332 Q 200,482 34,332 Z" fill="#e7e78f" stroke="#494900" stroke-width="7" stroke-linejoin="round" />
+  </g>
+
+  <!-- Right Brand Typography (Dark for Light Backgrounds) -->
+  <text x="116" y="56" fill="#1c1c14" font-family="'Poppins', sans-serif" font-weight="700" font-size="42" letter-spacing="1">AL-AMIN</text>
+  <text x="118" y="88" fill="#616218" font-family="'Poppins', sans-serif" font-weight="600" font-size="21" letter-spacing="3.5">GROUP OF SCHOOLS</text>
+</svg>

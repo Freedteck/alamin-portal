@@ -1,0 +1,8 @@
+{
+  "name": "Al-Amin Group of Schools Management System",
+  "description": "Comprehensive school management and academic platform for Al-Amin Group of Schools students, staff, and administrators.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
