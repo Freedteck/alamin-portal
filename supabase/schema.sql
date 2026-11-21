@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS public.classes (
   id TEXT PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
   category TEXT NOT NULL DEFAULT 'Junior',
+  class_teacher_id TEXT NOT NULL DEFAULT '',
+  class_teacher_name TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -109,7 +111,7 @@ CREATE TABLE IF NOT EXISTS public.teachers (
   department TEXT NOT NULL DEFAULT 'Academic Faculty',
   emergency_contact JSONB NOT NULL DEFAULT '{}'::jsonb,
   assigned_classes JSONB NOT NULL DEFAULT '[]'::jsonb,
-  form_teacher_of TEXT NOT NULL DEFAULT '',
+  class_teacher_of JSONB NOT NULL DEFAULT '[]'::jsonb,
   avatar_url TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -319,6 +321,50 @@ CREATE TABLE IF NOT EXISTS public.enquiries (
   preferred_time TEXT NOT NULL DEFAULT '',
   meeting_type TEXT NOT NULL DEFAULT '',
   message TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.direct_messages (
+  id TEXT PRIMARY KEY,
+  sender_id TEXT NOT NULL DEFAULT '',
+  sender_name TEXT NOT NULL DEFAULT 'Admin',
+  recipient TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'Recipient',
+  subject TEXT NOT NULL,
+  content TEXT NOT NULL,
+  sent_date TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'delivered',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.staff_leaves (
+  id TEXT PRIMARY KEY,
+  teacher_id TEXT NOT NULL DEFAULT '',
+  teacher_name TEXT NOT NULL DEFAULT '',
+  type TEXT NOT NULL DEFAULT 'Casual Leave',
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  days INTEGER NOT NULL DEFAULT 1,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  submitted_date TEXT NOT NULL DEFAULT '',
+  approved_by TEXT NOT NULL DEFAULT 'Pending Review',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.help_tickets (
+  id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL DEFAULT '',
+  student_name TEXT NOT NULL DEFAULT '',
+  subject TEXT NOT NULL,
+  description TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'Academic Support',
+  priority TEXT NOT NULL DEFAULT 'medium',
+  status TEXT NOT NULL DEFAULT 'open',
+  assigned_to TEXT NOT NULL DEFAULT 'Student Affairs Desk',
+  created_date TEXT NOT NULL DEFAULT '',
+  last_updated TEXT NOT NULL DEFAULT '',
+  responses JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -559,6 +605,26 @@ DROP POLICY IF EXISTS "Admins read enquiries" ON public.enquiries;
 CREATE POLICY "Admins read enquiries" ON public.enquiries
   FOR SELECT TO authenticated USING (public.current_user_role() IN ('admin', 'teacher'));
 
+-- Direct Messages, Staff Leaves & Help Tickets
+DROP POLICY IF EXISTS "Authenticated direct messages read" ON public.direct_messages;
+CREATE POLICY "Authenticated direct messages read" ON public.direct_messages FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Authenticated direct messages insert" ON public.direct_messages;
+CREATE POLICY "Authenticated direct messages insert" ON public.direct_messages FOR INSERT TO authenticated WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Authenticated staff leaves read" ON public.staff_leaves;
+CREATE POLICY "Authenticated staff leaves read" ON public.staff_leaves FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Authenticated staff leaves insert" ON public.staff_leaves;
+CREATE POLICY "Authenticated staff leaves insert" ON public.staff_leaves FOR INSERT TO authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "Admin staff leaves update" ON public.staff_leaves;
+CREATE POLICY "Admin staff leaves update" ON public.staff_leaves FOR UPDATE TO authenticated USING (public.current_user_role() IN ('admin', 'teacher'));
+
+DROP POLICY IF EXISTS "Authenticated help tickets read" ON public.help_tickets;
+CREATE POLICY "Authenticated help tickets read" ON public.help_tickets FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Authenticated help tickets insert" ON public.help_tickets;
+CREATE POLICY "Authenticated help tickets insert" ON public.help_tickets FOR INSERT TO authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "Authenticated help tickets update" ON public.help_tickets;
+CREATE POLICY "Authenticated help tickets update" ON public.help_tickets FOR UPDATE TO authenticated USING (true);
+
 -- ============================================================
 -- 5. SUPABASE STORAGE BUCKET & POLICIES (school-files)
 -- ============================================================
@@ -590,7 +656,8 @@ DECLARE
   tables_to_sync TEXT[] := ARRAY[
     'subjects', 'students', 'teachers', 'timetable_slots', 'timetable_alerts',
     'attendance_records', 'grades', 'resources', 'equipment', 'maintenance_requests',
-    'documents', 'announcements', 'teacher_availability', 'assignments', 'student_requests', 'enquiries'
+    'documents', 'announcements', 'teacher_availability', 'assignments', 'student_requests', 'enquiries',
+    'direct_messages', 'staff_leaves', 'help_tickets'
   ];
 BEGIN
   FOREACH tbl IN ARRAY tables_to_sync LOOP

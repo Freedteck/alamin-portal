@@ -14,6 +14,8 @@ import { Modal } from '../../../shared/components/Modal/Modal';
 import { Pagination } from '../../../shared/components/Pagination/Pagination';
 import { SearchInput } from '../../../shared/components/SearchInput/SearchInput';
 import { TableActions } from '../../../shared/components/TableActions/TableActions';
+import { ProfileAvatar } from '../../../shared/components/ProfileAvatar/ProfileAvatar';
+import { Button } from '../../../shared/components/Button/Button';
 import {
   schoolStore,
   SCHOOL_CLASSES,
@@ -63,10 +65,15 @@ export function ClassScheduling() {
   const subjectsPageSize = 6;
 
   const [classesList, setClassesList] = useState([]);
+  const [classObjects, setClassObjects] = useState([]);
   const [isAddClassModalOpen, setIsAddClassModalOpen] = useState(false);
   const [newClassName, setNewClassName] = useState('');
   const [newClassCategory, setNewClassCategory] = useState('Junior');
   const [addClassError, setAddClassError] = useState('');
+
+  const [isClassTeacherModalOpen, setIsClassTeacherModalOpen] = useState(false);
+  const [targetClassForTeacher, setTargetClassForTeacher] = useState('');
+  const [selectedTeacherForClass, setSelectedTeacherForClass] = useState('');
 
   const availableClasses = classesList.length > 0 ? classesList : SCHOOL_CLASSES;
 
@@ -75,6 +82,48 @@ export function ClassScheduling() {
     setStudentsList(schoolStore.getStudents());
     setSubjectsList(schoolStore.getSubjects());
     setClassesList(schoolStore.getClasses());
+    setClassObjects(schoolStore.getClassObjects());
+  };
+
+  const openAssignClassTeacherModal = (className, currentTeacherId = '') => {
+    setTargetClassForTeacher(className);
+    setSelectedTeacherForClass(currentTeacherId || '');
+    setIsClassTeacherModalOpen(true);
+  };
+
+  const handleSaveClassTeacher = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await schoolStore.assignClassTeacher(targetClassForTeacher, selectedTeacherForClass || null);
+      if (res?.error) {
+        showNotification(res.error);
+      } else {
+        const tch = teachersList.find((t) => t.id === selectedTeacherForClass);
+        showNotification(
+          selectedTeacherForClass
+            ? `Assigned ${tch?.name || 'teacher'} as Class Teacher for ${targetClassForTeacher}.`
+            : `Unassigned Class Teacher for ${targetClassForTeacher}.`
+        );
+        setIsClassTeacherModalOpen(false);
+        loadData();
+      }
+    } catch (err) {
+      showNotification(err?.message || 'Failed to update Class Teacher.');
+    }
+  };
+
+  const handleUnassignClassTeacher = async (className) => {
+    try {
+      const res = await schoolStore.assignClassTeacher(className, null);
+      if (res?.error) {
+        showNotification(res.error);
+      } else {
+        showNotification(`Unassigned Class Teacher for ${className}.`);
+        loadData();
+      }
+    } catch (err) {
+      showNotification(err?.message || 'Failed to unassign Class Teacher.');
+    }
   };
 
   const handleCreateClass = async (e) => {
@@ -307,6 +356,12 @@ export function ClassScheduling() {
     rosterPage * rosterPageSize
   );
 
+  const currentClassObject = (classObjects || []).find((c) => c.name === selectedClass) || null;
+  const currentClassTeacher =
+    teachersList.find((t) => t.id === currentClassObject?.classTeacherId) ||
+    teachersList.find((t) => Array.isArray(t.classTeacherOf) && t.classTeacherOf.includes(selectedClass)) ||
+    null;
+
   const filteredSubjects = (subjectsList || []).filter((sub) => {
     if (!sub) return false;
     const subName = sub.name || String(sub || '');
@@ -457,6 +512,79 @@ export function ClassScheduling() {
               <Plus className="w-3.5 h-3.5" />
               <span>Add Class</span>
             </button>
+          </div>
+
+          {/* Appointed Class Teacher Banner */}
+          <div className="rounded-lg border border-[#c9c7b6] bg-white p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              {currentClassTeacher ? (
+                <ProfileAvatar name={currentClassTeacher.name} size="md" shape="rounded" />
+              ) : (
+                <div className="w-10 h-10 rounded-lg bg-[#faf8f0] border border-dashed border-[#c9c7b6] flex items-center justify-center text-[#797869]">
+                  <GraduationCap className="w-5 h-5 text-[#616218]" />
+                </div>
+              )}
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#797869]">
+                    Appointed Class Teacher
+                  </span>
+                  <span
+                    className={`px-2 py-0.2 rounded text-[10px] font-bold ${
+                      currentClassTeacher
+                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                        : 'bg-[#faf8f0] text-stone-500 border border-[#c9c7b6]/60'
+                    }`}
+                  >
+                    {currentClassTeacher ? 'Assigned' : 'Unassigned'}
+                  </span>
+                </div>
+                <h3 className="text-base font-bold text-[#1c1c14] mt-0.5">
+                  {currentClassTeacher ? currentClassTeacher.name : `No Class Teacher for ${selectedClass}`}
+                </h3>
+                <p className="text-xs text-[#797869]">
+                  {currentClassTeacher ? (
+                    <>
+                      Staff ID: <span className="font-mono text-[#616218] font-bold">{currentClassTeacher.staffId || '-'}</span> • {currentClassTeacher.qualification || 'Class Master'} • {currentClassTeacher.email}
+                    </>
+                  ) : (
+                    `Assign an educator to take daily attendance registers and manage roll calls for ${selectedClass}.`
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {currentClassTeacher ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => openAssignClassTeacherModal(selectedClass, currentClassTeacher.id)}
+                    className="h-9 px-3 rounded-lg border border-[#c9c7b6] bg-white hover:bg-[#faf8f0] text-[#1c1c14] text-xs font-semibold shadow-xs inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-[#616218]" />
+                    <span>Change Teacher</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleUnassignClassTeacher(selectedClass)}
+                    className="h-9 px-3 rounded-lg border border-red-200 bg-red-50/50 hover:bg-red-50 text-red-700 text-xs font-semibold shadow-xs inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Unassign</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => openAssignClassTeacherModal(selectedClass, '')}
+                  className="h-9 px-3.5 rounded-lg bg-[#616218] hover:bg-[#494900] text-white text-xs font-semibold shadow-xs inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Assign Class Teacher</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -632,6 +760,19 @@ export function ClassScheduling() {
                         </div>
                       ))}
                     </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-[#c9c7b6]/50 flex items-center justify-between text-xs">
+                    <span className="text-[11px] font-bold text-[#797869] uppercase tracking-wider">
+                      Class Teacher Role
+                    </span>
+                    {teacher.classTeacherOf && teacher.classTeacherOf.length > 0 ? (
+                      <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-[#fdf9ec] text-[#616218] border border-[#c9c7b6]/70">
+                        {teacher.classTeacherOf.join(', ')}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-[#797869] italic">None</span>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1240,6 +1381,57 @@ export function ClassScheduling() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* Assign Class Teacher Modal */}
+      <Modal
+        isOpen={isClassTeacherModalOpen}
+        onClose={() => setIsClassTeacherModalOpen(false)}
+        title={`Appoint Class Teacher for ${targetClassForTeacher}`}
+        subtitle="Only the appointed Class Teacher can mark student morning roll call registers."
+      >
+        <form onSubmit={handleSaveClassTeacher} className="space-y-4 font-['Poppins',sans-serif]">
+          <div>
+            <label className="text-xs font-bold text-[#1c1c14] block mb-1.5">
+              Select Educator
+            </label>
+            <select
+              value={selectedTeacherForClass}
+              onChange={(e) => setSelectedTeacherForClass(e.target.value)}
+              className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+            >
+              <option value="">-- Leave Unassigned --</option>
+              {teachersList.map((t) => {
+                const already = Array.isArray(t.classTeacherOf) && t.classTeacherOf.length > 0;
+                const note = already ? ` (Class Teacher of: ${t.classTeacherOf.join(', ')})` : '';
+                return (
+                  <option key={t.id} value={t.id}>
+                    {t.name} • {t.staffId || 'Staff'}{note}
+                  </option>
+                );
+              })}
+            </select>
+            <p className="text-[11px] text-[#797869] mt-1.5 leading-relaxed">
+              * Note: A teacher can be assigned as the Class Teacher of multiple classes, but each class can only have one Class Teacher.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#c9c7b6]/40">
+            <button
+              type="button"
+              onClick={() => setIsClassTeacherModalOpen(false)}
+              className="h-9 px-4 text-xs font-semibold rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] hover:bg-[#faf8f0] shadow-xs cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="h-9 px-4 text-xs font-semibold rounded-lg bg-[#616218] hover:bg-[#494900] text-white shadow-xs cursor-pointer"
+            >
+              Save Appointment
+            </button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

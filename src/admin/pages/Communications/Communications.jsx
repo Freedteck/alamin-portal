@@ -36,14 +36,18 @@ export function AdminCommunications() {
   const [confirmDeleteAnn, setConfirmDeleteAnn] = useState(null);
   const [toast, setToast] = useState(null);
 
-  const [messages, setMessages] = useState(() => {
+  const [messages, setMessages] = useState([]);
+
+  const loadMessages = async () => {
     try {
-      const saved = localStorage.getItem('alamin_direct_messages_v1');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+      const res = await schoolStore.getDirectMessages();
+      if (Array.isArray(res)) setMessages(res);
+    } catch {}
+  };
+
+  useEffect(() => {
+    loadMessages();
+  }, []);
 
   const [annForm, setAnnForm] = useState({
     title: '',
@@ -155,32 +159,28 @@ export function AdminCommunications() {
     showToast('Announcement removed.');
   };
 
-  const handleSendMessage = (e) => {
+  const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!msgForm.recipient || !msgForm.subject.trim() || !msgForm.content.trim()) {
       showToast('Please complete recipient, subject, and message.');
       return;
     }
     const found = recipients.find((r) => r.name === msgForm.recipient);
-    const nextMessages = [
-      {
-        id: `m_${Date.now()}`,
+    try {
+      const created = await schoolStore.addDirectMessage({
         recipient: msgForm.recipient,
         role: found?.role || 'Recipient',
         subject: msgForm.subject.trim(),
         content: msgForm.content.trim(),
         sentDate: new Date().toISOString().split('T')[0],
         status: 'delivered'
-      },
-      ...messages
-    ];
-    setMessages(nextMessages);
-    try {
-      localStorage.setItem('alamin_direct_messages_v1', JSON.stringify(nextMessages));
-    } catch {
+      });
+      setMessages((prev) => [created, ...prev]);
+      setMsgForm({ recipient: '', subject: '', content: '' });
+      showToast('Direct message dispatched and saved to database.');
+    } catch (err) {
+      showToast(err?.message || 'Failed to dispatch message.');
     }
-    setMsgForm({ recipient: '', subject: '', content: '' });
-    showToast('Direct message dispatched.');
   };
 
   const filteredAnnouncements = announcements.filter((a) => {

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, Navigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -15,18 +15,36 @@ import {
 } from 'lucide-react';
 import { Sidebar } from '../../shared/components/Sidebar/Sidebar';
 import { apiClient } from '../../shared/lib/apiClient';
-import { refreshCloudData } from '../../shared/data/schoolData';
+import { refreshCloudData, schoolStore, subscribeSchoolSync } from '../../shared/data/schoolData';
 
 export function TeacherLayout() {
   const navigate = useNavigate();
   const storedUser = JSON.parse(localStorage.getItem('alamin_user') || 'null');
   const hasToken = Boolean(apiClient.getToken());
+  const [currentTeacher, setCurrentTeacher] = useState(null);
 
   useEffect(() => {
     if (hasToken) {
       refreshCloudData();
     }
   }, [hasToken]);
+
+  useEffect(() => {
+    const updateTeacherInfo = () => {
+      const u = JSON.parse(localStorage.getItem('alamin_user') || 'null');
+      if (u) {
+        const teachers = schoolStore.getTeachers();
+        const t = teachers.find(
+          (tch) =>
+            (tch.id && tch.id === u.teacherId) ||
+            (tch.email && u.email && tch.email.toLowerCase() === u.email.toLowerCase())
+        );
+        setCurrentTeacher(t || null);
+      }
+    };
+    updateTeacherInfo();
+    return subscribeSchoolSync(updateTeacherInfo);
+  }, []);
 
   if (!storedUser || !storedUser.role || !hasToken) {
     return <Navigate to="/login" replace />;
@@ -42,10 +60,15 @@ export function TeacherLayout() {
     navigate('/login');
   };
 
+  const isClassTeacher = Boolean(
+    (currentTeacher?.classTeacherOf && currentTeacher.classTeacherOf.length > 0) ||
+    (Array.isArray(storedUser?.classTeacherOf) && storedUser.classTeacherOf.length > 0)
+  );
+
   const navItems = [
     { label: 'Dashboard', path: '/teacher/dashboard', icon: LayoutDashboard },
     { label: 'My Students & Classes', path: '/teacher/students', icon: Users },
-    { label: 'Student Attendance', path: '/teacher/attendance', icon: CheckSquare },
+    ...(isClassTeacher ? [{ label: 'Student Attendance', path: '/teacher/attendance', icon: CheckSquare }] : []),
     { label: 'Record Student Grades', path: '/teacher/grades', icon: Award },
     { label: 'Time Table', path: '/teacher/schedule', icon: Clock },
     { label: 'Assignments', path: '/teacher/assignments', icon: FileText },

@@ -224,6 +224,22 @@ export function TeacherManagement() {
     }
   };
 
+  const handleToggleClassTeacherRole = async (teacherId, className) => {
+    const t = teachers.find((tch) => tch.id === teacherId);
+    const current = t?.classTeacherOf || [];
+    const isAlready = current.includes(className);
+    try {
+      await schoolStore.assignClassTeacher(className, isAlready ? null : teacherId);
+      loadTeachers();
+      const updated = schoolStore.getTeacherById(teacherId);
+      if (selectedTeacher && selectedTeacher.id === teacherId) {
+        setSelectedTeacher(updated);
+      }
+    } catch {
+      // Error handled
+    }
+  };
+
   const totalAllocations = teachers.reduce(
     (acc, t) => acc + (t.assignedClasses ? t.assignedClasses.length : 0),
     0
@@ -352,6 +368,7 @@ export function TeacherManagement() {
                 <th className="py-3 px-4">Teacher Name</th>
                 <th className="py-3 px-4">Email</th>
                 <th className="py-3 px-4 text-center">Assigned Subjects</th>
+                <th className="py-3 px-4 text-center">Class Teacher</th>
                 <th className="py-3 px-4 text-center">Status</th>
                 <th className="py-3 px-5 text-right">Actions</th>
               </tr>
@@ -359,13 +376,14 @@ export function TeacherManagement() {
             <tbody className="divide-y divide-[#c9c7b6]/40">
               {paginatedTeachers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-10 text-center text-[#797869]">
+                  <td colSpan={7} className="p-10 text-center text-[#797869]">
                     No teachers found matching your filter criteria.
                   </td>
                 </tr>
               ) : (
                 paginatedTeachers.map((teacher) => {
                   const assigned = teacher.assignedClasses || [];
+                  const classTeacherList = teacher.classTeacherOf || [];
                   return (
                     <tr key={teacher.id} className="hover:bg-[#fbf8ed] transition-colors">
                       <td className="py-3.5 px-5 font-mono text-xs font-bold text-[#616218]">
@@ -384,6 +402,15 @@ export function TeacherManagement() {
                         <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-[#f4f0db] text-[#494900]">
                           {assigned.length} {assigned.length === 1 ? 'subject' : 'subjects'}
                         </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        {classTeacherList.length > 0 ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#fdf9ec] text-[#616218] border border-[#c9c7b6]/80">
+                            {classTeacherList.join(', ')}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-stone-400">-</span>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 text-center">
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -802,6 +829,44 @@ export function TeacherManagement() {
                       <CheckCircle2 className="w-4 h-4 text-[#616218]" />
                     </div>
                   ))}
+                </div>
+              </div>
+
+              <div className="space-y-3 p-4 rounded-xl border border-[#c9c7b6]/60 bg-white">
+                <div className="flex items-center justify-between border-b border-[#c9c7b6]/40 pb-2">
+                  <h4 className="font-bold text-[#616218] uppercase tracking-wider text-[11px]">
+                    Class Teacher Appointments
+                  </h4>
+                  <span className="text-[11px] font-semibold text-[#797869]">
+                    {(selectedTeacher.classTeacherOf || []).length} Classes
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#797869]">
+                  Appoint this teacher as the Class Teacher for specific classrooms:
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                  {SCHOOL_CLASSES.map((cls) => {
+                    const isAssigned = (selectedTeacher.classTeacherOf || []).includes(cls);
+                    return (
+                      <button
+                        key={cls}
+                        type="button"
+                        onClick={() => handleToggleClassTeacherRole(selectedTeacher.id, cls)}
+                        className={`px-3 py-2 rounded-lg border text-xs font-bold text-left flex items-center justify-between transition-colors cursor-pointer ${
+                          isAssigned
+                            ? 'bg-[#616218] text-white border-[#616218]'
+                            : 'bg-white text-[#1c1c14] border-[#c9c7b6] hover:bg-[#faf8f0]'
+                        }`}
+                      >
+                        <span>{cls}</span>
+                        {isAssigned ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                        ) : (
+                          <Plus className="w-3.5 h-3.5 text-[#797869]" />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

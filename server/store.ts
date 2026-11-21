@@ -66,6 +66,9 @@ export interface SchoolDatabase {
   assignments: any[];
   requests: any[];
   enquiries: any[];
+  messages: any[];
+  leaves: any[];
+  tickets: any[];
   settings?: Record<string, any>;
 }
 
@@ -164,24 +167,38 @@ async function hydrateFromSupabaseIfAvailable() {
 
     const { data: teachers } = await serverSupabase.from('teachers').select('*');
     if (teachers && teachers.length > 0) {
-      db.teachers = teachers.map((t: any) => ({
-        id: t.id,
-        name: t.name,
-        staffId: t.staff_id,
-        email: t.email,
-        phone: t.phone,
-        qualification: t.qualification,
-        address: t.address || '',
-        dateOfBirth: t.date_of_birth || '',
-        startDate: t.start_date || '',
-        position: t.position || 'Subject Teacher',
-        department: t.department || 'Academic Faculty',
-        emergencyContact: t.emergency_contact || {},
-        assignedClasses: t.assigned_classes || [],
-        formTeacherOf: t.form_teacher_of || '',
-        avatarUrl: t.avatar_url || '',
-        status: t.status || 'active'
-      }));
+      db.teachers = teachers.map((t: any) => {
+        const rawClassTeacher = t.class_teacher_of ?? t.form_teacher_of;
+        let classTeacherOf: string[] = [];
+        if (Array.isArray(rawClassTeacher)) {
+          classTeacherOf = rawClassTeacher.filter(Boolean);
+        } else if (typeof rawClassTeacher === 'string' && rawClassTeacher.trim()) {
+          try {
+            const parsed = JSON.parse(rawClassTeacher);
+            classTeacherOf = Array.isArray(parsed) ? parsed.filter(Boolean) : [rawClassTeacher.trim()];
+          } catch {
+            classTeacherOf = [rawClassTeacher.trim()];
+          }
+        }
+        return {
+          id: t.id,
+          name: t.name,
+          staffId: t.staff_id,
+          email: t.email,
+          phone: t.phone,
+          qualification: t.qualification,
+          address: t.address || '',
+          dateOfBirth: t.date_of_birth || '',
+          startDate: t.start_date || '',
+          position: t.position || 'Subject Teacher',
+          department: t.department || 'Academic Faculty',
+          emergencyContact: t.emergency_contact || {},
+          assignedClasses: t.assigned_classes || [],
+          classTeacherOf,
+          avatarUrl: t.avatar_url || '',
+          status: t.status || 'active'
+        };
+      });
     }
 
     const { data: subjects } = await serverSupabase.from('subjects').select('*');
@@ -201,7 +218,9 @@ async function hydrateFromSupabaseIfAvailable() {
       db.classes = classes.map((c: any) => ({
         id: c.id,
         name: c.name,
-        category: c.category || (isSeniorClass(c.name) ? 'Senior' : 'Junior')
+        category: c.category || (isSeniorClass(c.name) ? 'Senior' : 'Junior'),
+        classTeacherId: c.class_teacher_id || '',
+        classTeacherName: c.class_teacher_name || ''
       }));
     }
 
@@ -226,6 +245,59 @@ async function hydrateFromSupabaseIfAvailable() {
         maintenanceMode: settings.maintenance_mode,
         updatedAt: settings.updated_at
       };
+    }
+
+    const { data: messages } = await serverSupabase.from('direct_messages').select('*');
+    if (messages && messages.length > 0) {
+      db.messages = messages.map((m: any) => ({
+        id: m.id,
+        senderId: m.sender_id,
+        senderName: m.sender_name,
+        recipient: m.recipient,
+        role: m.role,
+        subject: m.subject,
+        content: m.content,
+        sentDate: m.sent_date,
+        status: m.status,
+        createdAt: m.created_at
+      }));
+    }
+
+    const { data: leaves } = await serverSupabase.from('staff_leaves').select('*');
+    if (leaves && leaves.length > 0) {
+      db.leaves = leaves.map((l: any) => ({
+        id: l.id,
+        teacherId: l.teacher_id,
+        teacherName: l.teacher_name,
+        type: l.type,
+        startDate: l.start_date,
+        endDate: l.end_date,
+        days: l.days,
+        reason: l.reason,
+        status: l.status,
+        submittedDate: l.submitted_date,
+        approvedBy: l.approved_by,
+        createdAt: l.created_at
+      }));
+    }
+
+    const { data: tickets } = await serverSupabase.from('help_tickets').select('*');
+    if (tickets && tickets.length > 0) {
+      db.tickets = tickets.map((tk: any) => ({
+        id: tk.id,
+        studentId: tk.student_id,
+        studentName: tk.student_name,
+        subject: tk.subject,
+        description: tk.description,
+        category: tk.category,
+        priority: tk.priority,
+        status: tk.status,
+        assignedTo: tk.assigned_to,
+        createdDate: tk.created_date,
+        lastUpdated: tk.last_updated,
+        responses: tk.responses || [],
+        createdAt: tk.created_at
+      }));
     }
 
     console.log(`[Al-Amin Store] Successfully hydrated state from Supabase PostgreSQL tables.`);
@@ -651,7 +723,7 @@ export const backendStore = {
     return db.classes || [];
   },
 
-  addClass(classData: { name: string; category?: string }) {
+  addClass(classData: { name: string; category?: string; classTeacherId?: string; classTeacherName?: string }) {
     const cleanName = String(classData.name || '').trim();
     if (!cleanName) return { error: 'Class name is required.' };
     const exists = (db.classes || []).some((c) => c.name.toLowerCase() === cleanName.toLowerCase());
@@ -659,21 +731,100 @@ export const backendStore = {
     const newCls = {
       id: `cls-${Date.now()}`,
       name: cleanName,
-      category: classData.category || (isSeniorClass(cleanName) ? 'Senior' : 'Junior')
+      category: classData.category || (isSeniorClass(cleanName) ? 'Senior' : 'Junior'),
+      classTeacherId: classData.classTeacherId || '',
+      classTeacherName: classData.classTeacherName || ''
     };
     db.classes = [...(db.classes || []), newCls];
     supabaseMirrorUpsert('classes', {
       id: newCls.id,
       name: newCls.name,
-      category: newCls.category
+      category: newCls.category,
+      class_teacher_id: newCls.classTeacherId,
+      class_teacher_name: newCls.classTeacherName
     });
     broadcastChange('classes', 'created');
     return newCls;
   },
 
+  assignClassTeacher(classIdOrName: string, teacherId: string | null | undefined) {
+    const cls = (db.classes || []).find(
+      (c) => c.id === classIdOrName || c.name.toLowerCase() === classIdOrName.toLowerCase()
+    );
+    if (!cls) return { error: `Class "${classIdOrName}" not found.` };
+
+    const oldTeacherId = cls.classTeacherId;
+    const targetTeacher = teacherId ? this.getTeacherById(teacherId) : null;
+    if (teacherId && !targetTeacher) {
+      return { error: 'Teacher not found.' };
+    }
+
+    // 1. Remove this class from previous teacher's classTeacherOf list
+    if (oldTeacherId && oldTeacherId !== teacherId) {
+      const oldTeacher = this.getTeacherById(oldTeacherId);
+      if (oldTeacher) {
+        const updatedClasses = (oldTeacher.classTeacherOf || []).filter((c: string) => c !== cls.name);
+        this.updateTeacher(oldTeacher.id, { classTeacherOf: updatedClasses });
+      }
+    }
+
+    // 2. Add this class to new teacher's classTeacherOf list
+    if (targetTeacher) {
+      const existingClasses = targetTeacher.classTeacherOf || [];
+      if (!existingClasses.includes(cls.name)) {
+        this.updateTeacher(targetTeacher.id, { classTeacherOf: [...existingClasses, cls.name] });
+      }
+      cls.classTeacherId = targetTeacher.id;
+      cls.classTeacherName = targetTeacher.name;
+    } else {
+      cls.classTeacherId = '';
+      cls.classTeacherName = '';
+    }
+
+    supabaseMirrorUpsert('classes', {
+      id: cls.id,
+      name: cls.name,
+      category: cls.category,
+      class_teacher_id: cls.classTeacherId || '',
+      class_teacher_name: cls.classTeacherName || ''
+    });
+    broadcastChange('classes', 'updated');
+
+    return cls;
+  },
+
+  setTeacherClassTeacherOf(teacherId: string, classes: string[]) {
+    const teacher = this.getTeacherById(teacherId);
+    if (!teacher) return { error: 'Teacher not found.' };
+
+    const currentAssigned = teacher.classTeacherOf || [];
+    const targetClasses = Array.isArray(classes) ? classes : [];
+
+    // Remove from classes no longer in the list
+    currentAssigned.forEach((clsName: string) => {
+      if (!targetClasses.includes(clsName)) {
+        this.assignClassTeacher(clsName, null);
+      }
+    });
+
+    // Assign to classes in the new list
+    targetClasses.forEach((clsName: string) => {
+      this.assignClassTeacher(clsName, teacherId);
+    });
+
+    return this.getTeacherById(teacherId);
+  },
+
   deleteClass(id: string) {
     const existing = (db.classes || []).find((c) => c.id === id);
     if (!existing) return false;
+    if (existing.classTeacherId) {
+      const teacher = this.getTeacherById(existing.classTeacherId);
+      if (teacher) {
+        const updatedClasses = (teacher.classTeacherOf || []).filter((c: string) => c !== existing.name);
+        this.updateTeacher(teacher.id, { classTeacherOf: updatedClasses });
+      }
+    }
     db.classes = (db.classes || []).filter((c) => c.id !== id);
     supabaseMirrorDelete('classes', id);
     broadcastChange('classes', 'deleted');
@@ -922,6 +1073,19 @@ export const backendStore = {
     return db.teachers.find((t) => t.id === id) || null;
   },
 
+  getTeacherByEmailOrId(email?: string, teacherId?: string) {
+    if (teacherId) {
+      const t = db.teachers.find((tch) => tch.id === teacherId);
+      if (t) return t;
+    }
+    if (email) {
+      const cleanEmail = email.trim().toLowerCase();
+      const t = db.teachers.find((tch) => tch.email && tch.email.trim().toLowerCase() === cleanEmail);
+      if (t) return t;
+    }
+    return null;
+  },
+
   addTeacher(teacherData: any) {
     const {
       password: rawPass,
@@ -940,6 +1104,7 @@ export const backendStore = {
       staffId,
       status: 'active',
       assignedClasses: [],
+      classTeacherOf: Array.isArray(cleanTeacherData.classTeacherOf) ? cleanTeacherData.classTeacherOf : [],
       ...cleanTeacherData,
       email: portalEmail
     };
@@ -968,7 +1133,7 @@ export const backendStore = {
       department: newTeacher.department || 'Academic Faculty',
       emergency_contact: newTeacher.emergencyContact || {},
       assigned_classes: newTeacher.assignedClasses,
-      form_teacher_of: newTeacher.formTeacherOf || '',
+      class_teacher_of: newTeacher.classTeacherOf || [],
       avatar_url: newTeacher.avatarUrl || '',
       status: newTeacher.status
     });
@@ -1002,7 +1167,7 @@ export const backendStore = {
       department: target.department || 'Academic Faculty',
       emergency_contact: target.emergencyContact || {},
       assigned_classes: target.assignedClasses || [],
-      form_teacher_of: target.formTeacherOf || '',
+      class_teacher_of: target.classTeacherOf || [],
       avatar_url: target.avatarUrl || '',
       status: target.status || 'active'
     });
@@ -1040,14 +1205,32 @@ export const backendStore = {
 
   deleteTeacher(id: string) {
     const before = db.teachers.length;
+    const target = this.getTeacherById(id);
     db.teachers = db.teachers.filter((t) => t.id !== id);
     if (db.teachers.length === before) return false;
+
+    // Clear class_teacher on any classes this teacher owned
+    (db.classes || []).forEach((c) => {
+      if (c.classTeacherId === id) {
+        c.classTeacherId = '';
+        c.classTeacherName = '';
+        supabaseMirrorUpsert('classes', {
+          id: c.id,
+          name: c.name,
+          category: c.category,
+          class_teacher_id: '',
+          class_teacher_name: ''
+        });
+      }
+    });
+
     const linkedUserIds = db.users.filter((u) => u.teacherId === id).map((u) => u.id);
     db.users = db.users.filter((u) => u.teacherId !== id);
     persistDb();
     supabaseMirrorDelete('teachers', id);
     linkedUserIds.forEach((uid) => supabaseMirrorDelete('portal_users', uid));
     broadcastChange('teachers', 'deleted');
+    broadcastChange('classes', 'updated');
     return true;
   },
 
@@ -1297,14 +1480,34 @@ export const backendStore = {
     return db.attendance;
   },
 
-  saveClassAttendance(date: string, className: string, submittedBy: string, records: Record<string, string>) {
+  saveClassAttendance(date: string, className: string, submittedBy: string, records: Record<string, any>) {
     const key = `${date}_${className}`;
+    const classStudents = (db.students || []).filter((s) => s.class === className);
+    const binaryRecords: Record<string, 'present' | 'absent'> = {};
+
+    // For every student in this class: marked present if checked/present, else absent!
+    classStudents.forEach((student) => {
+      const val = records ? records[student.id] : undefined;
+      const isPresent = val === 'present' || val === true || val === 'Present' || val === 1;
+      binaryRecords[student.id] = isPresent ? 'present' : 'absent';
+    });
+
+    // Also include any other student records passed
+    if (records) {
+      Object.entries(records).forEach(([id, val]) => {
+        if (!(id in binaryRecords)) {
+          const isPresent = val === 'present' || val === true || val === 'Present' || val === 1;
+          binaryRecords[id] = isPresent ? 'present' : 'absent';
+        }
+      });
+    }
+
     const entry = {
       date,
       className,
       submittedBy,
       timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      records: records || {}
+      records: binaryRecords
     };
     db.attendance[key] = entry;
     persistDb();
@@ -1321,6 +1524,18 @@ export const backendStore = {
       },
       'record_key'
     );
+
+    // Update attendance_rate on students in this class
+    classStudents.forEach((st) => {
+      const history = this.getStudentAttendanceHistory(st.id);
+      st.attendanceRate = history.attendanceRate;
+      supabaseMirrorUpsert('students', {
+        id: st.id,
+        name: st.name,
+        attendance_rate: st.attendanceRate
+      });
+    });
+
     broadcastChange('attendance_records', 'updated');
     return entry;
   },
@@ -1329,33 +1544,33 @@ export const backendStore = {
     const logs: any[] = [];
     Object.values(db.attendance).forEach((entry: any) => {
       if (entry.records && entry.records[studentId]) {
+        const rawStatus = entry.records[studentId];
+        const status = (rawStatus === 'present' || rawStatus === true || rawStatus === 'Present') ? 'present' : 'absent';
         logs.push({
           date: entry.date,
           className: entry.className,
-          status: entry.records[studentId],
+          status,
           submittedBy: entry.submittedBy,
           timestamp: entry.timestamp
         });
       }
     });
     logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    const total = logs.length || 1;
+    const total = logs.length;
     const presentCount = logs.filter((l) => l.status === 'present').length;
-    const lateCount = logs.filter((l) => l.status === 'late').length;
     const absentCount = logs.filter((l) => l.status === 'absent').length;
     const student = this.getStudentById(studentId);
-    const rate = logs.length > 0 ? Math.round(((presentCount + lateCount) / total) * 100) : 0;
-    const punctuality = logs.length > 0 ? Math.round((presentCount / total) * 100) : 0;
+    const rate = total > 0 ? Math.round((presentCount / total) * 100) : 0;
 
     return {
       student,
       logs,
-      totalDays: logs.length,
+      totalDays: total,
       presentCount,
-      lateCount,
+      lateCount: 0,
       absentCount,
       attendanceRate: rate,
-      punctualityRate: punctuality
+      punctualityRate: rate
     };
   },
 
@@ -2129,6 +2344,179 @@ export const backendStore = {
     });
     broadcastChange('enquiries', 'created');
     return entry;
+  },
+
+  getDirectMessages() {
+    return db.messages || [];
+  },
+
+  addDirectMessage(data: any) {
+    const entry = {
+      id: data.id || `m_${Date.now()}`,
+      senderId: data.senderId || '',
+      senderName: data.senderName || 'Admin',
+      recipient: data.recipient || '',
+      role: data.role || 'Recipient',
+      subject: data.subject || '',
+      content: data.content || '',
+      sentDate: data.sentDate || new Date().toISOString().split('T')[0],
+      status: data.status || 'delivered',
+      createdAt: new Date().toISOString()
+    };
+    db.messages = [entry, ...(db.messages || [])];
+    persistDb();
+    supabaseMirrorUpsert('direct_messages', {
+      id: entry.id,
+      sender_id: entry.senderId,
+      sender_name: entry.senderName,
+      recipient: entry.recipient,
+      role: entry.role,
+      subject: entry.subject,
+      content: entry.content,
+      sent_date: entry.sentDate,
+      status: entry.status,
+      created_at: entry.createdAt
+    });
+    broadcastChange('direct_messages', 'created');
+    return entry;
+  },
+
+  getStaffLeaves(teacherId?: string) {
+    const list = db.leaves || [];
+    if (!teacherId) return list;
+    return list.filter((l) => l.teacherId === teacherId);
+  },
+
+  addStaffLeave(data: any) {
+    const entry = {
+      id: data.id || `leave-${Date.now()}`,
+      teacherId: data.teacherId || '',
+      teacherName: data.teacherName || '',
+      type: data.type || 'Casual Leave',
+      startDate: data.startDate || '',
+      endDate: data.endDate || '',
+      days: Number(data.days || 1),
+      reason: data.reason || '',
+      status: data.status || 'pending',
+      submittedDate: data.submittedDate || new Date().toISOString().split('T')[0],
+      approvedBy: data.approvedBy || 'Pending Review',
+      createdAt: new Date().toISOString()
+    };
+    db.leaves = [entry, ...(db.leaves || [])];
+    persistDb();
+    supabaseMirrorUpsert('staff_leaves', {
+      id: entry.id,
+      teacher_id: entry.teacherId,
+      teacher_name: entry.teacherName,
+      type: entry.type,
+      start_date: entry.startDate,
+      end_date: entry.endDate,
+      days: entry.days,
+      reason: entry.reason,
+      status: entry.status,
+      submitted_date: entry.submittedDate,
+      approved_by: entry.approvedBy,
+      created_at: entry.createdAt
+    });
+    broadcastChange('staff_leaves', 'created');
+    return entry;
+  },
+
+  updateStaffLeaveStatus(id: string, status: string, approvedBy = '') {
+    let target: any = null;
+    db.leaves = (db.leaves || []).map((l) => {
+      if (l.id !== id) return l;
+      target = { ...l, status, approvedBy: approvedBy || l.approvedBy };
+      return target;
+    });
+    if (!target) return null;
+    persistDb();
+    supabaseMirrorUpsert('staff_leaves', {
+      id: target.id,
+      teacher_id: target.teacherId,
+      teacher_name: target.teacherName,
+      type: target.type,
+      start_date: target.startDate,
+      end_date: target.endDate,
+      days: target.days,
+      reason: target.reason,
+      status: target.status,
+      submitted_date: target.submittedDate,
+      approved_by: target.approvedBy
+    });
+    broadcastChange('staff_leaves', 'updated');
+    return target;
+  },
+
+  getHelpTickets(studentId?: string) {
+    const list = db.tickets || [];
+    if (!studentId) return list;
+    return list.filter((tk) => tk.studentId === studentId);
+  },
+
+  addHelpTicket(data: any) {
+    const entry = {
+      id: data.id || String(Date.now()),
+      studentId: data.studentId || '',
+      studentName: data.studentName || '',
+      subject: data.subject || '',
+      description: data.description || '',
+      category: data.category || 'Academic Support',
+      priority: data.priority || 'medium',
+      status: data.status || 'open',
+      assignedTo: data.assignedTo || 'Student Affairs Desk',
+      createdDate: data.createdDate || new Date().toISOString().split('T')[0],
+      lastUpdated: data.lastUpdated || new Date().toISOString().split('T')[0],
+      responses: data.responses || [],
+      createdAt: new Date().toISOString()
+    };
+    db.tickets = [entry, ...(db.tickets || [])];
+    persistDb();
+    supabaseMirrorUpsert('help_tickets', {
+      id: entry.id,
+      student_id: entry.studentId,
+      student_name: entry.studentName,
+      subject: entry.subject,
+      description: entry.description,
+      category: entry.category,
+      priority: entry.priority,
+      status: entry.status,
+      assigned_to: entry.assignedTo,
+      created_date: entry.createdDate,
+      last_updated: entry.lastUpdated,
+      responses: entry.responses,
+      created_at: entry.createdAt
+    });
+    broadcastChange('help_tickets', 'created');
+    return entry;
+  },
+
+  addHelpTicketReply(ticketId: string, reply: any) {
+    let target: any = null;
+    db.tickets = (db.tickets || []).map((tk) => {
+      if (tk.id !== ticketId) return tk;
+      const responses = [...(tk.responses || []), reply];
+      target = { ...tk, responses, lastUpdated: new Date().toISOString().split('T')[0] };
+      return target;
+    });
+    if (!target) return null;
+    persistDb();
+    supabaseMirrorUpsert('help_tickets', {
+      id: target.id,
+      student_id: target.studentId,
+      student_name: target.studentName,
+      subject: target.subject,
+      description: target.description,
+      category: target.category,
+      priority: target.priority,
+      status: target.status,
+      assigned_to: target.assignedTo,
+      created_date: target.createdDate,
+      last_updated: target.lastUpdated,
+      responses: target.responses
+    });
+    broadcastChange('help_tickets', 'updated');
+    return target;
   },
 
   generatePasswordResetOtp(identifier: string) {

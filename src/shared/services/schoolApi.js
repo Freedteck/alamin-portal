@@ -120,7 +120,9 @@ export const schoolStore = {
     return SCHOOL_CLASSES.map((name, i) => ({
       id: `cls-${i + 1}`,
       name,
-      category: isSeniorClass(name) ? 'Senior' : 'Junior'
+      category: isSeniorClass(name) ? 'Senior' : 'Junior',
+      classTeacherId: '',
+      classTeacherName: ''
     }));
   },
   async addClass(classData) {
@@ -136,6 +138,24 @@ export const schoolStore = {
     state.classes = (state.classes || []).filter((c) => c.id !== id);
     notifyChange('classes');
     return state.classes;
+  },
+  async assignClassTeacher(className, teacherId) {
+    const res = await apiClient.post(`/classes/${encodeURIComponent(className)}/class-teacher`, { teacherId });
+    if (res && !res.error) {
+      await refreshCloudData();
+      notifyChange('classes');
+      notifyChange('teachers');
+    }
+    return res;
+  },
+  async setTeacherClassTeacherOf(teacherId, classes) {
+    const res = await apiClient.post(`/teachers/${teacherId}/class-teacher-of`, { classes });
+    if (res && !res.error) {
+      await refreshCloudData();
+      notifyChange('teachers');
+      notifyChange('classes');
+    }
+    return res;
   },
 
   // Subjects
@@ -863,6 +883,42 @@ export const schoolStore = {
     const res = await apiClient.post('/academic/rollover-session', payload);
     await refreshCloudData();
     return res;
+  },
+
+  // Direct Messages
+  async getDirectMessages() {
+    return await apiClient.get('/messages');
+  },
+  async addDirectMessage(data) {
+    const res = await apiClient.post('/messages', data);
+    notifyChange('direct_messages');
+    return res;
+  },
+
+  // Staff Leaves
+  async getStaffLeaves(teacherId) {
+    const url = teacherId ? `/staff-leaves?teacherId=${encodeURIComponent(teacherId)}` : '/staff-leaves';
+    return await apiClient.get(url);
+  },
+  async addStaffLeave(data) {
+    const res = await apiClient.post('/staff-leaves', data);
+    notifyChange('staff_leaves');
+    return res;
+  },
+
+  // Help Tickets
+  async getHelpTickets() {
+    return await apiClient.get('/help-tickets');
+  },
+  async addHelpTicket(data) {
+    const res = await apiClient.post('/help-tickets', data);
+    notifyChange('help_tickets');
+    return res;
+  },
+  async addHelpTicketReply(ticketId, message) {
+    const res = await apiClient.post(`/help-tickets/${ticketId}/reply`, { message });
+    notifyChange('help_tickets');
+    return res;
   }
 };
 
@@ -870,5 +926,7 @@ export const schoolData = {
   getTeachers: () => schoolStore.getTeachers(),
   getTeacherById: (id) => schoolStore.getTeacherById(id),
   assignTeacherClass: (id, payload) => schoolStore.assignTeacherClass(id, payload),
-  removeTeacherClass: (id, payload) => schoolStore.removeTeacherClass(id, payload)
+  removeTeacherClass: (id, payload) => schoolStore.removeTeacherClass(id, payload),
+  assignClassTeacher: (className, teacherId) => schoolStore.assignClassTeacher(className, teacherId),
+  setTeacherClassTeacherOf: (teacherId, classes) => schoolStore.setTeacherClassTeacherOf(teacherId, classes)
 };

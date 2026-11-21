@@ -52,14 +52,14 @@ export function StaffProfile() {
   const avatarInputRef = useRef(null);
 
   const [assignedClasses, setAssignedClasses] = useState([]);
-  const [leaveRequests, setLeaveRequests] = useState(() => {
+  const [leaveRequests, setLeaveRequests] = useState([]);
+
+  const loadLeaves = async (teacherId) => {
     try {
-      const saved = localStorage.getItem('alamin_staff_leaves_v1');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+      const res = await schoolStore.getStaffLeaves(teacherId);
+      if (Array.isArray(res)) setLeaveRequests(res);
+    } catch {}
+  };
 
   const [newLeave, setNewLeave] = useState({
     type: 'Casual Leave',
@@ -144,6 +144,9 @@ export function StaffProfile() {
         )
     );
     setSharedResources(schoolStore.getResourcesForUser('teacher'));
+    if (resolvedId) {
+      loadLeaves(resolvedId);
+    }
   };
 
   useEffect(() => {
@@ -191,29 +194,31 @@ export function StaffProfile() {
     showToast('Educator profile saved to database.');
   };
 
-  const handleAddLeave = (e) => {
+  const handleAddLeave = async (e) => {
     e.preventDefault();
     if (!newLeave.startDate || !newLeave.endDate || !newLeave.reason) return;
     const startMs = new Date(newLeave.startDate).getTime();
     const endMs = new Date(newLeave.endDate).getTime();
     const days = endMs >= startMs ? Math.max(1, Math.round((endMs - startMs) / 86400000) + 1) : 1;
-    const req = {
-      id: 'leave-' + Date.now(),
-      type: newLeave.type,
-      startDate: newLeave.startDate,
-      endDate: newLeave.endDate,
-      days,
-      reason: newLeave.reason,
-      status: 'pending',
-      submittedDate: new Date().toISOString().split('T')[0],
-      approvedBy: 'Pending Review'
-    };
-    const nextLeaves = [req, ...leaveRequests];
-    setLeaveRequests(nextLeaves);
-    localStorage.setItem('alamin_staff_leaves_v1', JSON.stringify(nextLeaves));
-    setShowLeaveModal(false);
-    setNewLeave({ type: 'Casual Leave', startDate: '', endDate: '', reason: '' });
-    showToast('Academic leave request submitted.');
+    try {
+      const created = await schoolStore.addStaffLeave({
+        teacherId: staffData.id || '',
+        teacherName: staffData.name || 'Staff',
+        type: newLeave.type,
+        startDate: newLeave.startDate,
+        endDate: newLeave.endDate,
+        days,
+        reason: newLeave.reason,
+        status: 'pending',
+        submittedDate: new Date().toISOString().split('T')[0]
+      });
+      setLeaveRequests((prev) => [created, ...prev]);
+      setShowLeaveModal(false);
+      setNewLeave({ type: 'Casual Leave', startDate: '', endDate: '', reason: '' });
+      showToast('Academic leave request submitted and saved to database.');
+    } catch (err) {
+      showToast(err?.message || 'Failed to submit leave request.');
+    }
   };
 
   const handleAddResource = async (e) => {

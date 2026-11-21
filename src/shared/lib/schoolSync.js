@@ -16,37 +16,9 @@ export function subscribeSchoolSync(callback) {
   return () => window.removeEventListener(SYNC_EVENT, handler);
 }
 
-function writeSnapshotToLocal(storageKeys, payload) {
-  if (!payload || typeof payload !== 'object') return false;
-  const pairs = [
-    ['subjects', storageKeys.SUBJECTS],
-    ['students', storageKeys.STUDENTS],
-    ['teachers', storageKeys.TEACHERS],
-    ['timetable', storageKeys.TIMETABLE],
-    ['alerts', storageKeys.ALERTS],
-    ['attendance', storageKeys.ATTENDANCE],
-    ['grades', storageKeys.GRADES],
-    ['resources', storageKeys.RESOURCES],
-    ['equipment', storageKeys.EQUIPMENT],
-    ['maintenance', storageKeys.MAINTENANCE],
-    ['documents', storageKeys.DOCUMENTS],
-    ['announcements', storageKeys.ANNOUNCEMENTS],
-    ['availability', storageKeys.TEACHER_AVAILABILITY],
-    ['assignments', storageKeys.ASSIGNMENTS],
-    ['requests', storageKeys.REQUESTS]
-  ];
-
-  let updatedAny = false;
-  pairs.forEach(([field, storageKey]) => {
-    if (storageKey && payload[field] !== undefined) {
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(payload[field]));
-        updatedAny = true;
-      } catch {
-      }
-    }
-  });
-  return updatedAny;
+function writeSnapshotToLocal(_storageKeys, payload) {
+  // Pure database-driven synchronization — no dumping tables to localStorage
+  return Boolean(payload && typeof payload === 'object');
 }
 
 export async function hydrateAllFromApi(storageKeys) {

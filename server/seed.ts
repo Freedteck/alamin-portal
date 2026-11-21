@@ -66,7 +66,9 @@ export const INITIAL_SUBJECT_CATALOG = [
 export const INITIAL_CLASSES = SCHOOL_CLASSES.map((name, i) => ({
   id: `cls-${i + 1}`,
   name,
-  category: isSeniorClass(name) ? 'Senior' : 'Junior'
+  category: isSeniorClass(name) ? 'Senior' : 'Junior',
+  classTeacherId: '',
+  classTeacherName: ''
 }));
 
 export const INITIAL_STUDENTS: any[] = [];
@@ -132,6 +134,9 @@ export function createInitialDbSnapshot() {
     availability: structuredClone(INITIAL_TEACHER_AVAILABILITY),
     assignments: structuredClone(INITIAL_ASSIGNMENTS),
     requests: structuredClone(INITIAL_REQUESTS),
-    enquiries: [] as any[]
+    enquiries: [] as any[],
+    messages: [] as any[],
+    leaves: [] as any[],
+    tickets: [] as any[]
   };
 }

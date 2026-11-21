@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../../../shared/components/Button/Button';
 import {
@@ -15,6 +15,7 @@ import {
   Send
 } from 'lucide-react';
 import { Pagination } from '../../../shared/components/Pagination/Pagination';
+import { schoolStore } from '../../../shared/data/schoolData';
 
 export function StudentHelp() {
   const [activeTab, setActiveTab] = useState('contact');
@@ -31,14 +32,18 @@ export function StudentHelp() {
     priority: 'medium'
   });
 
-  const [tickets, setTickets] = useState(() => {
+  const [tickets, setTickets] = useState([]);
+
+  const loadTickets = async () => {
     try {
-      const saved = localStorage.getItem('alamin_help_tickets_v1');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+      const res = await schoolStore.getHelpTickets();
+      if (Array.isArray(res)) setTickets(res);
+    } catch {}
+  };
+
+  useEffect(() => {
+    loadTickets();
+  }, []);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -86,74 +91,40 @@ export function StudentHelp() {
     { day: 'Saturday & Sunday', hours: 'Closed' }
   ];
 
-  const handleCreateTicket = () => {
+  const handleCreateTicket = async () => {
     if (!newTicket.subject.trim() || !newTicket.description.trim() || !newTicket.category) {
       setErrorMsg('Please fill in all required fields.');
       return;
     }
     setErrorMsg('');
-    const currentUser = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const studentName = currentUser.name || 'Student';
-
-    const ticket = {
-      id: String(Date.now()),
-      subject: newTicket.subject,
-      description: newTicket.description,
-      category: newTicket.category,
-      priority: newTicket.priority,
-      status: 'open',
-      createdDate: new Date().toISOString().split('T')[0],
-      lastUpdated: new Date().toISOString().split('T')[0],
-      assignedTo: 'Student Affairs Desk',
-      responses: [
-        {
-          id: '1',
-          author: studentName,
-          authorType: 'student',
-          message: newTicket.description,
-          timestamp: new Date().toLocaleString('en-GB')
-        }
-      ]
-    };
-
-    const nextTickets = [ticket, ...tickets];
-    setTickets(nextTickets);
-    localStorage.setItem('alamin_help_tickets_v1', JSON.stringify(nextTickets));
-    setNewTicket({ subject: '', description: '', category: 'Academic Support', priority: 'medium' });
-    setActiveTab('tickets');
-    showToast('Support ticket submitted! An advisor will respond shortly.');
+    try {
+      const created = await schoolStore.addHelpTicket({
+        subject: newTicket.subject.trim(),
+        description: newTicket.description.trim(),
+        category: newTicket.category,
+        priority: newTicket.priority
+      });
+      setTickets((prev) => [created, ...prev]);
+      setNewTicket({ subject: '', description: '', category: 'Academic Support', priority: 'medium' });
+      setActiveTab('tickets');
+      showToast('Support ticket submitted and stored in database! An advisor will respond shortly.');
+    } catch (err) {
+      setErrorMsg(err?.message || 'Failed to submit support ticket.');
+    }
   };
 
-  const handleSendReply = (ticketId) => {
+  const handleSendReply = async (ticketId) => {
     const text = (replyDrafts[ticketId] || '').trim();
     if (!text) return;
-    const currentUser = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const studentName = currentUser.name || 'Student';
 
-    setTickets((prev) => {
-      const updated = prev.map((t) => {
-        if (t.id === ticketId) {
-          return {
-            ...t,
-            responses: [
-              ...t.responses,
-              {
-                id: String(Date.now()),
-                author: studentName,
-                authorType: 'student',
-                message: text,
-                timestamp: new Date().toLocaleString('en-GB')
-              }
-            ]
-          };
-        }
-        return t;
-      });
-      localStorage.setItem('alamin_help_tickets_v1', JSON.stringify(updated));
-      return updated;
-    });
-    setReplyDrafts((prev) => ({ ...prev, [ticketId]: '' }));
-    showToast('Reply sent to advisor.');
+    try {
+      const updated = await schoolStore.addHelpTicketReply(ticketId, text);
+      setTickets((prev) => prev.map((t) => (t.id === ticketId ? updated : t)));
+      setReplyDrafts((prev) => ({ ...prev, [ticketId]: '' }));
+      showToast('Reply sent and saved to database.');
+    } catch (err) {
+      showToast(err?.message || 'Failed to send reply.');
+    }
   };
 
   const getStatusIcon = (status) => {

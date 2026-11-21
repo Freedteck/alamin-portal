@@ -84,6 +84,13 @@ router.post('/auth/login', (req: Request, res: Response) => {
   if (!user) {
     return res.status(401).json({ error: 'Invalid email or password.' });
   }
+  if (user.role === 'teacher') {
+    const teacher = backendStore.getTeacherByEmailOrId(user.email, user.teacherId);
+    if (teacher) {
+      (user as any).classTeacherOf = teacher.classTeacherOf || [];
+      (user as any).teacherId = teacher.id;
+    }
+  }
   const token = signAuthToken(user);
   res.json({ token, user });
 });
@@ -96,7 +103,15 @@ router.post('/auth/register', (_req: Request, res: Response) => {
 
 router.get('/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
   const freshUser = req.user ? backendStore.getUserById(req.user.id) : null;
-  res.json({ user: freshUser || req.user });
+  const user = freshUser || req.user;
+  if (user && user.role === 'teacher') {
+    const teacher = backendStore.getTeacherByEmailOrId(user.email, user.teacherId);
+    if (teacher) {
+      (user as any).classTeacherOf = teacher.classTeacherOf || [];
+      (user as any).teacherId = teacher.id;
+    }
+  }
+  res.json({ user });
 });
 
 router.post('/auth/logout', (_req: Request, res: Response) => {
@@ -195,6 +210,30 @@ router.post('/classes', requireAuth, requireRole('admin'), (req: Request, res: R
     return res.status(400).json(result);
   }
   res.status(201).json(result);
+});
+
+router.post('/classes/:id/class-teacher', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+  const { teacherId } = req.body || {};
+  const classIdOrName = paramStr(req.params.id);
+  const result = backendStore.assignClassTeacher(classIdOrName, teacherId);
+  if ((result as any).error) {
+    return res.status(400).json(result);
+  }
+  res.json(result);
+});
+
+router.put('/classes/:id', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+  const classIdOrName = paramStr(req.params.id);
+  const { teacherId, classTeacherId } = req.body || {};
+  const targetTeacherId = classTeacherId !== undefined ? classTeacherId : teacherId;
+  if (targetTeacherId !== undefined) {
+    const result = backendStore.assignClassTeacher(classIdOrName, targetTeacherId);
+    if ((result as any).error) {
+      return res.status(400).json(result);
+    }
+    return res.json(result);
+  }
+  res.json({ ok: true });
 });
 
 router.delete('/classes/:id', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
@@ -413,6 +452,16 @@ router.delete('/teachers/:id/assign-class', requireAuth, requireRole('admin'), (
   res.json(updated);
 });
 
+router.post('/teachers/:id/class-teacher-of', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+  const teacherId = paramStr(req.params.id);
+  const { classes } = req.body || {};
+  const result = backendStore.setTeacherClassTeacherOf(teacherId, Array.isArray(classes) ? classes : []);
+  if ((result as any).error) {
+    return res.status(400).json(result);
+  }
+  res.json(result);
+});
+
 router.delete('/teachers/:id', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
   const deleted = backendStore.deleteTeacher(id);
@@ -498,6 +547,18 @@ router.post('/attendance', requireAuth, requireRole('admin', 'teacher'), (req: A
   if (!date || !className || !records) {
     return res.status(400).json({ error: 'date, className, and records are required.' });
   }
+
+  // Authorization check: Only admin or the assigned class teacher for this class can submit attendance
+  if (req.user?.role !== 'admin') {
+    const teacher = backendStore.getTeacherByEmailOrId(req.user?.email, req.user?.teacherId);
+    const assignedClasses = teacher?.classTeacherOf || [];
+    if (!assignedClasses.includes(className)) {
+      return res.status(403).json({
+        error: `Access Denied: Only the assigned Class Teacher for "${className}" can mark attendance for this class.`
+      });
+    }
+  }
+
   const actor = submittedBy || req.user?.name || 'Staff';
   const entry = backendStore.saveClassAttendance(date, className, actor, records);
   res.status(201).json(entry);
@@ -831,6 +892,109 @@ router.post('/enquiries', (req: Request, res: Response) => {
   }
   const entry = backendStore.addEnquiry(kind || 'enquiry', req.body || {});
   res.status(201).json(entry);
+});
+
+/* ── Direct Messages ─────────────────────────────────────────────────────── */
+
+router.get('/messages', requireAuth, (_req: Request, res: Response) => {
+  res.json(backendStore.getDirectMessages());
+});
+
+router.post('/messages', requireAuth, requireRole('admin'), (req: AuthenticatedRequest, res: Response) => {
+  const { recipient, subject, content, role } = req.body || {};
+  if (!recipient || !subject || !content) {
+    return res.status(400).json({ error: 'recipient, subject, and content are required.' });
+  }
+  const created = backendStore.addDirectMessage({
+    senderId: req.user?.id || '',
+    senderName: req.user?.name || 'Administrator',
+    recipient,
+    role: role || 'Recipient',
+    subject,
+    content
+  });
+  res.status(201).json(created);
+});
+
+/* ── Staff Leaves ────────────────────────────────────────────────────────── */
+
+router.get('/staff-leaves', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const teacherId = req.user?.role === 'teacher' ? req.user.teacherId : (typeof req.query.teacherId === 'string' ? req.query.teacherId : undefined);
+  res.json(backendStore.getStaffLeaves(teacherId));
+});
+
+router.post('/staff-leaves', requireAuth, requireRole('admin', 'teacher'), (req: AuthenticatedRequest, res: Response) => {
+  const { type, startDate, endDate, reason, days } = req.body || {};
+  if (!startDate || !endDate || !reason) {
+    return res.status(400).json({ error: 'startDate, endDate, and reason are required.' });
+  }
+  const teacher = req.user?.teacherId ? backendStore.getTeacherById(req.user.teacherId) : null;
+  const created = backendStore.addStaffLeave({
+    teacherId: teacher?.id || req.body?.teacherId || '',
+    teacherName: teacher?.name || req.body?.teacherName || req.user?.name || 'Staff',
+    type: type || 'Casual Leave',
+    startDate,
+    endDate,
+    days: days || 1,
+    reason
+  });
+  res.status(201).json(created);
+});
+
+router.patch('/staff-leaves/:id', requireAuth, requireRole('admin'), (req: AuthenticatedRequest, res: Response) => {
+  const { status } = req.body || {};
+  if (!status) return res.status(400).json({ error: 'Status is required.' });
+  const updated = backendStore.updateStaffLeaveStatus(paramStr(req.params.id), status, req.user?.name || 'Administrator');
+  if (!updated) return res.status(404).json({ error: 'Leave request not found.' });
+  res.json(updated);
+});
+
+/* ── Help Tickets ────────────────────────────────────────────────────────── */
+
+router.get('/help-tickets', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const studentId = req.user?.role === 'student' ? req.user.studentId : undefined;
+  res.json(backendStore.getHelpTickets(studentId));
+});
+
+router.post('/help-tickets', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const { subject, description, category, priority } = req.body || {};
+  if (!subject || !description) {
+    return res.status(400).json({ error: 'Subject and description are required.' });
+  }
+  const studentName = req.user?.name || 'Student';
+  const created = backendStore.addHelpTicket({
+    studentId: req.user?.studentId || req.user?.id || '',
+    studentName,
+    subject,
+    description,
+    category: category || 'Academic Support',
+    priority: priority || 'medium',
+    responses: [
+      {
+        id: '1',
+        author: studentName,
+        authorType: req.user?.role || 'student',
+        message: description,
+        timestamp: new Date().toLocaleString('en-GB')
+      }
+    ]
+  });
+  res.status(201).json(created);
+});
+
+router.post('/help-tickets/:id/reply', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const { message } = req.body || {};
+  if (!message) return res.status(400).json({ error: 'Message is required.' });
+  const reply = {
+    id: String(Date.now()),
+    author: req.user?.name || 'User',
+    authorType: req.user?.role || 'student',
+    message,
+    timestamp: new Date().toLocaleString('en-GB')
+  };
+  const updated = backendStore.addHelpTicketReply(paramStr(req.params.id), reply);
+  if (!updated) return res.status(404).json({ error: 'Help ticket not found.' });
+  res.json(updated);
 });
 
 /* ── Files Upload & Download ─────────────────────────────────────────────── */
