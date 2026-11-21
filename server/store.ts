@@ -959,11 +959,19 @@ export const backendStore = {
     return this.updateTeacher(teacherId, { assignedClasses: [...existing, classSubject] });
   },
 
-  removeTeacherClass(teacherId: string, classSubject: { class: string; subject: string }) {
+  removeTeacherClass(teacherId: string, classSubject: any) {
     const teacher = this.getTeacherById(teacherId);
     if (!teacher) return null;
+    const targetClass =
+      typeof classSubject === 'object' && classSubject
+        ? classSubject.class || classSubject.className || ''
+        : String(classSubject || '');
+    const targetSubject =
+      typeof classSubject === 'object' && classSubject
+        ? classSubject.subject || classSubject.subjectName || ''
+        : '';
     const next = (teacher.assignedClasses || []).filter(
-      (ac: any) => !(ac.class === classSubject.class && ac.subject === classSubject.subject)
+      (ac: any) => !(ac.class === targetClass && (!targetSubject || ac.subject === targetSubject))
     );
     return this.updateTeacher(teacherId, { assignedClasses: next });
   },

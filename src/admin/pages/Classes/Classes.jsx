@@ -146,12 +146,16 @@ export function ClassScheduling() {
     setSubjectsPage(1);
   }, [subjectSearch]);
 
-  const confirmRemoveTeacherClass = () => {
+  const confirmRemoveTeacherClass = async () => {
     if (!allocToRemove) return;
-    schoolStore.removeTeacherClass(allocToRemove.teacherId, allocToRemove.classSubject);
-    loadData();
-    setAllocToRemove(null);
-    showNotification('Allocation removed.');
+    try {
+      await schoolStore.removeTeacherClass(allocToRemove.teacherId, allocToRemove.classSubject);
+      loadData();
+      setAllocToRemove(null);
+      showNotification('Allocation removed.');
+    } catch (err) {
+      showNotification(err?.message || 'Failed to remove allocation.');
+    }
   };
 
   const handleEnrollStudent = (e) => {

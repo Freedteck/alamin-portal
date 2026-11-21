@@ -335,8 +335,31 @@ router.post('/teachers/:id/assign-class', requireAuth, requireRole('admin'), (re
 });
 
 router.delete('/teachers/:id/assign-class', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
-  const className = String(req.body?.class || req.query?.class || '');
-  const subject = String(req.body?.subject || req.query?.subject || '');
+  let className = String(req.body?.class || req.query?.class || '');
+  let subject = String(req.body?.subject || req.query?.subject || '');
+
+  const rawClassSubject = req.query?.classSubject || req.body?.classSubject;
+  if ((!className || !subject) && rawClassSubject) {
+    if (typeof rawClassSubject === 'object' && rawClassSubject !== null) {
+      className = rawClassSubject.class || rawClassSubject.className || className;
+      subject = rawClassSubject.subject || rawClassSubject.subjectName || subject;
+    } else if (typeof rawClassSubject === 'string') {
+      try {
+        const parsed = JSON.parse(rawClassSubject);
+        if (parsed && typeof parsed === 'object') {
+          className = parsed.class || parsed.className || className;
+          subject = parsed.subject || parsed.subjectName || subject;
+        }
+      } catch {
+        if (rawClassSubject.includes('-')) {
+          const parts = rawClassSubject.split('-');
+          className = className || parts[0].trim();
+          subject = subject || parts.slice(1).join('-').trim();
+        }
+      }
+    }
+  }
+
   if (!className || !subject) {
     return res.status(400).json({ error: 'Both class and subject are required.' });
   }

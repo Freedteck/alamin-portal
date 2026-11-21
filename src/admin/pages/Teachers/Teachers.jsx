@@ -209,14 +209,18 @@ export function TeacherManagement() {
     }
   };
 
-  const handleRemoveAllocation = (teacherId, classSubject) => {
-    schoolData.removeTeacherClass(teacherId, classSubject);
-    loadTeachers();
-    if (allocationTeacher && allocationTeacher.id === teacherId) {
-      setAllocationTeacher(schoolData.getTeacherById(teacherId));
-    }
-    if (selectedTeacher && selectedTeacher.id === teacherId) {
-      setSelectedTeacher(schoolData.getTeacherById(teacherId));
+  const handleRemoveAllocation = async (teacherId, classSubject) => {
+    try {
+      await schoolData.removeTeacherClass(teacherId, classSubject);
+      loadTeachers();
+      if (allocationTeacher && allocationTeacher.id === teacherId) {
+        setAllocationTeacher(schoolData.getTeacherById(teacherId));
+      }
+      if (selectedTeacher && selectedTeacher.id === teacherId) {
+        setSelectedTeacher(schoolData.getTeacherById(teacherId));
+      }
+    } catch {
+      // Error handled by optimistic state and notification
     }
   };
 

@@ -303,8 +303,41 @@ export const schoolStore = {
     }
     return res;
   },
-  async removeTeacherClass(teacherId, classSubject) {
-    const res = await apiClient.delete(`/teachers/${teacherId}/assign-class?classSubject=${encodeURIComponent(classSubject)}`);
+  async removeTeacherClass(teacherId, classSubject, subjectArg) {
+    let cls = '';
+    let sub = '';
+
+    if (typeof classSubject === 'object' && classSubject !== null) {
+      cls = classSubject.class || classSubject.className || '';
+      sub = classSubject.subject || classSubject.subjectName || '';
+    } else if (typeof classSubject === 'string') {
+      if (subjectArg) {
+        cls = classSubject;
+        sub = subjectArg;
+      } else if (classSubject.includes('-')) {
+        const parts = classSubject.split('-');
+        cls = parts[0].trim();
+        sub = parts.slice(1).join('-').trim();
+      } else {
+        cls = classSubject;
+      }
+    }
+
+    // Optimistically update local teacher record
+    const teacher = (state.teachers || []).find((t) => t.id === teacherId);
+    if (teacher && teacher.assignedClasses) {
+      teacher.assignedClasses = teacher.assignedClasses.filter(
+        (a) => !(a.class === cls && a.subject === sub)
+      );
+      state.teachers = [...state.teachers];
+      notifyChange('teachers');
+    }
+
+    const query = `class=${encodeURIComponent(cls)}&subject=${encodeURIComponent(sub)}`;
+    const res = await apiClient.delete(`/teachers/${teacherId}/assign-class?${query}`, {
+      class: cls,
+      subject: sub
+    });
     if (res?.teacher) {
       state.teachers = (state.teachers || []).map((t) => (t.id === teacherId ? res.teacher : t));
       notifyChange('teachers');
