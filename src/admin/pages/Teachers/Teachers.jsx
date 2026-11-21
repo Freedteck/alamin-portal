@@ -36,7 +36,9 @@ export function TeacherManagement() {
   const [allocSubject, setAllocSubject] = useState('Mathematics');
 
   const [newTeacher, setNewTeacher] = useState({
-    name: '',
+    title: 'Mr.',
+    firstName: '',
+    lastName: '',
     email: '',
     phone: '',
     qualification: '',
@@ -72,19 +74,25 @@ export function TeacherManagement() {
     setCurrentPage(1);
   }, [searchTerm, selectedSubject, selectedClass, pageSize]);
 
-  const filteredTeachers = teachers.filter((teacher) => {
+  const filteredTeachers = (teachers || []).filter((teacher) => {
+    if (!teacher) return false;
+    const teacherName = teacher.name || '';
+    const teacherEmail = teacher.email || '';
+    const teacherStaffId = teacher.staffId || '';
+    const teacherQual = teacher.qualification || '';
+
     const matchesSearch =
-      teacher.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      teacher.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (teacher.staffId && teacher.staffId.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (teacher.qualification && teacher.qualification.toLowerCase().includes(searchTerm.toLowerCase()));
+      teacherName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      teacherEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      teacherStaffId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      teacherQual.toLowerCase().includes(searchTerm.toLowerCase());
 
     const assigned = teacher.assignedClasses || [];
     const matchesSubject =
-      selectedSubject === 'all' || assigned.some((a) => a.subject === selectedSubject);
+      selectedSubject === 'all' || assigned.some((a) => a && a.subject === selectedSubject);
 
     const matchesClass =
-      selectedClass === 'all' || assigned.some((a) => a.class === selectedClass);
+      selectedClass === 'all' || assigned.some((a) => a && a.class === selectedClass);
 
     return matchesSearch && matchesSubject && matchesClass;
   });
@@ -104,8 +112,12 @@ export function TeacherManagement() {
   const handleAddTeacher = async (e) => {
     e.preventDefault();
     setAddError('');
-    if (!newTeacher.name.trim() || !newTeacher.email.trim()) {
-      setAddError('Full name and school email are required.');
+    if (!newTeacher.firstName.trim() || !newTeacher.lastName.trim()) {
+      setAddError('First name and surname (last name) are required.');
+      return;
+    }
+    if (!newTeacher.email.trim()) {
+      setAddError('School email is required.');
       return;
     }
     const trimmedPass = newTeacher.portalPassword.trim();
@@ -114,8 +126,11 @@ export function TeacherManagement() {
       return;
     }
 
+    const titlePrefix = newTeacher.title ? `${newTeacher.title} ` : '';
+    const fullName = `${titlePrefix}${newTeacher.firstName.trim()} ${newTeacher.lastName.trim()}`.trim();
+
     const teacherObj = {
-      name: newTeacher.name.trim(),
+      name: fullName,
       email: newTeacher.email.trim().toLowerCase(),
       phone: newTeacher.phone.trim() || '+234 800 000 0000',
       qualification: newTeacher.qualification.trim() || 'B.Sc. Ed / PGDE',
@@ -132,7 +147,9 @@ export function TeacherManagement() {
       loadTeachers();
       setIsAddDialogOpen(false);
       setNewTeacher({
-        name: '',
+        title: 'Mr.',
+        firstName: '',
+        lastName: '',
         email: '',
         phone: '',
         qualification: '',
@@ -143,8 +160,8 @@ export function TeacherManagement() {
       setShowNewPassword(false);
       if (created?.portalCredentials) {
         setCreatedTeacherCreds({
-          name: created.name,
-          staffId: created.staffId,
+          name: created.name || created.teacher?.name || fullName,
+          staffId: created.staffId || created.teacher?.staffId || '',
           email: created.portalCredentials.email,
           temporaryPassword: created.portalCredentials.temporaryPassword
         });
@@ -449,18 +466,54 @@ export function TeacherManagement() {
             </div>
           )}
           <div className="grid grid-cols-1 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-[#1c1c14]" htmlFor="t-name">
-                Full Name with Title *
-              </label>
-              <input
-                required
-                className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
-                id="t-name"
-                value={newTeacher.name}
-                onChange={(e) => setNewTeacher({ ...newTeacher, name: e.target.value })}
-                placeholder="Full name with title"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+              <div className="space-y-1.5 sm:col-span-1">
+                <label className="text-xs font-semibold text-[#1c1c14]" htmlFor="t-title">
+                  Title
+                </label>
+                <select
+                  id="t-title"
+                  className="w-full h-10 px-2 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                  value={newTeacher.title}
+                  onChange={(e) => setNewTeacher({ ...newTeacher, title: e.target.value })}
+                >
+                  <option value="Mr.">Mr.</option>
+                  <option value="Mrs.">Mrs.</option>
+                  <option value="Ms.">Ms.</option>
+                  <option value="Ustaz">Ustaz</option>
+                  <option value="Mal.">Mal.</option>
+                  <option value="Dr.">Dr.</option>
+                  <option value="Engr.">Engr.</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className="text-xs font-semibold text-[#1c1c14]" htmlFor="t-fname">
+                  First Name *
+                </label>
+                <input
+                  required
+                  className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                  id="t-fname"
+                  value={newTeacher.firstName}
+                  onChange={(e) => setNewTeacher({ ...newTeacher, firstName: e.target.value })}
+                  placeholder="e.g. Ibrahim"
+                />
+              </div>
+
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className="text-xs font-semibold text-[#1c1c14]" htmlFor="t-lname">
+                  Surname (Last Name) *
+                </label>
+                <input
+                  required
+                  className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                  id="t-lname"
+                  value={newTeacher.lastName}
+                  onChange={(e) => setNewTeacher({ ...newTeacher, lastName: e.target.value })}
+                  placeholder="e.g. Musa"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -586,7 +639,7 @@ export function TeacherManagement() {
         isOpen={!!allocationTeacher}
         onClose={() => setAllocationTeacher(null)}
         title="Class Allocations"
-        subtitle={allocationTeacher ? allocationTeacher.name : ''}
+        subtitle={allocationTeacher ? (allocationTeacher.name || '') : ''}
         size="md"
         footer={
           <Button
@@ -686,7 +739,7 @@ export function TeacherManagement() {
         isOpen={!!selectedTeacher}
         onClose={() => setSelectedTeacher(null)}
         title="Teacher Profile"
-        subtitle={selectedTeacher ? selectedTeacher.name : ''}
+        subtitle={selectedTeacher ? (selectedTeacher.name || '') : ''}
         size="md"
         footer={
           selectedTeacher && (
@@ -714,9 +767,9 @@ export function TeacherManagement() {
         {selectedTeacher && (
           <div className="space-y-6 font-['Poppins',sans-serif]">
             <div className="flex items-center gap-4 p-4 bg-[#fdf9ec] rounded-xl border border-[#c9c7b6]/70">
-              <ProfileAvatar name={selectedTeacher.name} size="lg" shape="rounded" />
+              <ProfileAvatar name={selectedTeacher.name || 'Teacher'} size="lg" shape="rounded" />
               <div>
-                <h3 className="text-base font-bold text-[#1c1c14]">{selectedTeacher.name}</h3>
+                <h3 className="text-base font-bold text-[#1c1c14]">{selectedTeacher.name || 'Teacher Profile'}</h3>
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 mt-1">
                   Active Staff
                 </span>
@@ -844,7 +897,7 @@ export function TeacherManagement() {
         isOpen={!!createdTeacherCreds}
         onClose={() => setCreatedTeacherCreds(null)}
         title="Teacher Account Provisioned"
-        subtitle={createdTeacherCreds ? `${createdTeacherCreds.name} (${createdTeacherCreds.staffId})` : ''}
+        subtitle={createdTeacherCreds ? `${createdTeacherCreds.name || ''} (${createdTeacherCreds.staffId || ''})` : ''}
         size="md"
         footer={
           <Button onClick={() => setCreatedTeacherCreds(null)}>

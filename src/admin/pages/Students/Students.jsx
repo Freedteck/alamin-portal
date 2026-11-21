@@ -82,13 +82,21 @@ export function StudentManagement() {
     }
   };
 
-  const filteredStudents = studentsList.filter((student) => {
+  const filteredStudents = (studentsList || []).filter((student) => {
+    if (!student) return false;
+    const name = student.name || '';
+    const adm = student.admissionNumber || '';
+    const state = student.stateOfOrigin || '';
+    const lga = student.lga || '';
+    const parent = student.parentName || '';
+    const term = (searchTerm || '').toLowerCase();
+
     const matchesSearch =
-      student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      student.admissionNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (student.stateOfOrigin && student.stateOfOrigin.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (student.lga && student.lga.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (student.parentName && student.parentName.toLowerCase().includes(searchTerm.toLowerCase()));
+      name.toLowerCase().includes(term) ||
+      adm.toLowerCase().includes(term) ||
+      state.toLowerCase().includes(term) ||
+      lga.toLowerCase().includes(term) ||
+      parent.toLowerCase().includes(term);
 
     const matchesClass = selectedClass === 'all' || student.class === selectedClass;
 
@@ -275,7 +283,7 @@ export function StudentManagement() {
         isOpen={!!selectedStudent}
         onClose={() => setSelectedStudent(null)}
         title="Student Profile"
-        subtitle={selectedStudent ? selectedStudent.name : ''}
+        subtitle={selectedStudent ? (selectedStudent.name || '') : ''}
         size="md"
         footer={
           selectedStudent && (
@@ -308,9 +316,9 @@ export function StudentManagement() {
         {selectedStudent && (
           <div className="space-y-6 text-sm">
             <div className="flex items-center gap-4 p-4 bg-[#faf8f0] rounded-xl border border-[#c9c7b6]/70">
-              <ProfileAvatar name={selectedStudent.name} size="lg" />
+              <ProfileAvatar name={selectedStudent.name || 'Student'} size="lg" />
               <div className="min-w-0">
-                <h3 className="font-bold text-base text-[#1c1c14]">{selectedStudent.name}</h3>
+                <h3 className="font-bold text-base text-[#1c1c14]">{selectedStudent.name || 'Student Profile'}</h3>
                 <p className="text-xs text-[#797869] mt-0.5">Active Student</p>
               </div>
             </div>

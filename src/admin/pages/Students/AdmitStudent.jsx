@@ -66,13 +66,17 @@ export function AdmitStudent() {
     portalEmail: '',
     portalPassword: '',
 
-    parentName: '',
+    parentFirstName: '',
+    parentLastName: '',
     parentRelationship: 'Father',
     parentPhone: '',
     parentAltPhone: '',
     parentEmail: '',
     parentOccupation: '',
-    emergencyContact: ''
+    emergencyContactFirstName: '',
+    emergencyContactLastName: '',
+    emergencyContactPhone: '',
+    emergencyContactRelationship: 'Uncle'
   });
 
   const availableLgas = useMemo(() => {
@@ -142,7 +146,50 @@ export function AdmitStudent() {
     });
   };
 
+  const validateStep = (step) => {
+    setSubmitError('');
+    if (step === 1) {
+      if (!formData.firstName.trim() || !formData.surname.trim()) {
+        setSubmitError('Please enter Student First Name and Surname.');
+        return false;
+      }
+      if (!formData.dateOfBirth) {
+        setSubmitError('Please enter Student Date of Birth.');
+        return false;
+      }
+    } else if (step === 2) {
+      if (!formData.stateOfOrigin || !formData.lga) {
+        setSubmitError('Please select State of Origin and LGA.');
+        return false;
+      }
+      if (!formData.residentialAddress.trim()) {
+        setSubmitError('Please enter Residential Street Address.');
+        return false;
+      }
+    } else if (step === 3) {
+      if (!formData.class) {
+        setSubmitError('Please select an assigned class.');
+        return false;
+      }
+      if (!formData.enrolledSubjects || formData.enrolledSubjects.length === 0) {
+        setSubmitError('Please select at least one registered subject for this student.');
+        return false;
+      }
+    } else if (step === 4) {
+      if (!formData.parentFirstName.trim() || !formData.parentLastName.trim()) {
+        setSubmitError('Please provide Parent / Guardian First Name and Surname.');
+        return false;
+      }
+      if (!formData.parentPhone.trim()) {
+        setSubmitError('Please provide Parent / Guardian Primary Phone Number.');
+        return false;
+      }
+    }
+    return true;
+  };
+
   const handleNext = () => {
+    if (!validateStep(currentStep)) return;
     if (currentStep < 5) {
       setCurrentStep((prev) => prev + 1);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -150,6 +197,7 @@ export function AdmitStudent() {
   };
 
   const handleBack = () => {
+    setSubmitError('');
     if (currentStep > 1) {
       setCurrentStep((prev) => prev - 1);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -165,7 +213,20 @@ export function AdmitStudent() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (currentStep < 5) {
+      handleNext();
+      return;
+    }
+
     setSubmitError('');
+
+    // Ensure all 4 preliminary steps are fully valid before submitting from review
+    for (let s = 1; s <= 4; s++) {
+      if (!validateStep(s)) {
+        setCurrentStep(s);
+        return;
+      }
+    }
 
     const trimmedEmail = formData.portalEmail.trim().toLowerCase();
     const trimmedPassword = formData.portalPassword.trim();
@@ -175,6 +236,11 @@ export function AdmitStudent() {
     }
 
     const fullName = `${formData.firstName.trim()} ${formData.middleName.trim() ? formData.middleName.trim() + ' ' : ''}${formData.surname.trim()}`;
+    const parentFullName = `${formData.parentFirstName.trim()} ${formData.parentLastName.trim()}`.trim();
+    const emergencyFullName = `${formData.emergencyContactFirstName.trim()} ${formData.emergencyContactLastName.trim()}`.trim();
+    const emergencySummary = emergencyFullName
+      ? `${emergencyFullName} (${formData.emergencyContactPhone || 'No Phone'}${formData.emergencyContactRelationship ? ` - ${formData.emergencyContactRelationship}` : ''})`
+      : '';
 
     const studentToSave = {
       name: fullName,
@@ -185,10 +251,11 @@ export function AdmitStudent() {
       stateOfOrigin: formData.stateOfOrigin,
       lga: formData.lga,
       address: formData.residentialAddress || `${formData.city}, ${formData.stateOfOrigin}`,
-      parentName: formData.parentName,
+      parentName: parentFullName,
       parentPhone: formData.parentPhone,
       parentEmail: formData.parentEmail,
       parentOccupation: formData.parentOccupation,
+      emergencyContact: emergencySummary,
       enrolledSubjects: formData.enrolledSubjects,
       enrollmentDate: new Date().toISOString().split('T')[0],
       ...(trimmedEmail ? { email: trimmedEmail } : {}),
@@ -456,7 +523,16 @@ export function AdmitStudent() {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form
+        onSubmit={handleSubmit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && currentStep < 5 && e.target.tagName === 'INPUT') {
+            e.preventDefault();
+            handleNext();
+          }
+        }}
+        className="space-y-6"
+      >
         <div className="rounded-lg border border-[#c9c7b6] bg-white p-6 sm:p-8 shadow-xs">
           {currentStep === 1 && (
             <div className="space-y-6 animate-in fade-in duration-200">
@@ -871,18 +947,34 @@ export function AdmitStudent() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-[#1c1c14]">
-                    Parent / Guardian Full Name <span className="text-red-600">*</span>
+                    Parent / Guardian First Name <span className="text-red-600">*</span>
                   </label>
                   <input
                     type="text"
                     required
-                    value={formData.parentName}
-                    onChange={(e) => setFormData({ ...formData, parentName: e.target.value })}
-                    placeholder="Alhaji Bello Mohammed"
+                    value={formData.parentFirstName}
+                    onChange={(e) => setFormData({ ...formData, parentFirstName: e.target.value })}
+                    placeholder="Bello"
                     className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                   />
                 </div>
 
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-[#1c1c14]">
+                    Parent / Guardian Surname (Last Name) <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.parentLastName}
+                    onChange={(e) => setFormData({ ...formData, parentLastName: e.target.value })}
+                    placeholder="Mohammed"
+                    className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-[#1c1c14]">Relationship</label>
                   <select
@@ -894,11 +986,10 @@ export function AdmitStudent() {
                     <option value="Mother">Mother</option>
                     <option value="Legal Guardian">Legal Guardian</option>
                     <option value="Uncle / Relative">Uncle / Relative</option>
+                    <option value="Other">Other</option>
                   </select>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-[#1c1c14]">
                     Primary Phone Number <span className="text-red-600">*</span>
@@ -912,7 +1003,9 @@ export function AdmitStudent() {
                     className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                   />
                 </div>
+              </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-[#1c1c14]">Email Address</label>
                   <input
@@ -923,9 +1016,7 @@ export function AdmitStudent() {
                     className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                   />
                 </div>
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-[#1c1c14]">
                     Occupation / Profession
@@ -938,18 +1029,79 @@ export function AdmitStudent() {
                     className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                   />
                 </div>
+              </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-[#1c1c14]">
-                    Emergency Secondary Contact
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.emergencyContact}
-                    onChange={(e) => setFormData({ ...formData, emergencyContact: e.target.value })}
-                    placeholder="Name and Phone Number"
-                    className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
-                  />
+              {/* Dedicated Emergency Secondary Contact Section */}
+              <div className="mt-6 pt-5 border-t border-[#c9c7b6]/60 space-y-4">
+                <div>
+                  <h3 className="text-sm font-bold text-[#1c1c14]">
+                    Secondary Emergency Contact (Optional)
+                  </h3>
+                  <p className="text-xs text-[#797869] mt-0.5">
+                    Separate individual to reach immediately if the primary parent or guardian is unavailable.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#1c1c14]">
+                      Emergency Contact First Name
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.emergencyContactFirstName}
+                      onChange={(e) => setFormData({ ...formData, emergencyContactFirstName: e.target.value })}
+                      placeholder="Ibrahim"
+                      className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#1c1c14]">
+                      Emergency Contact Surname (Last Name)
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.emergencyContactLastName}
+                      onChange={(e) => setFormData({ ...formData, emergencyContactLastName: e.target.value })}
+                      placeholder="Ahmed"
+                      className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#1c1c14]">
+                      Emergency Contact Phone Number
+                    </label>
+                    <input
+                      type="tel"
+                      value={formData.emergencyContactPhone}
+                      onChange={(e) => setFormData({ ...formData, emergencyContactPhone: e.target.value })}
+                      placeholder="+234 802 987 6543"
+                      className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#1c1c14]">
+                      Relationship to Student
+                    </label>
+                    <select
+                      value={formData.emergencyContactRelationship}
+                      onChange={(e) => setFormData({ ...formData, emergencyContactRelationship: e.target.value })}
+                      className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                    >
+                      <option value="Uncle">Uncle</option>
+                      <option value="Aunt">Aunt</option>
+                      <option value="Older Sibling">Older Sibling</option>
+                      <option value="Grandparent">Grandparent</option>
+                      <option value="Neighbor">Neighbor</option>
+                      <option value="Family Friend">Family Friend</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>
@@ -960,10 +1112,10 @@ export function AdmitStudent() {
               <div className="border-b border-[#c9c7b6]/40 pb-3">
                 <h2 className="text-lg font-bold text-[#1c1c14] flex items-center gap-2">
                   <ShieldCheck className="w-5 h-5 text-[#616218]" />
-                  Step 5: Review
+                  Step 5: Review & Confirm Admission
                 </h2>
                 <p className="text-xs text-[#797869] mt-0.5">
-                  Please verify all details below before enrolling the student into the school database.
+                  Please review all student, curriculum, and guardian details carefully before submitting enrollment.
                 </p>
               </div>
 
@@ -980,9 +1132,9 @@ export function AdmitStudent() {
                     </button>
                   </div>
                   <div>
-                    <span className="text-[#797869] block">Full Name:</span>
+                    <span className="text-[#797869] block">Student Full Name:</span>
                     <span className="font-bold text-sm">
-                      {formData.firstName} {formData.middleName} {formData.surname}
+                      {formData.firstName} {formData.middleName ? formData.middleName + ' ' : ''}{formData.surname}
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -1002,6 +1154,18 @@ export function AdmitStudent() {
                       <span className="text-[#797869] block">Local Government Area:</span>
                       <span className="font-medium">{formData.lga}</span>
                     </div>
+                    <div>
+                      <span className="text-[#797869] block">Blood Group & Genotype:</span>
+                      <span className="font-medium">{formData.bloodGroup} / {formData.genotype}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#797869] block">Religion:</span>
+                      <span className="font-medium">{formData.religion}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-[#797869] block">Residential Address:</span>
+                    <span className="font-medium">{formData.residentialAddress || `${formData.city}, ${formData.stateOfOrigin}`}</span>
                   </div>
                 </div>
 
@@ -1031,6 +1195,14 @@ export function AdmitStudent() {
                         </span>
                       </div>
                     )}
+                    <div>
+                      <span className="text-[#797869] block">Academic Session:</span>
+                      <span className="font-medium">{formData.session}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#797869] block">Entry Term:</span>
+                      <span className="font-medium">{formData.entryTerm}</span>
+                    </div>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Admission Number:</span>
@@ -1039,7 +1211,7 @@ export function AdmitStudent() {
                     </span>
                   </div>
                   <div>
-                    <span className="text-[#797869] block">Registered Subjects:</span>
+                    <span className="text-[#797869] block">Registered Subjects ({formData.enrolledSubjects.length}):</span>
                     <span className="font-medium">
                       {formData.enrolledSubjects.join(', ')}
                     </span>
@@ -1047,29 +1219,66 @@ export function AdmitStudent() {
                 </div>
               </div>
 
-              <div className="p-4 rounded-lg bg-[#faf8f0] border border-[#c9c7b6]/70 space-y-2 text-xs text-[#1c1c14]">
-                <div className="flex justify-between items-center border-b border-[#c9c7b6]/50 pb-2">
-                  <span className="font-bold text-sm text-[#616218]">Parent / Guardian Contact</span>
-                  <button
-                    type="button"
-                    onClick={() => setCurrentStep(4)}
-                    className="text-xs font-semibold text-[#616218] hover:underline"
-                  >
-                    Edit
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <span className="text-[#797869] block">Guardian Name:</span>
-                    <span className="font-semibold">{formData.parentName || 'Not specified'}</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="p-4 rounded-lg bg-[#faf8f0] border border-[#c9c7b6]/70 space-y-2 text-xs text-[#1c1c14]">
+                  <div className="flex justify-between items-center border-b border-[#c9c7b6]/50 pb-2">
+                    <span className="font-bold text-sm text-[#616218]">Parent / Guardian Contact</span>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStep(4)}
+                      className="text-xs font-semibold text-[#616218] hover:underline"
+                    >
+                      Edit
+                    </button>
                   </div>
-                  <div>
-                    <span className="text-[#797869] block">Phone:</span>
-                    <span className="font-semibold">{formData.parentPhone || 'Not specified'}</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[#797869] block">Guardian Name:</span>
+                      <span className="font-semibold">{`${formData.parentFirstName} ${formData.parentLastName}`.trim() || 'Not specified'}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#797869] block">Relationship:</span>
+                      <span className="font-semibold">{formData.parentRelationship}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#797869] block">Primary Phone:</span>
+                      <span className="font-semibold">{formData.parentPhone || 'Not specified'}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#797869] block">Occupation:</span>
+                      <span className="font-semibold">{formData.parentOccupation || 'Not specified'}</span>
+                    </div>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Email:</span>
                     <span className="font-semibold">{formData.parentEmail || 'Not specified'}</span>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg bg-[#faf8f0] border border-[#c9c7b6]/70 space-y-2 text-xs text-[#1c1c14]">
+                  <div className="flex justify-between items-center border-b border-[#c9c7b6]/50 pb-2">
+                    <span className="font-bold text-sm text-[#616218]">Secondary Emergency Contact</span>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStep(4)}
+                      className="text-xs font-semibold text-[#616218] hover:underline"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[#797869] block">Contact Name:</span>
+                      <span className="font-semibold">{`${formData.emergencyContactFirstName} ${formData.emergencyContactLastName}`.trim() || 'None provided'}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#797869] block">Relationship:</span>
+                      <span className="font-semibold">{formData.emergencyContactRelationship || 'N/A'}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#797869] block">Emergency Phone:</span>
+                      <span className="font-semibold">{formData.emergencyContactPhone || 'N/A'}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1142,10 +1351,10 @@ export function AdmitStudent() {
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-[#616218] hover:bg-[#494900] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-60"
+                className="inline-flex items-center justify-center gap-2 h-10 px-5 rounded-lg bg-[#616218] hover:bg-[#494900] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-60"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                {isSubmitting ? 'Enrolling...' : 'Enroll'}
+                {isSubmitting ? 'Enrolling Student...' : 'Confirm & Enroll Student'}
               </button>
             )}
           </div>

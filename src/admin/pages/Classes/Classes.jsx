@@ -280,33 +280,38 @@ export function ClassScheduling() {
     if (!subjectToDelete) return;
     schoolStore.deleteSubject(subjectToDelete.id);
     loadData();
-    showNotification(`Removed "${subjectToDelete.name}" from school catalog.`);
+    showNotification(`Removed "${subjectToDelete?.name || ''}" from school catalog.`);
     setSubjectToDelete(null);
   };
 
-  const classAllocations = teachersList.flatMap((teacher) =>
-    (teacher.assignedClasses || [])
-      .filter((ac) => ac.class === selectedClass)
+  const classAllocations = (teachersList || []).flatMap((teacher) =>
+    (teacher?.assignedClasses || [])
+      .filter((ac) => ac && ac.class === selectedClass)
       .map((ac) => ({
-        teacherId: teacher.id,
-        teacherName: teacher.name,
-        teacherEmail: teacher.email,
-        qualification: teacher.qualification,
+        teacherId: teacher?.id,
+        teacherName: teacher?.name || 'Staff',
+        teacherEmail: teacher?.email || '',
+        qualification: teacher?.qualification || '',
         subject: ac.subject,
         class: ac.class
       }))
   );
 
-  const classStudents = studentsList.filter((s) => s.class === selectedClass);
+  const classStudents = (studentsList || []).filter((s) => s && s.class === selectedClass);
   const paginatedRoster = classStudents.slice(
     (rosterPage - 1) * rosterPageSize,
     rosterPage * rosterPageSize
   );
 
-  const filteredSubjects = subjectsList.filter((sub) =>
-    sub.name.toLowerCase().includes(subjectSearch.toLowerCase()) ||
-    (sub.classes || []).some((c) => c.toLowerCase().includes(subjectSearch.toLowerCase()))
-  );
+  const filteredSubjects = (subjectsList || []).filter((sub) => {
+    if (!sub) return false;
+    const subName = sub.name || String(sub || '');
+    const term = (subjectSearch || '').toLowerCase();
+    return (
+      subName.toLowerCase().includes(term) ||
+      (sub.classes || []).some((c) => String(c?.name || c || '').toLowerCase().includes(term))
+    );
+  });
   const paginatedSubjects = filteredSubjects.slice(
     (subjectsPage - 1) * subjectsPageSize,
     subjectsPage * subjectsPageSize
@@ -1182,10 +1187,10 @@ export function ClassScheduling() {
             </div>
             <div>
               <p className="font-semibold text-sm text-[#1c1c14] mb-1">
-                Remove {allocToRemove.classSubject.subject} from {allocToRemove.classSubject.class}?
+                Remove {allocToRemove?.classSubject?.subject || ''} from {allocToRemove?.classSubject?.class || ''}?
               </p>
               <p>
-                {allocToRemove.teacherName} will no longer be assigned to teach this subject for {allocToRemove.classSubject.class}.
+                {allocToRemove?.teacherName || 'Staff'} will no longer be assigned to teach this subject for {allocToRemove?.classSubject?.class || ''}.
               </p>
             </div>
           </div>
@@ -1223,7 +1228,7 @@ export function ClassScheduling() {
             </div>
             <div>
               <p className="font-semibold text-sm text-[#1c1c14] mb-1">
-                Delete "{subjectToDelete.name}"?
+                Delete "{subjectToDelete?.name || 'Subject'}"?
               </p>
               <p>
                 This subject will no longer appear in admission enrollments or new class allocations.

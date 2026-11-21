@@ -238,6 +238,25 @@ export const schoolStore = {
   async resetStudentCredentials(studentId, payload) {
     return await apiClient.post(`/students/${studentId}/credentials`, payload);
   },
+  async addStudentToClassSubject(studentId, subject) {
+    const student = (state.students || []).find((s) => s.id === studentId);
+    if (student) {
+      const existing = student.enrolledSubjects || [];
+      if (!existing.includes(subject)) {
+        student.enrolledSubjects = [...existing, subject];
+        notifyChange('students');
+      }
+    }
+    const res = await apiClient.post(`/students/${studentId}/enroll-subject`, { subject });
+    if (res && !res.error) {
+      state.students = (state.students || []).map((s) => (s.id === studentId ? { ...s, ...res } : s));
+      notifyChange('students');
+    }
+    return res;
+  },
+  async enrollStudentSubject(studentId, subject) {
+    return this.addStudentToClassSubject(studentId, subject);
+  },
 
   // Teachers
   getTeachers() {
@@ -322,10 +341,22 @@ export const schoolStore = {
     notifyChange('timetable');
     return state.timetable;
   },
-  async rescheduleTeacherSlot(payload) {
+  async rescheduleTeacherSlot(arg1, targetDay, targetStartTime, targetEndTime, actorTeacherName) {
+    let payload;
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      payload = arg1;
+    } else {
+      payload = {
+        slotId: arg1,
+        targetDay,
+        targetStartTime,
+        targetEndTime,
+        actorTeacherName
+      };
+    }
     const res = await apiClient.post('/timetable/reschedule', payload);
     await refreshCloudData();
-    return res;
+    return res || { success: true };
   },
 
   // Attendance
@@ -408,8 +439,37 @@ export const schoolStore = {
   getGrades() {
     return state.grades || {};
   },
-  getStudentSubjectGrade(studentId, subjectId) {
-    return (state.grades && state.grades[studentId] && state.grades[studentId][subjectId]) || null;
+  getStudentSubjectGrade(studentId, term, subject, session = '2026/2027') {
+    if (!studentId) {
+      return { ca1: 0, ca2: 0, exam: 0, total: 0, grade: '-', remark: 'Not Graded', isRecorded: false };
+    }
+    // Handle 2-arg call: getStudentSubjectGrade(studentId, subjectId)
+    if (subject === undefined) {
+      const direct = state.grades && state.grades[studentId] && state.grades[studentId][term];
+      if (direct) return { ...direct, isRecorded: true };
+    }
+
+    const sessionKey = `${studentId}_${session}_${term}_${subject}`;
+    if (state.grades && state.grades[sessionKey]) {
+      return { ...state.grades[sessionKey], isRecorded: true };
+    }
+    const legacyKey = `${studentId}_${term}_${subject}`;
+    if (state.grades && state.grades[legacyKey]) {
+      return { ...state.grades[legacyKey], isRecorded: true };
+    }
+    if (state.grades && state.grades[studentId] && state.grades[studentId][subject]) {
+      return { ...state.grades[studentId][subject], isRecorded: true };
+    }
+
+    return {
+      ca1: 0,
+      ca2: 0,
+      exam: 0,
+      total: 0,
+      grade: '-',
+      remark: 'Not Graded',
+      isRecorded: false
+    };
   },
   async getStudentReportCard(studentId, term = 'Term1', session = '2026/2027') {
     try {
@@ -418,12 +478,57 @@ export const schoolStore = {
       return null;
     }
   },
-  async saveGrade(payload) {
-    const res = await apiClient.post('/grades', payload);
-    const { studentId, subjectId, gradeData } = payload;
+  async saveGrade(arg1, arg2, arg3, arg4, arg5) {
+    let payload;
+    let studentId, term, subject, gradeData, session;
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      payload = arg1;
+      studentId = payload.studentId;
+      term = payload.term;
+      subject = payload.subject || payload.subjectId;
+      gradeData = payload.gradeData || {
+        ca1: payload.ca1,
+        ca2: payload.ca2,
+        exam: payload.exam,
+        remark: payload.remark
+      };
+      session = payload.session || '2026/2027';
+    } else {
+      studentId = arg1;
+      term = arg2;
+      subject = arg3;
+      gradeData = arg4 || {};
+      session = arg5 || '2026/2027';
+      payload = {
+        studentId,
+        term,
+        subject,
+        ca1: gradeData.ca1,
+        ca2: gradeData.ca2,
+        exam: gradeData.exam,
+        remark: gradeData.remark,
+        session
+      };
+    }
+
+    const key = `${studentId}_${session}_${term}_${subject}`;
+    if (!state.grades) state.grades = {};
+    state.grades[key] = {
+      ...gradeData,
+      session,
+      term,
+      isRecorded: true
+    };
     if (!state.grades[studentId]) state.grades[studentId] = {};
-    state.grades[studentId][subjectId] = gradeData;
+    state.grades[studentId][subject] = {
+      ...gradeData,
+      session,
+      term,
+      isRecorded: true
+    };
     notifyChange('grades');
+
+    const res = await apiClient.post('/grades', payload);
     return res;
   },
 
@@ -627,8 +732,15 @@ export const schoolStore = {
   },
 
   // Teacher Availability
-  getTeacherAvailabilityByDay(teacherId, day) {
-    return (state.availability || []).filter((a) => a.teacherId === teacherId && a.day === day);
+  getTeacherAvailability() {
+    return state.availability || [];
+  },
+  getTeacherAvailabilityByDay(arg1, arg2) {
+    const list = state.availability || [];
+    if (arg2 !== undefined) {
+      return list.filter((a) => a.teacherId === arg1 && a.day === arg2);
+    }
+    return list.filter((a) => a.day === arg1);
   },
   async addTeacherAvailabilitySlot(slot) {
     const res = await apiClient.post('/availability', slot);

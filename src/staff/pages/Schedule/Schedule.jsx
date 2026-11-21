@@ -118,18 +118,18 @@ export function ClassScheduling() {
 
   const preview = getReschedulePreview();
 
-  const handleConfirmReschedule = (e) => {
+  const handleConfirmReschedule = async (e) => {
     e.preventDefault();
     if (!rescheduleSlot) return;
-    const result = schoolStore.rescheduleTeacherSlot(
+    const result = await schoolStore.rescheduleTeacherSlot(
       rescheduleSlot.id,
       rescheduleForm.day,
       rescheduleForm.startTime,
       rescheduleForm.endTime,
       currentTeacher?.name || 'Subject Teacher'
     );
-    if (!result.success) {
-      showToast(result.message);
+    if (!result || !result.success) {
+      showToast(result?.message || 'Failed to reschedule class period.');
       return;
     }
     setRescheduleSlot(null);

@@ -150,7 +150,7 @@ export function AdminReports() {
         </div>
       </div>
 
-      {reportCard ? (
+      {reportCard && reportCard.student ? (
         <div
           id="official-report-card"
           className="rounded-lg border-2 border-[#616218] bg-white p-6 sm:p-10 shadow-md text-[#1c1c14] print:border-none print:shadow-none print:p-0"
@@ -177,58 +177,58 @@ export function AdminReports() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div>
                 <span className="text-[#797869] block text-[11px]">Student Full Name</span>
-                <span className="font-bold text-sm text-[#1c1c14]">{reportCard.student.name}</span>
+                <span className="font-bold text-sm text-[#1c1c14]">{reportCard.student?.name || 'Student'}</span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Admission Number</span>
                 <span className="font-mono font-bold text-sm text-[#616218]">
-                  {reportCard.student.admissionNumber}
+                  {reportCard.student?.admissionNumber || '—'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Class</span>
                 <span className="font-bold text-sm text-[#1c1c14]">
-                  {reportCard.student.class}
+                  {reportCard.student?.class || '—'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Academic Session</span>
-                <span className="font-bold text-sm text-[#1c1c14]">{reportCard.session}</span>
+                <span className="font-bold text-sm text-[#1c1c14]">{reportCard.session || selectedSession}</span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">State of Origin</span>
                 <span className="font-medium text-[#1c1c14]">
-                  {reportCard.student.stateOfOrigin}
+                  {reportCard.student?.stateOfOrigin || 'Not Provided'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Local Government Area</span>
                 <span className="font-medium text-[#1c1c14]">
-                  {reportCard.student.lga}
+                  {reportCard.student?.lga || 'Not Provided'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Date of Birth</span>
                 <span className="font-medium text-[#1c1c14]">
-                  {reportCard.student.dateOfBirth || reportCard.student.dob || 'Not Provided'}
+                  {reportCard.student?.dateOfBirth || reportCard.student?.dob || 'Not Provided'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Gender</span>
                 <span className="font-medium text-[#1c1c14]">
-                  {reportCard.student.gender || 'Male'}
+                  {reportCard.student?.gender || 'Male'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Term Attendance</span>
                 <span className="font-bold text-[#616218]">
-                  {reportCard.daysPresent} of {reportCard.daysSchoolOpened} days present
+                  {reportCard.daysPresent ?? 0} of {reportCard.daysSchoolOpened ?? 0} days present
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Parent / Guardian</span>
                 <span className="font-medium text-[#1c1c14] truncate block">
-                  {reportCard.student.parentName}
+                  {reportCard.student?.parentName || 'Not Provided'}
                 </span>
               </div>
             </div>
@@ -253,7 +253,7 @@ export function AdminReports() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#c9c7b6]/60">
-                  {reportCard.subjectScores.map((score, idx) => (
+                  {(reportCard.subjectScores || []).map((score, idx) => (
                     <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-[#faf8f0]/40'}>
                       <td className="py-2 px-3 font-semibold text-[#1c1c14]">{score.subject}</td>
                       <td className="py-2 px-2 text-center font-mono">{score.ca1}</td>
@@ -318,7 +318,7 @@ export function AdminReports() {
                     Affective Domain
                   </span>
                   <div className="space-y-1.5">
-                    {reportCard.affectiveDomain.map((item, idx) => (
+                    {(reportCard.affectiveDomain || []).map((item, idx) => (
                       <div key={idx} className="flex justify-between items-center text-[11px]">
                         <span className="text-[#44443b]">{item.trait}</span>
                         <span className="font-bold text-[#616218]">{item.score} / 5</span>
@@ -334,7 +334,7 @@ export function AdminReports() {
                     Psychomotor Skills
                   </span>
                   <div className="space-y-1.5">
-                    {reportCard.psychomotorDomain.map((item, idx) => (
+                    {(reportCard.psychomotorDomain || []).map((item, idx) => (
                       <div key={idx} className="flex justify-between items-center text-[11px]">
                         <span className="text-[#44443b]">{item.skill}</span>
                         <span className="font-bold text-[#616218]">{item.score} / 5</span>

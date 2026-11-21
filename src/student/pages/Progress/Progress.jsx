@@ -85,7 +85,7 @@ export function StudentProgressReports() {
       </div>
 
       {/* Official Report Card */}
-      {reportCard ? (
+      {reportCard && reportCard.student ? (
         <div
           id="student-official-report"
           className="rounded-lg border-2 border-[#616218] bg-white p-6 sm:p-10 shadow-md text-[#1c1c14] print:border-none print:shadow-none print:p-0"
@@ -105,7 +105,7 @@ export function StudentProgressReports() {
               KM 12 Airport Road, Al-Amin Educational Campus · info@alamin.sch.ng
             </p>
             <div className="inline-block mt-3 px-4 py-1 rounded bg-[#f4f2e1] border border-[#c9c7b6] text-xs font-bold text-[#494900] uppercase tracking-wider">
-              Term Academic Report Card · {reportCard.session} · {reportCard.term}
+              Term Academic Report Card · {reportCard.session || selectedSession} · {reportCard.term}
             </div>
           </div>
 
@@ -114,48 +114,48 @@ export function StudentProgressReports() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div>
                 <span className="text-[#797869] block text-[11px]">Student Name</span>
-                <span className="font-bold text-sm text-[#1c1c14]">{reportCard.student.name}</span>
+                <span className="font-bold text-sm text-[#1c1c14]">{reportCard.student?.name || 'Student'}</span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Admission Number</span>
                 <span className="font-mono font-bold text-sm text-[#616218]">
-                  {reportCard.student.admissionNumber}
+                  {reportCard.student?.admissionNumber || '—'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Class</span>
                 <span className="font-bold text-sm text-[#1c1c14]">
-                  {reportCard.student.class}
+                  {reportCard.student?.class || '—'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Attendance Record</span>
                 <span className="font-bold text-[#616218]">
-                  {reportCard.daysPresent} / {reportCard.daysSchoolOpened} days present
+                  {reportCard.daysPresent ?? 0} / {reportCard.daysSchoolOpened ?? 0} days present
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Date of Birth</span>
                 <span className="font-semibold text-[#1c1c14]">
-                  {reportCard.student.dateOfBirth || reportCard.student.dob || 'Not Provided'}
+                  {reportCard.student?.dateOfBirth || reportCard.student?.dob || 'Not Provided'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Gender</span>
                 <span className="font-semibold text-[#1c1c14]">
-                  {reportCard.student.gender || 'Not Specified'}
+                  {reportCard.student?.gender || 'Not Specified'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">State of Origin</span>
                 <span className="font-semibold text-[#1c1c14]">
-                  {reportCard.student.stateOfOrigin || 'Not Provided'}
+                  {reportCard.student?.stateOfOrigin || 'Not Provided'}
                 </span>
               </div>
               <div>
                 <span className="text-[#797869] block text-[11px]">Local Government Area</span>
                 <span className="font-semibold text-[#1c1c14]">
-                  {reportCard.student.lga || 'Not Provided'}
+                  {reportCard.student?.lga || 'Not Provided'}
                 </span>
               </div>
             </div>
@@ -181,7 +181,7 @@ export function StudentProgressReports() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#c9c7b6]/60">
-                  {reportCard.subjectScores.map((score, idx) => (
+                  {(reportCard.subjectScores || []).map((score, idx) => (
                     <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-[#faf8f0]/40'}>
                       <td className="py-2 px-3 font-semibold text-[#1c1c14]">{score.subject}</td>
                       <td className="py-2 px-2 text-center font-mono">{score.ca1}</td>
