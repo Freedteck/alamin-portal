@@ -96,20 +96,19 @@ export const INITIAL_ATTENDANCE: Record<string, any> = {};
 export const INITIAL_GRADES: Record<string, any> = {};
 
 export function createInitialUsers() {
+  const envEmail = (process.env.INITIAL_ADMIN_EMAIL || '').trim().toLowerCase();
+  const envPass = process.env.INITIAL_ADMIN_PASSWORD || '';
+
+  const adminEmail = envEmail || 'admin@alaminschools.edu.ng';
+  const adminPassword = envPass || 'admin123';
+
   return [
     {
       id: 'usr-admin-1',
-      email: 'admin@alaminschools.edu',
+      email: adminEmail,
       name: 'Al-Amin Administrator',
       role: 'admin',
-      passwordHash: hashPassword('admin123')
-    },
-    {
-      id: 'usr-admin-2',
-      email: 'admin@alaminschools.edu.ng',
-      name: 'Al-Amin Administrator',
-      role: 'admin',
-      passwordHash: hashPassword('admin123')
+      passwordHash: hashPassword(adminPassword)
     }
   ];
 }

@@ -36,6 +36,17 @@ app.use(
 
 app.use('/api', apiRouter);
 
+// Handle direct non-prefixed API calls gracefully (e.g. /auth/*, /profile/*)
+app.use('/auth', (req: Request, res: Response, next) => {
+  req.url = `/auth${req.url}`;
+  apiRouter(req, res, next);
+});
+
+app.use('/profile', (req: Request, res: Response, next) => {
+  req.url = `/profile${req.url}`;
+  apiRouter(req, res, next);
+});
+
 app.use('/api', (_req: Request, res: Response) => {
   res.status(404).json({ error: 'API endpoint not found.' });
 });

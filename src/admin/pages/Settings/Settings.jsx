@@ -3,6 +3,7 @@ import { Logo } from "../../../shared/components/Logo/Logo";
 import { Modal } from "../../../shared/components/Modal/Modal";
 import { Pagination } from "../../../shared/components/Pagination/Pagination";
 import { useState, useEffect, useMemo } from "react";
+import { apiClient } from "../../../shared/lib/apiClient";
 import {
   CheckCircle2,
   Eye,
@@ -24,50 +25,20 @@ import {
   isSeniorClass,
 } from "../../../shared/data/schoolData";
 
-const SETTINGS_STORAGE_KEY = "alamin_settings_v1";
-
-function loadSavedSettings() {
-  try {
-    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
 export function Settings() {
-  const initial = loadSavedSettings();
   const [activeTab, setActiveTab] = useState("general");
-  const [institutionName, setInstitutionName] = useState(
-    initial.institutionName || "Al-Amin Group of Schools",
-  );
-  const [establishedYear, setEstablishedYear] = useState(
-    initial.establishedYear || "2010",
-  );
-  const [officialEmail, setOfficialEmail] = useState(
-    initial.officialEmail || "info@alaminschools.edu.ng",
-  );
-  const [phone, setPhone] = useState(initial.phone || "+234 803 456 7890");
-  const [address, setAddress] = useState(
-    initial.address || "Al-Amin Campus, 14 Ahmadu Bello Way, Nassarawa GRA",
-  );
-  const [website, setWebsite] = useState(
-    initial.website || "www.alaminschools.edu.ng",
-  );
-  const [registrationNumber, setRegistrationNumber] = useState(
-    initial.registrationNumber || "ASS-2010-008920",
-  );
-  const [timezone, setTimezone] = useState(initial.timezone || "wat");
-  const [dateFormat, setDateFormat] = useState(
-    initial.dateFormat || "dd-mm-yyyy",
-  );
-  const [academicTerm, setAcademicTerm] = useState(
-    initial.academicTerm || "first-term",
-  );
-  const [language, setLanguage] = useState(initial.language || "en");
-  const [emailNotifications, setEmailNotifications] = useState(
-    initial.emailNotifications ?? true,
-  );
+  const [institutionName, setInstitutionName] = useState("Al-Amin Group of Schools");
+  const [establishedYear, setEstablishedYear] = useState("2010");
+  const [officialEmail, setOfficialEmail] = useState("info@alaminschools.edu.ng");
+  const [phone, setPhone] = useState("+234 803 456 7890");
+  const [address, setAddress] = useState("Al-Amin Campus, 14 Ahmadu Bello Way, Nassarawa GRA");
+  const [website, setWebsite] = useState("www.alaminschools.edu.ng");
+  const [registrationNumber, setRegistrationNumber] = useState("ASS-2010-008920");
+  const [timezone, setTimezone] = useState("wat");
+  const [dateFormat, setDateFormat] = useState("dd-mm-yyyy");
+  const [academicTerm, setAcademicTerm] = useState("first-term");
+  const [language, setLanguage] = useState("en");
+  const [emailNotifications, setEmailNotifications] = useState(true);
   const [smsNotifications, setSmsNotifications] = useState(
     initial.smsNotifications ?? false,
   );
@@ -137,6 +108,37 @@ export function Settings() {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
+
+  useEffect(() => {
+    apiClient
+      .get("/settings")
+      .then((data) => {
+        if (!data) return;
+        if (data.institutionName) setInstitutionName(data.institutionName);
+        if (data.establishedYear) setEstablishedYear(data.establishedYear);
+        if (data.officialEmail) setOfficialEmail(data.officialEmail);
+        if (data.phone) setPhone(data.phone);
+        if (data.address) setAddress(data.address);
+        if (data.website) setWebsite(data.website);
+        if (data.registrationNumber) setRegistrationNumber(data.registrationNumber);
+        if (data.timezone) setTimezone(data.timezone);
+        if (data.dateFormat) setDateFormat(data.dateFormat);
+        if (data.academicTerm) setAcademicTerm(data.academicTerm);
+        if (data.language) setLanguage(data.language);
+        if (data.emailNotifications !== undefined) setEmailNotifications(data.emailNotifications);
+        if (data.smsNotifications !== undefined) setSmsNotifications(data.smsNotifications);
+        if (data.pushNotifications !== undefined) setPushNotifications(data.pushNotifications);
+        if (data.autoBackup !== undefined) setAutoBackup(data.autoBackup);
+        if (data.sessionDuration) setSessionDuration(data.sessionDuration);
+        if (data.academicYear) setAcademicYear(data.academicYear);
+        if (data.gradingSystem) setGradingSystem(data.gradingSystem);
+        if (data.attendanceThreshold !== undefined) setAttendanceThreshold(data.attendanceThreshold);
+        if (data.twoFactorAuth !== undefined) setTwoFactorAuth(data.twoFactorAuth);
+        if (data.sessionTimeoutEnabled !== undefined) setSessionTimeoutEnabled(data.sessionTimeoutEnabled);
+        if (data.sessionTimeoutDuration) setSessionTimeoutDuration(data.sessionTimeoutDuration);
+      })
+      .catch(() => {});
+  }, []);
 
   const loadRolloverData = async () => {
     setIsLoadingRollover(true);
@@ -330,42 +332,40 @@ export function Settings() {
     return filteredCandidates.slice(start, start + rolloverPageSize);
   }, [filteredCandidates, rolloverPage]);
 
-  const handleSaveSettings = () => {
+  const handleSaveSettings = async () => {
     try {
-      localStorage.setItem(
-        SETTINGS_STORAGE_KEY,
-        JSON.stringify({
-          institutionName,
-          establishedYear,
-          officialEmail,
-          phone,
-          address,
-          website,
-          registrationNumber,
-          timezone,
-          dateFormat,
-          academicTerm,
-          language,
-          emailNotifications,
-          smsNotifications,
-          pushNotifications,
-          reportCardAlerts,
-          attendanceAlerts,
-          autoBackup,
-          sessionDuration,
-          academicYear,
-          gradingSystem,
-          attendanceThreshold,
-          twoFactorAuth,
-          sessionTimeoutEnabled,
-          sessionTimeoutDuration,
-          retentionPeriod,
-          integrations,
-        }),
-      );
-      showToast("Institution settings saved successfully!");
-    } catch {
-      showToast("Unable to save settings locally.");
+      const payload = {
+        institutionName,
+        establishedYear,
+        officialEmail,
+        phone,
+        address,
+        website,
+        registrationNumber,
+        timezone,
+        dateFormat,
+        academicTerm,
+        language,
+        emailNotifications,
+        smsNotifications,
+        pushNotifications,
+        reportCardAlerts,
+        attendanceAlerts,
+        autoBackup,
+        sessionDuration,
+        academicYear,
+        gradingSystem,
+        attendanceThreshold,
+        twoFactorAuth,
+        sessionTimeoutEnabled,
+        sessionTimeoutDuration,
+        retentionPeriod,
+        integrations,
+      };
+      await apiClient.put("/settings", payload);
+      showToast("Institution settings saved successfully to database!");
+    } catch (err) {
+      showToast(err?.message || "Unable to save settings to database.");
     }
   };
 

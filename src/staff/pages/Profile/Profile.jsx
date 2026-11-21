@@ -87,40 +87,41 @@ export function StaffProfile() {
 
   const refreshProfileStores = () => {
     const savedUser = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const savedExtra = JSON.parse(localStorage.getItem('alamin_staff_profile_extra_v1') || '{}');
     const allTeachers = schoolStore.getTeachers();
     const allStudents = schoolStore.getStudents();
     const matchedTeacher =
       allTeachers.find(
         (t) =>
           (savedUser.email && t.email?.toLowerCase() === savedUser.email.toLowerCase()) ||
-          (savedUser.name && t.name?.toLowerCase() === savedUser.name.toLowerCase())
+          (savedUser.name && t.name?.toLowerCase() === savedUser.name.toLowerCase()) ||
+          (savedUser.teacherId && t.id === savedUser.teacherId)
       ) || allTeachers[0] || null;
 
     const resolvedName = matchedTeacher?.name || savedUser.name || 'Teaching Staff';
-    const resolvedId = matchedTeacher?.id || savedUser.id || '';
-    const extraForUser = savedExtra[matchedTeacher?.email || savedUser.email || 'default'] || {};
+    const resolvedId = matchedTeacher?.id || savedUser.teacherId || savedUser.id || '';
 
     setStaffData({
       id: resolvedId,
-      staffId: matchedTeacher?.employeeId || savedUser.employeeId || 'Pending Assignment',
+      staffId: matchedTeacher?.staffId || matchedTeacher?.employeeId || savedUser.employeeId || 'Pending Assignment',
       name: resolvedName,
       email: matchedTeacher?.email || savedUser.email || '',
-      phone: matchedTeacher?.phone || extraForUser.phone || '',
-      address: extraForUser.address || '',
-      dateOfBirth: extraForUser.dateOfBirth || '',
-      startDate: extraForUser.startDate || '',
-      position: matchedTeacher?.qualification || extraForUser.position || 'Subject Teacher',
+      phone: matchedTeacher?.phone || '',
+      address: matchedTeacher?.address || '',
+      dateOfBirth: matchedTeacher?.dateOfBirth || '',
+      startDate: matchedTeacher?.startDate || '',
+      position: matchedTeacher?.position || matchedTeacher?.qualification || 'Subject Teacher',
       avatarUrl: matchedTeacher?.avatarUrl || savedUser?.avatarUrl || '',
-      qualifications: matchedTeacher?.qualification
+      qualifications: Array.isArray(matchedTeacher?.qualifications)
+        ? matchedTeacher.qualifications
+        : matchedTeacher?.qualification
         ? [matchedTeacher.qualification]
-        : (extraForUser.qualifications || []),
-      emergencyContact: extraForUser.emergencyContact || {
+        : [],
+      emergencyContact: matchedTeacher?.emergencyContact || {
         name: '',
         relationship: '',
         phone: ''
       },
-      department: matchedTeacher?.department || extraForUser.department || 'Academic Faculty'
+      department: matchedTeacher?.department || 'Academic Faculty'
     });
 
     const mappedAllocations = (matchedTeacher?.assignedClasses || []).map((ac) => ({
@@ -170,31 +171,24 @@ export function StaffProfile() {
     }
   };
 
-  const handleSaveProfile = (e) => {
+  const handleSaveProfile = async (e) => {
     e.preventDefault();
-    const savedUser = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const savedExtra = JSON.parse(localStorage.getItem('alamin_staff_profile_extra_v1') || '{}');
-    const key = staffData.email || savedUser.email || 'default';
-    savedExtra[key] = {
-      phone: staffData.phone,
-      address: staffData.address,
-      dateOfBirth: staffData.dateOfBirth,
-      startDate: staffData.startDate,
-      position: staffData.position,
-      qualifications: staffData.qualifications,
-      emergencyContact: staffData.emergencyContact,
-      department: staffData.department
-    };
-    localStorage.setItem('alamin_staff_profile_extra_v1', JSON.stringify(savedExtra));
-
     if (staffData.id) {
-      schoolStore.updateTeacher(staffData.id, {
+      await schoolStore.updateTeacher(staffData.id, {
+        name: staffData.name,
         email: staffData.email,
-        phone: staffData.phone
+        phone: staffData.phone,
+        address: staffData.address,
+        dateOfBirth: staffData.dateOfBirth,
+        startDate: staffData.startDate,
+        position: staffData.position,
+        qualifications: staffData.qualifications,
+        emergencyContact: staffData.emergencyContact,
+        department: staffData.department
       });
     }
     setIsEditing(false);
-    showToast('Educator profile updated.');
+    showToast('Educator profile saved to database.');
   };
 
   const handleAddLeave = (e) => {

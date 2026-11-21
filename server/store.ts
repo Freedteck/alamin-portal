@@ -111,7 +111,10 @@ async function hydrateFromSupabaseIfAvailable() {
         passwordHash: u.password_hash,
         createdAt: u.created_at
       }));
-    } else if (!errUsers) {
+    }
+
+    const hasAdmin = db.users && db.users.some((u) => u.role === 'admin');
+    if (!errUsers && (!users || users.length === 0 || !hasAdmin)) {
       const initialUsers = createInitialUsers();
       await serverSupabase.from('portal_users').upsert(
         initialUsers.map((u) => ({
@@ -123,7 +126,12 @@ async function hydrateFromSupabaseIfAvailable() {
           avatar_url: ''
         }))
       );
-      console.log('[Al-Amin Store] Provisioned initial admin user to Supabase portal_users.');
+      initialUsers.forEach((u) => {
+        if (!db.users.some((existing) => existing.id === u.id || existing.email === u.email)) {
+          db.users.push(u);
+        }
+      });
+      console.log(`[Al-Amin Store] Provisioned initial admin user (${initialUsers[0]?.email}) to Supabase portal_users.`);
     }
 
     const { data: students } = await serverSupabase.from('students').select('*');
@@ -143,6 +151,9 @@ async function hydrateFromSupabaseIfAvailable() {
         parentName: s.parent_name,
         parentPhone: s.parent_phone,
         parentEmail: s.parent_email,
+        parentOccupation: s.parent_occupation || '',
+        parentRelationship: s.parent_relationship || '',
+        emergencyContact: s.emergency_contact || {},
         enrolledSubjects: s.enrolled_subjects || [],
         attendanceRate: s.attendance_rate || 0,
         gpa: s.gpa || '0.00',
@@ -160,6 +171,12 @@ async function hydrateFromSupabaseIfAvailable() {
         email: t.email,
         phone: t.phone,
         qualification: t.qualification,
+        address: t.address || '',
+        dateOfBirth: t.date_of_birth || '',
+        startDate: t.start_date || '',
+        position: t.position || 'Subject Teacher',
+        department: t.department || 'Academic Faculty',
+        emergencyContact: t.emergency_contact || {},
         assignedClasses: t.assigned_classes || [],
         formTeacherOf: t.form_teacher_of || '',
         avatarUrl: t.avatar_url || '',
@@ -186,6 +203,29 @@ async function hydrateFromSupabaseIfAvailable() {
         name: c.name,
         category: c.category || (isSeniorClass(c.name) ? 'Senior' : 'Junior')
       }));
+    }
+
+    const { data: settings } = await serverSupabase.from('institution_settings').select('*').limit(1).maybeSingle();
+    if (settings) {
+      db.settings = {
+        institutionName: settings.institution_name,
+        establishedYear: settings.established_year,
+        officialEmail: settings.official_email,
+        phone: settings.phone,
+        address: settings.address,
+        website: settings.website,
+        registrationNumber: settings.registration_number,
+        timezone: settings.timezone,
+        dateFormat: settings.date_format,
+        academicTerm: settings.academic_term,
+        currentSession: settings.current_session,
+        currentTerm: settings.current_term,
+        language: settings.language,
+        emailNotifications: settings.email_notifications,
+        smsAlerts: settings.sms_alerts,
+        maintenanceMode: settings.maintenance_mode,
+        updatedAt: settings.updated_at
+      };
     }
 
     console.log(`[Al-Amin Store] Successfully hydrated state from Supabase PostgreSQL tables.`);
@@ -800,9 +840,13 @@ export const backendStore = {
       parent_name: newStudent.parentName || '',
       parent_phone: newStudent.parentPhone || '',
       parent_email: newStudent.parentEmail || '',
+      parent_occupation: newStudent.parentOccupation || '',
+      parent_relationship: newStudent.parentRelationship || '',
+      emergency_contact: newStudent.emergencyContact || {},
       enrolled_subjects: newStudent.enrolledSubjects || [],
       attendance_rate: newStudent.attendanceRate,
       gpa: String(newStudent.gpa),
+      avatar_url: newStudent.avatarUrl || '',
       status: newStudent.status
     });
     broadcastChange('students', 'created');
@@ -836,9 +880,13 @@ export const backendStore = {
       parent_name: target.parentName || '',
       parent_phone: target.parentPhone || '',
       parent_email: target.parentEmail || '',
+      parent_occupation: target.parentOccupation || '',
+      parent_relationship: target.parentRelationship || '',
+      emergency_contact: target.emergencyContact || {},
       enrolled_subjects: target.enrolledSubjects || [],
       attendance_rate: target.attendanceRate ?? 100,
       gpa: String(target.gpa || '3.80'),
+      avatar_url: target.avatarUrl || '',
       status: target.status || 'active'
     });
     broadcastChange('students', 'updated');
@@ -913,8 +961,15 @@ export const backendStore = {
       email: newTeacher.email || '',
       phone: newTeacher.phone || '',
       qualification: newTeacher.qualification || '',
+      address: newTeacher.address || '',
+      date_of_birth: newTeacher.dateOfBirth || '',
+      start_date: newTeacher.startDate || '',
+      position: newTeacher.position || 'Subject Teacher',
+      department: newTeacher.department || 'Academic Faculty',
+      emergency_contact: newTeacher.emergencyContact || {},
       assigned_classes: newTeacher.assignedClasses,
       form_teacher_of: newTeacher.formTeacherOf || '',
+      avatar_url: newTeacher.avatarUrl || '',
       status: newTeacher.status
     });
     broadcastChange('teachers', 'created');
@@ -940,8 +995,15 @@ export const backendStore = {
       email: target.email || '',
       phone: target.phone || '',
       qualification: target.qualification || '',
+      address: target.address || '',
+      date_of_birth: target.dateOfBirth || '',
+      start_date: target.startDate || '',
+      position: target.position || 'Subject Teacher',
+      department: target.department || 'Academic Faculty',
+      emergency_contact: target.emergencyContact || {},
       assigned_classes: target.assignedClasses || [],
       form_teacher_of: target.formTeacherOf || '',
+      avatar_url: target.avatarUrl || '',
       status: target.status || 'active'
     });
     broadcastChange('teachers', 'updated');
@@ -2295,6 +2357,26 @@ export const backendStore = {
       updatedAt: new Date().toISOString()
     };
     persistDb();
+    supabaseMirrorUpsert('institution_settings', {
+      id: 'current',
+      institution_name: db.settings.institutionName,
+      established_year: db.settings.establishedYear,
+      official_email: db.settings.officialEmail,
+      phone: db.settings.phone,
+      address: db.settings.address,
+      website: db.settings.website,
+      registration_number: db.settings.registrationNumber,
+      timezone: db.settings.timezone,
+      date_format: db.settings.dateFormat || 'dd-mm-yyyy',
+      academic_term: db.settings.academicTerm || 'first-term',
+      current_session: db.settings.currentSession || '2026/2027',
+      current_term: db.settings.currentTerm || 'Term 1',
+      language: db.settings.language || 'en',
+      email_notifications: db.settings.emailNotifications ?? true,
+      sms_alerts: db.settings.smsAlerts ?? false,
+      maintenance_mode: db.settings.maintenanceMode ?? false,
+      updated_at: db.settings.updatedAt
+    });
     broadcastChange('settings');
     return db.settings;
   }

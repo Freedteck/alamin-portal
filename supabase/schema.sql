@@ -28,6 +28,27 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS public.institution_settings (
+  id TEXT PRIMARY KEY DEFAULT 'current',
+  institution_name TEXT NOT NULL DEFAULT 'Al-Amin Group of Schools',
+  established_year TEXT NOT NULL DEFAULT '2010',
+  official_email TEXT NOT NULL DEFAULT 'info@alaminschools.edu.ng',
+  phone TEXT NOT NULL DEFAULT '+234 803 456 7890',
+  address TEXT NOT NULL DEFAULT 'Al-Amin Campus, 14 Ahmadu Bello Way, Nassarawa GRA',
+  website TEXT NOT NULL DEFAULT 'www.alaminschools.edu.ng',
+  registration_number TEXT NOT NULL DEFAULT 'ASS-2010-008920',
+  timezone TEXT NOT NULL DEFAULT 'wat',
+  date_format TEXT NOT NULL DEFAULT 'dd-mm-yyyy',
+  academic_term TEXT NOT NULL DEFAULT 'first-term',
+  current_session TEXT NOT NULL DEFAULT '2026/2027',
+  current_term TEXT NOT NULL DEFAULT 'Term 1',
+  language TEXT NOT NULL DEFAULT 'en',
+  email_notifications BOOLEAN NOT NULL DEFAULT TRUE,
+  sms_alerts BOOLEAN NOT NULL DEFAULT FALSE,
+  maintenance_mode BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ============================================================
 -- 2. CORE ACADEMIC & DIRECTORY TABLES
 -- ============================================================
@@ -63,6 +84,9 @@ CREATE TABLE IF NOT EXISTS public.students (
   parent_name TEXT NOT NULL DEFAULT '',
   parent_phone TEXT NOT NULL DEFAULT '',
   parent_email TEXT NOT NULL DEFAULT '',
+  parent_occupation TEXT NOT NULL DEFAULT '',
+  parent_relationship TEXT NOT NULL DEFAULT '',
+  emergency_contact JSONB NOT NULL DEFAULT '{}'::jsonb,
   enrolled_subjects JSONB NOT NULL DEFAULT '[]'::jsonb,
   attendance_rate NUMERIC NOT NULL DEFAULT 0,
   gpa TEXT NOT NULL DEFAULT '0.00',
@@ -78,6 +102,12 @@ CREATE TABLE IF NOT EXISTS public.teachers (
   email TEXT NOT NULL DEFAULT '',
   phone TEXT NOT NULL DEFAULT '',
   qualification TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  date_of_birth TEXT NOT NULL DEFAULT '',
+  start_date TEXT NOT NULL DEFAULT '',
+  position TEXT NOT NULL DEFAULT 'Subject Teacher',
+  department TEXT NOT NULL DEFAULT 'Academic Faculty',
+  emergency_contact JSONB NOT NULL DEFAULT '{}'::jsonb,
   assigned_classes JSONB NOT NULL DEFAULT '[]'::jsonb,
   form_teacher_of TEXT NOT NULL DEFAULT '',
   avatar_url TEXT NOT NULL DEFAULT '',
@@ -349,6 +379,8 @@ $$;
 -- ============================================================
 ALTER TABLE public.portal_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.classes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.institution_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.subjects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.students ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.teachers ENABLE ROW LEVEL SECURITY;
@@ -385,6 +417,20 @@ CREATE POLICY "Admins manage all profiles" ON public.profiles
   FOR ALL TO authenticated
   USING (public.current_user_role() = 'admin')
   WITH CHECK (public.current_user_role() = 'admin');
+
+-- Classes
+DROP POLICY IF EXISTS "Authenticated read classes" ON public.classes;
+CREATE POLICY "Authenticated read classes" ON public.classes FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Admins manage classes" ON public.classes;
+CREATE POLICY "Admins manage classes" ON public.classes FOR ALL TO authenticated
+  USING (public.current_user_role() = 'admin') WITH CHECK (public.current_user_role() = 'admin');
+
+-- Institution Settings
+DROP POLICY IF EXISTS "Authenticated read settings" ON public.institution_settings;
+CREATE POLICY "Authenticated read settings" ON public.institution_settings FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Admins manage settings" ON public.institution_settings;
+CREATE POLICY "Admins manage settings" ON public.institution_settings FOR ALL TO authenticated
+  USING (public.current_user_role() = 'admin') WITH CHECK (public.current_user_role() = 'admin');
 
 -- Subjects
 DROP POLICY IF EXISTS "Authenticated read subjects" ON public.subjects;
