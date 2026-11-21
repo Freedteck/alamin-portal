@@ -12,6 +12,7 @@ import {
 
 // In-memory runtime state for fast reactive UI renders
 let state = {
+  classes: [],
   subjects: [],
   students: [],
   teachers: [],
@@ -78,6 +79,7 @@ export function initializeSchoolSync() {
       refreshCloudData();
     } else {
       state = {
+        classes: [],
         subjects: [],
         students: [],
         teachers: [],
@@ -104,6 +106,38 @@ export function initializeSchoolSync() {
 }
 
 export const schoolStore = {
+  // Classes
+  getClasses() {
+    if (state.classes && state.classes.length > 0) {
+      return state.classes.map((c) => c.name || c);
+    }
+    return SCHOOL_CLASSES;
+  },
+  getClassObjects() {
+    if (state.classes && state.classes.length > 0) {
+      return state.classes;
+    }
+    return SCHOOL_CLASSES.map((name, i) => ({
+      id: `cls-${i + 1}`,
+      name,
+      category: isSeniorClass(name) ? 'Senior' : 'Junior'
+    }));
+  },
+  async addClass(classData) {
+    const res = await apiClient.post('/classes', classData);
+    if (res && !res.error) {
+      state.classes = [...(state.classes || []), res];
+      notifyChange('classes');
+    }
+    return res;
+  },
+  async deleteClass(id) {
+    await apiClient.delete(`/classes/${id}`).catch(() => {});
+    state.classes = (state.classes || []).filter((c) => c.id !== id);
+    notifyChange('classes');
+    return state.classes;
+  },
+
   // Subjects
   getSubjects() {
     return state.subjects || [];

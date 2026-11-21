@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 -- ============================================================
 -- 2. CORE ACADEMIC & DIRECTORY TABLES
 -- ============================================================
+CREATE TABLE IF NOT EXISTS public.classes (
+  id TEXT PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  category TEXT NOT NULL DEFAULT 'Junior',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS public.subjects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

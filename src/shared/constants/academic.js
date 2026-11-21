@@ -27,11 +27,14 @@ export const getClassCode = (className) => {
     'SSS 2': 'SB',
     'SSS 3': 'SC'
   };
-  return map[className] || 'JA';
+  if (map[className]) return map[className];
+  const clean = String(className || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  return clean.length >= 2 ? clean.slice(0, 2) : (clean + 'X').slice(0, 2);
 };
 
-export const generateAdmissionNumber = (className, existingStudents = []) => {
-  const yearPrefix = '26';
+export const generateAdmissionNumber = (className, existingStudents = [], year) => {
+  const currentYear = year ? String(year) : String(new Date().getFullYear());
+  const yearPrefix = currentYear.slice(-2);
   const classCode = getClassCode(className);
   const matching = (existingStudents || []).filter((s) => s.class === className);
   const nextNum = matching.length + 1;

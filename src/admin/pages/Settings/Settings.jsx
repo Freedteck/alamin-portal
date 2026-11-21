@@ -1,8 +1,28 @@
 import { Button } from '../../../shared/components/Button/Button';
 import { Logo } from '../../../shared/components/Logo/Logo';
-import { useState } from 'react';
-import { CheckCircle2, Eye, EyeOff } from 'lucide-react';
-import { schoolStore } from '../../../shared/data/schoolData';
+import { Modal } from '../../../shared/components/Modal/Modal';
+import { Pagination } from '../../../shared/components/Pagination/Pagination';
+import { useState, useEffect, useMemo } from 'react';
+import {
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  GraduationCap,
+  ArrowRight,
+  Sparkles,
+  AlertTriangle,
+  RotateCw,
+  Search,
+  Filter,
+  Users,
+  Award
+} from 'lucide-react';
+import {
+  schoolStore,
+  SCHOOL_CLASSES,
+  SSS_DEPARTMENTS,
+  isSeniorClass
+} from '../../../shared/data/schoolData';
 
 const SETTINGS_STORAGE_KEY = 'alamin_settings_v1';
 
@@ -49,10 +69,208 @@ export function Settings() {
   const [showEmailPassword, setShowEmailPassword] = useState(false);
   const [toast, setToast] = useState(null);
 
+  const currentYear = new Date().getFullYear();
+  const currentYearPrefix = String(currentYear).slice(-2);
+
+  // Rollover & Session Promotion State
+  const [rolloverCandidates, setRolloverCandidates] = useState([]);
+  const [promotionsMap, setPromotionsMap] = useState({});
+  const [currentSessionInput, setCurrentSessionInput] = useState('2026/2027');
+  const [nextSessionInput, setNextSessionInput] = useState('2027/2028');
+  const [passThreshold, setPassThreshold] = useState(45);
+  const [rolloverFilterClass, setRolloverFilterClass] = useState('all');
+  const [rolloverSearch, setRolloverSearch] = useState('');
+  const [rolloverPage, setRolloverPage] = useState(1);
+  const rolloverPageSize = 8;
+  const [isLoadingRollover, setIsLoadingRollover] = useState(false);
+  const [isRollingOver, setIsRollingOver] = useState(false);
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [classesList, setClassesList] = useState([]);
+
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
+
+  const loadRolloverData = async () => {
+    setIsLoadingRollover(true);
+    try {
+      const cls = schoolStore.getClasses();
+      setClassesList(cls);
+
+      let candidates = [];
+      try {
+        const res = await schoolStore.getPromotionCandidates();
+        if (Array.isArray(res) && res.length > 0) candidates = res;
+      } catch {}
+
+      if (!candidates || candidates.length === 0) {
+        const students = schoolStore.getStudents() || [];
+        const grades = schoolStore.getGrades() || {};
+        candidates = students.map((student) => {
+          const studentGrades = grades[student.id] || {};
+          const scores = Object.values(studentGrades).map((g) => Number(g.total) || 0);
+          const avg = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+          let nextCls = student.class;
+          let action = 'promote';
+          if (student.class === 'JSS 1') nextCls = 'JSS 2';
+          else if (student.class === 'JSS 2') nextCls = 'JSS 3';
+          else if (student.class === 'JSS 3') nextCls = 'SSS 1';
+          else if (student.class === 'SSS 1') nextCls = 'SSS 2';
+          else if (student.class === 'SSS 2') nextCls = 'SSS 3';
+          else if (student.class === 'SSS 3') {
+            nextCls = 'Graduated';
+            action = 'graduate';
+          }
+          if (action !== 'graduate' && avg < passThreshold && scores.length > 0) {
+            action = 'repeat';
+          }
+          return {
+            id: student.id,
+            name: student.name,
+            admissionNumber: student.admissionNumber,
+            currentClass: student.class,
+            department: student.department || '',
+            averageScore: avg,
+            suggestedClass: nextCls,
+            suggestedAction: action
+          };
+        });
+      }
+
+      setRolloverCandidates(candidates);
+      const initialMap = {};
+      candidates.forEach((c) => {
+        initialMap[c.id] = {
+          studentId: c.id,
+          action: c.suggestedAction,
+          targetClass: c.suggestedClass,
+          department: c.department || (isSeniorClass(c.suggestedClass) ? 'Science' : '')
+        };
+      });
+      setPromotionsMap(initialMap);
+    } catch {
+      showToast('Error loading session rollover candidates.');
+    } finally {
+      setIsLoadingRollover(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'rollover') {
+      loadRolloverData();
+    }
+  }, [activeTab]);
+
+  const handlePromotionAction = (studentId, action, candidate) => {
+    setPromotionsMap((prev) => {
+      const current = prev[studentId] || {};
+      let targetClass = current.targetClass || candidate.suggestedClass;
+      if (action === 'graduate') {
+        targetClass = 'Graduated';
+      } else if (action === 'repeat') {
+        targetClass = candidate.currentClass;
+      } else if (action === 'promote') {
+        targetClass = candidate.suggestedClass;
+      }
+      return {
+        ...prev,
+        [studentId]: {
+          studentId,
+          action,
+          targetClass,
+          department: current.department || candidate.department || 'Science'
+        }
+      };
+    });
+  };
+
+  const handleTargetClass = (studentId, targetClass) => {
+    setPromotionsMap((prev) => ({
+      ...prev,
+      [studentId]: {
+        ...(prev[studentId] || { studentId, action: 'promote' }),
+        targetClass
+      }
+    }));
+  };
+
+  const handleDepartmentChange = (studentId, department) => {
+    setPromotionsMap((prev) => ({
+      ...prev,
+      [studentId]: {
+        ...(prev[studentId] || { studentId, action: 'promote' }),
+        department
+      }
+    }));
+  };
+
+  const handleApplyAllRecommendations = () => {
+    const updated = {};
+    rolloverCandidates.forEach((c) => {
+      updated[c.id] = {
+        studentId: c.id,
+        action: c.suggestedAction,
+        targetClass: c.suggestedClass,
+        department: c.department || (isSeniorClass(c.suggestedClass) ? 'Science' : '')
+      };
+    });
+    setPromotionsMap(updated);
+    showToast('Applied system recommendations to all student records.');
+  };
+
+  const handleExecuteRollover = async () => {
+    setIsRollingOver(true);
+    try {
+      const payload = {
+        nextSession: nextSessionInput,
+        promotions: Object.values(promotionsMap)
+      };
+      const res = await schoolStore.executeSessionRollover(payload);
+      setIsConfirmModalOpen(false);
+      showToast(
+        `Session Rollover to ${nextSessionInput} completed! Promoted: ${res.promotedCount || 0}, Repeating: ${res.repeatCount || 0}, Graduated: ${res.graduatedCount || 0}.`
+      );
+      await loadRolloverData();
+    } catch (err) {
+      showToast(err?.message || 'Failed to execute session rollover.');
+    } finally {
+      setIsRollingOver(false);
+    }
+  };
+
+  const rolloverMetrics = useMemo(() => {
+    let promoteCount = 0;
+    let repeatCount = 0;
+    let graduateCount = 0;
+    Object.values(promotionsMap).forEach((p) => {
+      if (p.action === 'graduate') graduateCount++;
+      else if (p.action === 'repeat') repeatCount++;
+      else promoteCount++;
+    });
+    return {
+      total: rolloverCandidates.length,
+      promoted: promoteCount,
+      repeating: repeatCount,
+      graduating: graduateCount
+    };
+  }, [promotionsMap, rolloverCandidates]);
+
+  const filteredCandidates = useMemo(() => {
+    return rolloverCandidates.filter((c) => {
+      const matchesClass = rolloverFilterClass === 'all' || c.currentClass === rolloverFilterClass;
+      const matchesSearch =
+        !rolloverSearch.trim() ||
+        c.name.toLowerCase().includes(rolloverSearch.toLowerCase()) ||
+        c.admissionNumber?.toLowerCase().includes(rolloverSearch.toLowerCase());
+      return matchesClass && matchesSearch;
+    });
+  }, [rolloverCandidates, rolloverFilterClass, rolloverSearch]);
+
+  const paginatedCandidates = useMemo(() => {
+    const start = (rolloverPage - 1) * rolloverPageSize;
+    return filteredCandidates.slice(start, start + rolloverPageSize);
+  }, [filteredCandidates, rolloverPage]);
 
   const handleSaveSettings = () => {
     try {
@@ -141,12 +359,13 @@ export function Settings() {
       </div>
 
       <div className="space-y-4">
-        <div className="flex border-b border-border gap-2 mb-4">
-          <button type="button" onClick={() => setActiveTab('general')} className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === 'general' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'} `}>General</button>
-          <button type="button" onClick={() => setActiveTab('notifications')} className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === 'notifications' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'} `}>Notifications</button>
-          <button type="button" onClick={() => setActiveTab('academic')} className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === 'academic' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'} `}>Academic</button>
-          <button type="button" onClick={() => setActiveTab('security')} className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === 'security' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'} `}>Security</button>
-          <button type="button" onClick={() => setActiveTab('integrations')} className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === 'integrations' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'} `}>Integrations</button>
+        <div className="flex border-b border-[#c9c7b6]/60 gap-2 mb-4 overflow-x-auto">
+          <button type="button" onClick={() => setActiveTab('general')} className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'general' ? 'border-[#616218] text-[#616218]' : 'border-transparent text-[#797869] hover:text-[#1c1c14]'} `}>General</button>
+          <button type="button" onClick={() => setActiveTab('notifications')} className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'notifications' ? 'border-[#616218] text-[#616218]' : 'border-transparent text-[#797869] hover:text-[#1c1c14]'} `}>Notifications</button>
+          <button type="button" onClick={() => setActiveTab('academic')} className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'academic' ? 'border-[#616218] text-[#616218]' : 'border-transparent text-[#797869] hover:text-[#1c1c14]'} `}>Academic</button>
+          <button type="button" onClick={() => setActiveTab('rollover')} className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'rollover' ? 'border-[#616218] text-[#616218]' : 'border-transparent text-[#797869] hover:text-[#1c1c14]'} `}>Session & Rollover</button>
+          <button type="button" onClick={() => setActiveTab('security')} className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'security' ? 'border-[#616218] text-[#616218]' : 'border-transparent text-[#797869] hover:text-[#1c1c14]'} `}>Security</button>
+          <button type="button" onClick={() => setActiveTab('integrations')} className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'integrations' ? 'border-[#616218] text-[#616218]' : 'border-transparent text-[#797869] hover:text-[#1c1c14]'} `}>Integrations</button>
         </div>
 
         {activeTab === 'general' && (<div className="space-y-6"><div className="rounded-lg border bg-card p-6 shadow-sm">
@@ -380,7 +599,14 @@ export function Settings() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium leading-none">Student Admission Format</label>
-                  <input readOnly className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-[#faf8f0] text-sm font-mono font-bold text-[#494900] focus:outline-none shadow-xs" value="26/ASS/JA001" />
+                  <input
+                    readOnly
+                    className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-[#faf8f0] text-sm font-mono font-bold text-[#494900] focus:outline-none shadow-xs"
+                    value={`${currentYearPrefix}/ASS/JA001`}
+                  />
+                  <p className="text-[11px] text-[#797869] mt-1">
+                    Dynamically derives from the calendar year ({currentYearPrefix} for {currentYear}) + school code (ASS) + class code + sequence number.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium leading-none">Staff ID Format</label>
@@ -407,6 +633,322 @@ export function Settings() {
               </div>
             </div>
           </div></div>)}
+
+        {activeTab === 'rollover' && (
+          <div className="space-y-6">
+            <div className="rounded-lg border bg-card p-6 shadow-sm">
+              <div className="mb-4">
+                <h3 className="font-semibold leading-none tracking-tight flex items-center gap-2">
+                  <GraduationCap className="w-5 h-5 text-[#616218]" />
+                  <span>Academic Session Rollover & Promotion Policy</span>
+                </h3>
+                <p className="text-xs text-[#797869] mt-1.5">
+                  Advance students to their subsequent academic level at the end of the school year, manage repeating candidates, and record graduates.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium leading-none">Current Session</label>
+                    <input
+                      type="text"
+                      value={currentSessionInput}
+                      onChange={(e) => setCurrentSessionInput(e.target.value)}
+                      placeholder="e.g. 2026/2027"
+                      className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] shadow-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium leading-none">Target New Session</label>
+                    <input
+                      type="text"
+                      value={nextSessionInput}
+                      onChange={(e) => setNextSessionInput(e.target.value)}
+                      placeholder="e.g. 2027/2028"
+                      className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] shadow-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium leading-none">Pass Benchmark (%)</label>
+                    <input
+                      type="number"
+                      min="30"
+                      max="75"
+                      value={passThreshold}
+                      onChange={(e) => setPassThreshold(Number(e.target.value) || 45)}
+                      className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] shadow-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-lg bg-[#faf8f0] border border-[#c9c7b6]/80 flex items-start gap-3">
+                  <Sparkles className="w-4 h-4 text-[#616218] shrink-0 mt-0.5" />
+                  <div className="text-xs text-[#48482d] leading-relaxed">
+                    <strong>Standard Nigerian Secondary Promotion Rules:</strong> Students meeting the {passThreshold}% cumulative grade threshold across subjects are pre-slated for promotion to the next class tier. Terminal SSS 3 students graduate as alumni. You can manually adjust any student's action (Promote, Repeat, Graduate) or assigned department below.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Metrics Overview */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+              <div className="p-4 rounded-lg bg-card border shadow-sm">
+                <span className="text-xs text-[#797869] font-medium block">Total Roster</span>
+                <span className="text-2xl font-bold text-[#1c1c14] mt-1 block">
+                  {rolloverMetrics.total}
+                </span>
+                <span className="text-[11px] text-[#797869]">Eligible candidates</span>
+              </div>
+              <div className="p-4 rounded-lg bg-emerald-50/60 border border-emerald-200 shadow-sm">
+                <span className="text-xs text-emerald-800 font-medium block">Promoted</span>
+                <span className="text-2xl font-bold text-emerald-900 mt-1 block">
+                  {rolloverMetrics.promoted}
+                </span>
+                <span className="text-[11px] text-emerald-700">Advancing next class</span>
+              </div>
+              <div className="p-4 rounded-lg bg-amber-50/60 border border-amber-200 shadow-sm">
+                <span className="text-xs text-amber-800 font-medium block">Repeating</span>
+                <span className="text-2xl font-bold text-amber-900 mt-1 block">
+                  {rolloverMetrics.repeating}
+                </span>
+                <span className="text-[11px] text-amber-700">Retaining current class</span>
+              </div>
+              <div className="p-4 rounded-lg bg-purple-50/60 border border-purple-200 shadow-sm">
+                <span className="text-xs text-purple-800 font-medium block">Graduating</span>
+                <span className="text-2xl font-bold text-purple-900 mt-1 block">
+                  {rolloverMetrics.graduating}
+                </span>
+                <span className="text-[11px] text-purple-700">Terminal SSS 3 alumni</span>
+              </div>
+            </div>
+
+            {/* Candidate Roster Card */}
+            <div className="rounded-lg border bg-card p-6 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#c9c7b6]/50">
+                <div>
+                  <h3 className="font-semibold leading-none tracking-tight">Student Promotion Decision Roster</h3>
+                  <p className="text-xs text-[#797869] mt-1">
+                    Review cumulative marks and configure individual promotions before committing.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleApplyAllRecommendations}
+                  className="px-3 py-1.5 rounded-lg border border-[#c9c7b6] bg-[#faf8f0] hover:bg-white text-xs font-semibold text-[#616218] transition-colors cursor-pointer self-start sm:self-auto shrink-0 shadow-xs"
+                >
+                  Reset All to Recommendations
+                </button>
+              </div>
+
+              {/* Filters */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs font-semibold text-[#797869] mr-1">Class Filter:</span>
+                  <button
+                    type="button"
+                    onClick={() => { setRolloverFilterClass('all'); setRolloverPage(1); }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      rolloverFilterClass === 'all'
+                        ? 'bg-[#616218] text-white shadow-xs'
+                        : 'bg-[#faf8f0] text-[#797869] border border-[#c9c7b6]/80 hover:bg-white'
+                    }`}
+                  >
+                    All Classes
+                  </button>
+                  {(classesList.length > 0 ? classesList : SCHOOL_CLASSES).map((cls) => {
+                    const isSelected = rolloverFilterClass === cls;
+                    return (
+                      <button
+                        type="button"
+                        key={cls}
+                        onClick={() => { setRolloverFilterClass(cls); setRolloverPage(1); }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-[#616218] text-white shadow-xs'
+                            : 'bg-[#faf8f0] text-[#797869] border border-[#c9c7b6]/80 hover:bg-white'
+                        }`}
+                      >
+                        {cls}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-4 h-4 text-[#797869] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={rolloverSearch}
+                    onChange={(e) => { setRolloverSearch(e.target.value); setRolloverPage(1); }}
+                    placeholder="Search candidate or admission..."
+                    className="w-full h-9 pl-9 pr-3 rounded-lg border border-[#c9c7b6] bg-white text-xs text-[#1c1c14] placeholder-[#797869] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] shadow-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Roster Table */}
+              <div className="overflow-x-auto border border-[#c9c7b6]/80 rounded-lg">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-[#faf8f0] font-bold text-[#797869] border-b border-[#c9c7b6] uppercase tracking-wider">
+                    <tr>
+                      <th className="py-3 px-3.5">Student</th>
+                      <th className="py-3 px-3">Current Class</th>
+                      <th className="py-3 px-3">Average Mark</th>
+                      <th className="py-3 px-3">Recommendation</th>
+                      <th className="py-3 px-3">Promotion Action</th>
+                      <th className="py-3 px-3.5">Target Placement / Stream</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#c9c7b6]/40">
+                    {paginatedCandidates.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-[#797869]">
+                          No students found matching your filters.
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedCandidates.map((candidate) => {
+                        const promotion = promotionsMap[candidate.id] || {
+                          action: candidate.suggestedAction,
+                          targetClass: candidate.suggestedClass,
+                          department: candidate.department || 'Science'
+                        };
+                        const passed = candidate.averageScore >= passThreshold;
+                        const isSeniorTarget = isSeniorClass(promotion.targetClass);
+
+                        return (
+                          <tr key={candidate.id} className="hover:bg-[#faf8f0]/60 transition-colors">
+                            <td className="py-3 px-3.5">
+                              <div className="font-bold text-[#1c1c14]">{candidate.name}</div>
+                              <div className="font-mono text-[11px] text-[#797869]">{candidate.admissionNumber}</div>
+                            </td>
+                            <td className="py-3 px-3 font-semibold text-[#48482d]">
+                              {candidate.currentClass}
+                              {candidate.department && (
+                                <span className="block text-[10px] text-[#797869]">{candidate.department}</span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold ${
+                                  passed
+                                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                    : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                }`}
+                              >
+                                {candidate.averageScore}%
+                              </span>
+                            </td>
+                            <td className="py-3 px-3">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                  candidate.suggestedAction === 'promote'
+                                    ? 'bg-emerald-50 text-emerald-800'
+                                    : candidate.suggestedAction === 'repeat'
+                                    ? 'bg-amber-50 text-amber-800'
+                                    : 'bg-purple-50 text-purple-800'
+                                }`}
+                              >
+                                <Sparkles className="w-3 h-3" />
+                                {candidate.suggestedAction === 'promote' && `Promote to ${candidate.suggestedClass}`}
+                                {candidate.suggestedAction === 'repeat' && `Repeat ${candidate.currentClass}`}
+                                {candidate.suggestedAction === 'graduate' && 'Graduate (Alumni)'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3">
+                              <select
+                                value={promotion.action}
+                                onChange={(e) => handlePromotionAction(candidate.id, e.target.value, candidate)}
+                                className="h-8 px-2.5 rounded-lg border border-[#c9c7b6] bg-white text-xs font-semibold text-[#1c1c14] focus:outline-none focus:ring-1 focus:ring-[#616218] shadow-xs cursor-pointer"
+                              >
+                                <option value="promote">Promote</option>
+                                <option value="repeat">Repeat</option>
+                                <option value="graduate">Graduate</option>
+                              </select>
+                            </td>
+                            <td className="py-3 px-3.5">
+                              {promotion.action === 'graduate' ? (
+                                <span className="inline-flex items-center gap-1.5 text-purple-800 font-semibold bg-purple-50 px-2 py-1 rounded border border-purple-200">
+                                  <GraduationCap className="w-3.5 h-3.5" />
+                                  <span>Graduate / Alumni</span>
+                                </span>
+                              ) : promotion.action === 'repeat' ? (
+                                <span className="text-amber-800 font-semibold bg-amber-50 px-2 py-1 rounded border border-amber-200">
+                                  Repeat {candidate.currentClass}
+                                </span>
+                              ) : (
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <select
+                                    value={promotion.targetClass}
+                                    onChange={(e) => handleTargetClass(candidate.id, e.target.value)}
+                                    className="h-8 px-2 rounded-lg border border-[#c9c7b6] bg-white text-xs font-semibold text-[#1c1c14] focus:outline-none focus:ring-1 focus:ring-[#616218] shadow-xs cursor-pointer"
+                                  >
+                                    {(classesList.length > 0 ? classesList : SCHOOL_CLASSES).map((cls) => (
+                                      <option key={cls} value={cls}>
+                                        {cls}
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  {isSeniorTarget && (
+                                    <select
+                                      value={promotion.department || 'Science'}
+                                      onChange={(e) => handleDepartmentChange(candidate.id, e.target.value)}
+                                      className="h-8 px-2 rounded-lg border border-[#c9c7b6] bg-white text-xs text-[#1c1c14] focus:outline-none focus:ring-1 focus:ring-[#616218] shadow-xs cursor-pointer"
+                                    >
+                                      {SSS_DEPARTMENTS.map((dept) => (
+                                        <option key={dept} value={dept}>
+                                          {dept}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {filteredCandidates.length > rolloverPageSize && (
+                <div className="pt-2">
+                  <Pagination
+                    currentPage={rolloverPage}
+                    totalPages={Math.ceil(filteredCandidates.length / rolloverPageSize)}
+                    onPageChange={setRolloverPage}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Action Bar */}
+            <div className="rounded-lg border bg-card p-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h4 className="font-semibold text-sm text-[#1c1c14]">Execute Annual Session Rollover</h4>
+                <p className="text-xs text-[#797869] mt-0.5">
+                  Advances active students into session {nextSessionInput} with the promotional placements decided above.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsConfirmModalOpen(true)}
+                disabled={rolloverCandidates.length === 0}
+                className="h-10 px-5 rounded-lg bg-[#616218] hover:bg-[#494900] disabled:bg-[#c9c7b6] text-white text-xs font-semibold shadow-xs inline-flex items-center justify-center gap-2 transition-colors cursor-pointer shrink-0"
+              >
+                <ArrowRight className="w-4 h-4" />
+                <span>Execute Session Rollover</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {activeTab === 'security' && (<div className="space-y-6"><div className="rounded-lg border bg-card p-6 shadow-sm">
             <div className="mb-4">
@@ -562,5 +1104,79 @@ export function Settings() {
           Save Changes
         </Button>
       </div>
+
+      {/* Session Rollover Confirmation Modal */}
+      <Modal
+        isOpen={isConfirmModalOpen}
+        onClose={() => setIsConfirmModalOpen(false)}
+        title="Confirm Annual Session Rollover"
+        subtitle={`Session transition from ${currentSessionInput} to ${nextSessionInput}`}
+        size="md"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setIsConfirmModalOpen(false)}
+              disabled={isRollingOver}
+              className="h-10 px-4 text-xs font-semibold rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] hover:bg-[#faf8f0] shadow-xs cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleExecuteRollover}
+              disabled={isRollingOver}
+              className="h-10 px-5 text-xs font-semibold rounded-lg bg-[#616218] hover:bg-[#494900] disabled:bg-[#c9c7b6] text-white shadow-xs inline-flex items-center gap-2 cursor-pointer"
+            >
+              {isRollingOver ? (
+                <>
+                  <RotateCw className="w-4 h-4 animate-spin" />
+                  <span>Processing Rollover...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Confirm & Execute Rollover</span>
+                </>
+              )}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4 text-xs text-[#1c1c14]">
+          <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-bold text-amber-900 block">Please Verify Promotion Summary</span>
+              <p className="text-amber-800 leading-relaxed">
+                Executing session rollover will immediately advance student class assignments into academic session <strong>{nextSessionInput}</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-lg bg-[#faf8f0] border border-[#c9c7b6] space-y-2">
+            <div className="flex justify-between py-1 border-b border-[#c9c7b6]/50">
+              <span className="text-[#797869]">Target Academic Session:</span>
+              <span className="font-bold text-[#1c1c14]">{nextSessionInput}</span>
+            </div>
+            <div className="flex justify-between py-1 border-b border-[#c9c7b6]/50">
+              <span className="text-[#797869]">Students to be Promoted:</span>
+              <span className="font-bold text-emerald-800">{rolloverMetrics.promoted}</span>
+            </div>
+            <div className="flex justify-between py-1 border-b border-[#c9c7b6]/50">
+              <span className="text-[#797869]">Students Repeating Class:</span>
+              <span className="font-bold text-amber-800">{rolloverMetrics.repeating}</span>
+            </div>
+            <div className="flex justify-between py-1">
+              <span className="text-[#797869]">Graduating Students (Alumni):</span>
+              <span className="font-bold text-purple-800">{rolloverMetrics.graduating}</span>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-[#797869]">
+            Note: All historical assessment records and past report cards are preserved in the database.
+          </p>
+        </div>
+      </Modal>
     </div>);
 }

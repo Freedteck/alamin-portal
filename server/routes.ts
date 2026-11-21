@@ -126,6 +126,26 @@ router.post(
   }
 );
 
+/* ── Classes ─────────────────────────────────────────────────────────────── */
+
+router.get('/classes', requireAuth, (_req: Request, res: Response) => {
+  res.json(backendStore.getClasses());
+});
+
+router.post('/classes', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+  const result = backendStore.addClass(req.body || {});
+  if ((result as any).error) {
+    return res.status(400).json(result);
+  }
+  res.status(201).json(result);
+});
+
+router.delete('/classes/:id', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+  const ok = backendStore.deleteClass(paramStr(req.params.id));
+  if (!ok) return res.status(404).json({ error: 'Class not found.' });
+  res.json({ ok: true });
+});
+
 /* ── Subjects ────────────────────────────────────────────────────────────── */
 
 router.get('/subjects', requireAuth, (_req: Request, res: Response) => {

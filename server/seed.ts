@@ -43,11 +43,14 @@ export const getClassCode = (className: string) => {
     'SSS 2': 'SB',
     'SSS 3': 'SC'
   };
-  return map[className] || 'JA';
+  if (map[className]) return map[className];
+  const clean = String(className || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  return clean.length >= 2 ? clean.slice(0, 2) : (clean + 'X').slice(0, 2);
 };
 
-export const generateAdmissionNumber = (className: string, existingStudents: any[] = []) => {
-  const yearPrefix = '26';
+export const generateAdmissionNumber = (className: string, existingStudents: any[] = [], year?: number | string) => {
+  const currentYear = year ? String(year) : String(new Date().getFullYear());
+  const yearPrefix = currentYear.slice(-2);
   const classCode = getClassCode(className);
   const matching = existingStudents.filter((s) => s.class === className);
   const nextNum = matching.length + 1;
@@ -73,6 +76,12 @@ export const INITIAL_SUBJECT_CATALOG = [
   { id: 'sub-15', name: 'Literature in English', allClasses: false, classes: ['SSS 1', 'SSS 2', 'SSS 3'], allDepartments: false, departments: ['Humanities'] },
   { id: 'sub-16', name: 'Government', allClasses: false, classes: ['SSS 1', 'SSS 2', 'SSS 3'], allDepartments: false, departments: ['Humanities', 'Business'] }
 ];
+
+export const INITIAL_CLASSES = SCHOOL_CLASSES.map((name, i) => ({
+  id: `cls-${i + 1}`,
+  name,
+  category: isSeniorClass(name) ? 'Senior' : 'Junior'
+}));
 
 export const INITIAL_STUDENTS: any[] = [];
 
@@ -122,6 +131,7 @@ export function createInitialUsers() {
 export function createInitialDbSnapshot() {
   return {
     users: createInitialUsers(),
+    classes: structuredClone(INITIAL_CLASSES),
     subjects: structuredClone(INITIAL_SUBJECT_CATALOG),
     students: structuredClone(INITIAL_STUDENTS),
     teachers: structuredClone(INITIAL_TEACHERS),

@@ -62,94 +62,45 @@ export function ClassScheduling() {
   const rosterPageSize = 5;
   const subjectsPageSize = 6;
 
-  const [rolloverCandidates, setRolloverCandidates] = useState([]);
-  const [nextSessionInput, setNextSessionInput] = useState('2027/2028');
-  const [promotionsMap, setPromotionsMap] = useState({});
-  const [isRolloverConfirmOpen, setIsRolloverConfirmOpen] = useState(false);
-  const [rolloverFilterClass, setRolloverFilterClass] = useState('all');
-  const [isRollingOver, setIsRollingOver] = useState(false);
-  const [rolloverPage, setRolloverPage] = useState(1);
-  const rolloverPageSize = 8;
+  const [classesList, setClassesList] = useState([]);
+  const [isAddClassModalOpen, setIsAddClassModalOpen] = useState(false);
+  const [newClassName, setNewClassName] = useState('');
+  const [newClassCategory, setNewClassCategory] = useState('Junior');
+  const [addClassError, setAddClassError] = useState('');
 
-  const loadRolloverCandidates = async () => {
-    try {
-      const res = await schoolStore.getPromotionCandidates();
-      if (res?.candidates) {
-        setRolloverCandidates(res.candidates);
-        const initialMap = {};
-        res.candidates.forEach((c) => {
-          initialMap[c.id] = {
-            studentId: c.id,
-            action: c.suggestedAction,
-            targetClass: c.suggestedClass,
-            department: c.department || 'Science'
-          };
-        });
-        setPromotionsMap(initialMap);
-      }
-    } catch {}
-  };
-
-  useEffect(() => {
-    if (activeTab === 'rollover') {
-      loadRolloverCandidates();
-    }
-  }, [activeTab]);
-
-  const handlePromotionActionChange = (studentId, action, candidate) => {
-    let targetClass = candidate.currentClass;
-    if (action === 'promote') targetClass = candidate.suggestedClass;
-    if (action === 'graduate') targetClass = 'Graduated';
-
-    setPromotionsMap((prev) => ({
-      ...prev,
-      [studentId]: {
-        ...(prev[studentId] || {}),
-        studentId,
-        action,
-        targetClass,
-        department: prev[studentId]?.department || candidate.department || 'Science'
-      }
-    }));
-  };
-
-  const handlePromotionDeptChange = (studentId, department) => {
-    setPromotionsMap((prev) => ({
-      ...prev,
-      [studentId]: {
-        ...(prev[studentId] || {}),
-        department
-      }
-    }));
-  };
-
-  const executeRollover = async () => {
-    setIsRollingOver(true);
-    try {
-      const promotionsList = Object.values(promotionsMap);
-      const res = await schoolStore.executeSessionRollover({
-        nextSession: nextSessionInput,
-        promotions: promotionsList
-      });
-      if (res?.success) {
-        showNotification(
-          `Session Rollover complete! Promoted: ${res.promotedCount}, Repeating: ${res.repeatCount}, Graduated: ${res.graduatedCount}`
-        );
-        setIsRolloverConfirmOpen(false);
-        setActiveTab('classes');
-        loadData();
-      }
-    } catch (err) {
-      alert(err?.message || 'Failed to execute session rollover.');
-    } finally {
-      setIsRollingOver(false);
-    }
-  };
+  const availableClasses = classesList.length > 0 ? classesList : SCHOOL_CLASSES;
 
   const loadData = () => {
     setTeachersList(schoolStore.getTeachers());
     setStudentsList(schoolStore.getStudents());
     setSubjectsList(schoolStore.getSubjects());
+    setClassesList(schoolStore.getClasses());
+  };
+
+  const handleCreateClass = async (e) => {
+    e.preventDefault();
+    if (!newClassName.trim()) {
+      setAddClassError('Please enter a class name.');
+      return;
+    }
+    setAddClassError('');
+    try {
+      const res = await schoolStore.addClass({
+        name: newClassName.trim(),
+        category: newClassCategory
+      });
+      if (res?.error) {
+        setAddClassError(res.error);
+      } else {
+        showNotification(`Class "${newClassName.trim()}" created successfully!`);
+        setSelectedClass(newClassName.trim());
+        setNewClassName('');
+        setIsAddClassModalOpen(false);
+        loadData();
+      }
+    } catch (err) {
+      setAddClassError(err?.message || 'Failed to create class.');
+    }
   };
 
   useEffect(() => {
@@ -218,7 +169,7 @@ export function ClassScheduling() {
     setSubjectForm({
       name: '',
       allClasses: true,
-      classes: [...SCHOOL_CLASSES],
+      classes: [...availableClasses],
       allDepartments: true,
       departments: [...SSS_DEPARTMENTS]
     });
@@ -230,7 +181,7 @@ export function ClassScheduling() {
     setSubjectForm({
       name: sub.name,
       allClasses: !!sub.allClasses,
-      classes: sub.allClasses ? [...SCHOOL_CLASSES] : [...(sub.classes || [])],
+      classes: sub.allClasses ? [...availableClasses] : [...(sub.classes || [])],
       allDepartments: !!sub.allDepartments,
       departments: sub.allDepartments ? [...SSS_DEPARTMENTS] : [...(sub.departments || [])]
     });
@@ -245,7 +196,7 @@ export function ClassScheduling() {
         : [...prev.classes, cls];
       return {
         ...prev,
-        allClasses: nextClasses.length === SCHOOL_CLASSES.length,
+        allClasses: nextClasses.length === availableClasses.length,
         classes: nextClasses
       };
     });
@@ -257,7 +208,7 @@ export function ClassScheduling() {
       return {
         ...prev,
         allClasses: nextAll,
-        classes: nextAll ? [...SCHOOL_CLASSES] : []
+        classes: nextAll ? [...availableClasses] : []
       };
     });
   };
@@ -305,7 +256,7 @@ export function ClassScheduling() {
     const payload = {
       name: cleanName,
       allClasses: subjectForm.allClasses,
-      classes: subjectForm.allClasses ? [...SCHOOL_CLASSES] : subjectForm.classes,
+      classes: subjectForm.allClasses ? [...availableClasses] : subjectForm.classes,
       allDepartments: isSeniorOnlySelection ? subjectForm.allDepartments : true,
       departments: isSeniorOnlySelection
         ? (subjectForm.allDepartments ? [...SSS_DEPARTMENTS] : subjectForm.departments)
@@ -454,25 +405,13 @@ export function ClassScheduling() {
         >
           Subject Catalog
         </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('rollover')}
-          className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-            activeTab === 'rollover'
-              ? 'border-[#616218] text-[#616218]'
-              : 'border-transparent text-[#797869] hover:text-[#1c1c14]'
-          }`}
-        >
-          <GraduationCap className="w-3.5 h-3.5" />
-          <span>Session Rollover & Promotion</span>
-        </button>
       </div>
 
       {activeTab === 'classes' && (
         <div className="space-y-6 animate-in fade-in duration-150">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold text-[#797869] mr-1">Select Class:</span>
-            {SCHOOL_CLASSES.map((cls) => {
+            {(classesList.length > 0 ? classesList : SCHOOL_CLASSES).map((cls) => {
               const isSelected = selectedClass === cls;
               const count = studentsList.filter((s) => s.class === cls).length;
               return (
@@ -497,6 +436,18 @@ export function ClassScheduling() {
                 </button>
               );
             })}
+            <button
+              type="button"
+              onClick={() => {
+                setAddClassError('');
+                setNewClassName('');
+                setIsAddClassModalOpen(true);
+              }}
+              className="px-3.5 py-2 rounded-lg text-xs font-bold text-[#616218] border border-dashed border-[#616218] bg-white hover:bg-[#faf8f0] inline-flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Class</span>
+            </button>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -813,429 +764,58 @@ export function ClassScheduling() {
         </div>
       )}
 
-      {activeTab === 'rollover' && (
-        <div className="space-y-6 animate-in fade-in duration-150">
-          <div className="p-5 rounded-2xl border border-[#c9c7b6] bg-linear-to-r from-[#fbf8ed] to-white shadow-xs">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#616218] text-white">
-                    End-of-Session Management
-                  </span>
-                  <span className="text-xs text-[#797869]">Academic Year Progression</span>
-                </div>
-                <h3 className="text-lg font-bold text-[#1c1c14]">Student Promotion & Session Rollover</h3>
-                <p className="text-xs text-[#797869] mt-1 max-w-2xl leading-relaxed">
-                  Review annual cumulative scores across terms. Set promotion decisions for each student (JSS 1 → JSS 2, SSS 3 → Graduated), assign SSS departments, and advance the school to the new academic session.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-[#c9c7b6]">
-                  <label htmlFor="next-session-input" className="text-xs font-semibold text-[#1c1c14] whitespace-nowrap">Next Session:</label>
-                  <input
-                    id="next-session-input"
-                    type="text"
-                    value={nextSessionInput}
-                    onChange={(e) => setNextSessionInput(e.target.value)}
-                    placeholder="2027/2028"
-                    className="w-24 text-xs font-bold text-[#616218] focus:outline-none"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setIsRolloverConfirmOpen(true)}
-                  disabled={rolloverCandidates.length === 0}
-                  className="px-4 py-2.5 rounded-xl bg-[#616218] hover:bg-[#494900] disabled:opacity-50 text-white text-xs font-bold shadow-xs inline-flex items-center gap-2 transition-all cursor-pointer"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span>Review & Execute Rollover</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-[#797869] mr-1">Filter Class:</span>
-            {['all', ...SCHOOL_CLASSES].map((cls) => (
-              <button
-                key={cls}
-                type="button"
-                onClick={() => {
-                  setRolloverFilterClass(cls);
-                  setRolloverPage(1);
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                  rolloverFilterClass === cls
-                    ? 'bg-[#616218] text-white shadow-xs'
-                    : 'bg-white border border-[#c9c7b6] text-[#48482d] hover:bg-[#ece7d0]'
-                }`}
-              >
-                {cls === 'all' ? 'All Classes' : cls}
-              </button>
-            ))}
-          </div>
-
-          <div className="rounded-2xl border border-[#c9c7b6] bg-white overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-[#fbf8ed] border-b border-[#c9c7b6] text-[#1c1c14]">
-                    <th className="py-3 px-4 font-bold">Student</th>
-                    <th className="py-3 px-4 font-bold">Current Class</th>
-                    <th className="py-3 px-4 font-bold text-center">Annual Average</th>
-                    <th className="py-3 px-4 font-bold">Decision</th>
-                    <th className="py-3 px-4 font-bold">Target Progression</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#c9c7b6]/30">
-                  {(() => {
-                    const filtered = rolloverCandidates.filter(
-                      (c) => rolloverFilterClass === 'all' || c.currentClass === rolloverFilterClass
-                    );
-                    if (filtered.length === 0) {
-                      return (
-                        <tr>
-                          <td colSpan={5} className="py-8 text-center text-[#797869]">
-                            No students found for rollover in this filter.
-                          </td>
-                        </tr>
-                      );
-                    }
-                    const startIdx = (rolloverPage - 1) * rolloverPageSize;
-                    const paginated = filtered.slice(startIdx, startIdx + rolloverPageSize);
-
-                    return paginated.map((candidate) => {
-                      const promo = promotionsMap[candidate.id] || {
-                        action: candidate.suggestedAction,
-                        targetClass: candidate.suggestedClass,
-                        department: candidate.department || 'Science'
-                      };
-
-                      return (
-                        <tr key={candidate.id} className="hover:bg-[#fbf8ed]/40 transition-colors">
-                          <td className="py-3 px-4">
-                            <p className="font-bold text-[#1c1c14]">{candidate.name}</p>
-                            <p className="font-mono text-[11px] text-[#797869]">{candidate.admissionNumber || 'No ID'}</p>
-                          </td>
-                          <td className="py-3 px-4 font-semibold text-[#48482d]">
-                            {candidate.currentClass}
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                                candidate.averageScore >= 60
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : candidate.averageScore >= 45
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-red-100 text-red-800'
-                              }`}
-                            >
-                              {candidate.averageScore > 0 ? `${candidate.averageScore}%` : 'N/A'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4">
-                            <select
-                              value={promo.action}
-                              onChange={(e) => handlePromotionActionChange(candidate.id, e.target.value, candidate)}
-                              className="px-2.5 py-1.5 rounded-lg border border-[#c9c7b6] bg-white font-semibold text-xs text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20"
-                            >
-                              <option value="promote">
-                                {candidate.currentClass === 'SSS 3' ? 'Graduate (Alumni)' : `Promote (${candidate.suggestedClass})`}
-                              </option>
-                              <option value="repeat">Repeat ({candidate.currentClass})</option>
-                              {candidate.currentClass === 'SSS 3' && <option value="graduate">Graduate (Alumni)</option>}
-                            </select>
-                          </td>
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-2">
-                              {promo.action === 'promote' ? (
-                                <>
-                                  <ArrowRight className="w-3.5 h-3.5 text-[#616218] shrink-0" />
-                                  <span className="font-bold text-[#616218]">{promo.targetClass}</span>
-                                  {promo.targetClass === 'SSS 1' && (
-                                    <select
-                                      value={promo.department}
-                                      onChange={(e) => handlePromotionDeptChange(candidate.id, e.target.value)}
-                                      className="px-2 py-1 rounded-md border border-[#c9c7b6] bg-white text-[11px] font-semibold text-[#1c1c14]"
-                                    >
-                                      {SSS_DEPARTMENTS.map((dept) => (
-                                        <option key={dept} value={dept}>{dept}</option>
-                                      ))}
-                                    </select>
-                                  )}
-                                </>
-                              ) : promo.action === 'repeat' ? (
-                                <span className="text-[#797869] italic">Retains {candidate.currentClass}</span>
-                              ) : (
-                                <span className="text-emerald-700 font-bold">Graduated Alumni</span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    });
-                  })()}
-                </tbody>
-              </table>
-            </div>
-
-            <Pagination
-              currentPage={rolloverPage}
-              totalItems={
-                rolloverCandidates.filter(
-                  (c) => rolloverFilterClass === 'all' || c.currentClass === rolloverFilterClass
-                ).length
-              }
-              pageSize={rolloverPageSize}
-              onPageChange={setRolloverPage}
-              itemLabel="students"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Confirmation Modal for Session Rollover */}
-      {activeTab === 'rollover' && (
-        <div className="space-y-6 animate-in fade-in duration-150">
-          <div className="p-5 rounded-2xl border border-[#c9c7b6] bg-gradient-to-r from-[#fbf8ed] to-white shadow-xs">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#616218] text-white">
-                    End-of-Session Management
-                  </span>
-                  <span className="text-xs text-[#797869]">Academic Year Progression</span>
-                </div>
-                <h3 className="text-lg font-bold text-[#1c1c14]">Student Promotion & Session Rollover</h3>
-                <p className="text-xs text-[#797869] mt-1 max-w-2xl leading-relaxed">
-                  Review annual cumulative scores across terms. Set promotion decisions for each student (JSS 1 → JSS 2, SSS 3 → Graduated), assign SSS departments, and advance the school to the new academic session.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-[#c9c7b6]">
-                  <label htmlFor="next-session-input" className="text-xs font-semibold text-[#1c1c14] whitespace-nowrap">Next Session:</label>
-                  <input
-                    id="next-session-input"
-                    type="text"
-                    value={nextSessionInput}
-                    onChange={(e) => setNextSessionInput(e.target.value)}
-                    placeholder="2027/2028"
-                    className="w-24 text-xs font-bold text-[#616218] focus:outline-none"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setIsRolloverConfirmOpen(true)}
-                  disabled={rolloverCandidates.length === 0}
-                  className="px-4 py-2.5 rounded-xl bg-[#616218] hover:bg-[#494900] disabled:opacity-50 text-white text-xs font-bold shadow-xs inline-flex items-center gap-2 transition-all cursor-pointer"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span>Review & Execute Rollover</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-[#797869] mr-1">Filter Class:</span>
-            {['all', ...SCHOOL_CLASSES].map((cls) => (
-              <button
-                key={cls}
-                type="button"
-                onClick={() => {
-                  setRolloverFilterClass(cls);
-                  setRolloverPage(1);
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                  rolloverFilterClass === cls
-                    ? 'bg-[#616218] text-white shadow-xs'
-                    : 'bg-white border border-[#c9c7b6] text-[#48482d] hover:bg-[#ece7d0]'
-                }`}
-              >
-                {cls === 'all' ? 'All Classes' : cls}
-              </button>
-            ))}
-          </div>
-
-          <div className="rounded-2xl border border-[#c9c7b6] bg-white overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-[#fbf8ed] border-b border-[#c9c7b6] text-[#1c1c14]">
-                    <th className="py-3 px-4 font-bold">Student</th>
-                    <th className="py-3 px-4 font-bold">Current Class</th>
-                    <th className="py-3 px-4 font-bold text-center">Annual Average</th>
-                    <th className="py-3 px-4 font-bold">Decision</th>
-                    <th className="py-3 px-4 font-bold">Target Progression</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#c9c7b6]/30">
-                  {(() => {
-                    const filtered = rolloverCandidates.filter(
-                      (c) => rolloverFilterClass === 'all' || c.currentClass === rolloverFilterClass
-                    );
-                    if (filtered.length === 0) {
-                      return (
-                        <tr>
-                          <td colSpan={5} className="py-8 text-center text-[#797869]">
-                            No students found for rollover in this filter.
-                          </td>
-                        </tr>
-                      );
-                    }
-                    const startIdx = (rolloverPage - 1) * rolloverPageSize;
-                    const paginated = filtered.slice(startIdx, startIdx + rolloverPageSize);
-
-                    return paginated.map((candidate) => {
-                      const promo = promotionsMap[candidate.id] || {
-                        action: candidate.suggestedAction,
-                        targetClass: candidate.suggestedClass,
-                        department: candidate.department || 'Science'
-                      };
-
-                      return (
-                        <tr key={candidate.id} className="hover:bg-[#fbf8ed]/40 transition-colors">
-                          <td className="py-3 px-4">
-                            <p className="font-bold text-[#1c1c14]">{candidate.name}</p>
-                            <p className="font-mono text-[11px] text-[#797869]">{candidate.admissionNumber || 'No ID'}</p>
-                          </td>
-                          <td className="py-3 px-4 font-semibold text-[#48482d]">
-                            {candidate.currentClass}
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                                candidate.averageScore >= 60
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : candidate.averageScore >= 45
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-red-100 text-red-800'
-                              }`}
-                            >
-                              {candidate.averageScore > 0 ? `${candidate.averageScore}%` : 'N/A'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4">
-                            <select
-                              value={promo.action}
-                              onChange={(e) => handlePromotionActionChange(candidate.id, e.target.value, candidate)}
-                              className="px-2.5 py-1.5 rounded-lg border border-[#c9c7b6] bg-white font-semibold text-xs text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20"
-                            >
-                              <option value="promote">
-                                {candidate.currentClass === 'SSS 3' ? 'Graduate (Alumni)' : `Promote (${candidate.suggestedClass})`}
-                              </option>
-                              <option value="repeat">Repeat ({candidate.currentClass})</option>
-                              {candidate.currentClass === 'SSS 3' && <option value="graduate">Graduate (Alumni)</option>}
-                            </select>
-                          </td>
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-2">
-                              {promo.action === 'promote' ? (
-                                <>
-                                  <ArrowRight className="w-3.5 h-3.5 text-[#616218] shrink-0" />
-                                  <span className="font-bold text-[#616218]">{promo.targetClass}</span>
-                                  {promo.targetClass === 'SSS 1' && (
-                                    <select
-                                      value={promo.department}
-                                      onChange={(e) => handlePromotionDeptChange(candidate.id, e.target.value)}
-                                      className="px-2 py-1 rounded-md border border-[#c9c7b6] bg-white text-[11px] font-semibold text-[#1c1c14]"
-                                    >
-                                      {SSS_DEPARTMENTS.map((dept) => (
-                                        <option key={dept} value={dept}>{dept}</option>
-                                      ))}
-                                    </select>
-                                  )}
-                                </>
-                              ) : promo.action === 'repeat' ? (
-                                <span className="text-[#797869] italic">Retains {candidate.currentClass}</span>
-                              ) : (
-                                <span className="text-emerald-700 font-bold">Graduated Alumni</span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    });
-                  })()}
-                </tbody>
-              </table>
-            </div>
-
-            <Pagination
-              currentPage={rolloverPage}
-              totalItems={
-                rolloverCandidates.filter(
-                  (c) => rolloverFilterClass === 'all' || c.currentClass === rolloverFilterClass
-                ).length
-              }
-              pageSize={rolloverPageSize}
-              onPageChange={setRolloverPage}
-              itemLabel="students"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Confirmation Modal for Session Rollover */}
+      {/* Modal to Add New Class */}
       <Modal
-        isOpen={isRolloverConfirmOpen}
-        onClose={() => setIsRolloverConfirmOpen(false)}
-        title="Confirm Academic Session Rollover"
+        isOpen={isAddClassModalOpen}
+        onClose={() => setIsAddClassModalOpen(false)}
+        title="Add New School Class"
       >
-        <div className="space-y-4 font-['Poppins',sans-serif]">
-          <div className="p-4 rounded-xl bg-[#faf8f0] border border-[#c9c7b6] space-y-2">
-            <h4 className="font-bold text-sm text-[#1c1c14]">Rollover Summary</h4>
-            <div className="grid grid-cols-3 gap-2 text-center pt-2">
-              <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200">
-                <p className="text-xs text-emerald-800">Promoted</p>
-                <p className="text-lg font-bold text-emerald-700">
-                  {Object.values(promotionsMap).filter((p) => p.action === 'promote').length}
-                </p>
-              </div>
-              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200">
-                <p className="text-xs text-amber-800">Repeating</p>
-                <p className="text-lg font-bold text-amber-700">
-                  {Object.values(promotionsMap).filter((p) => p.action === 'repeat').length}
-                </p>
-              </div>
-              <div className="p-2.5 rounded-lg bg-blue-50 border border-blue-200">
-                <p className="text-xs text-blue-800">Graduating</p>
-                <p className="text-lg font-bold text-blue-700">
-                  {Object.values(promotionsMap).filter((p) => p.action === 'graduate').length}
-                </p>
-              </div>
+        <form onSubmit={handleCreateClass} className="space-y-4 font-['Poppins',sans-serif]">
+          {addClassError && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+              {addClassError}
             </div>
-            <p className="text-xs text-[#797869] pt-2">
-              Advancing active academic session to: <span className="font-bold text-[#1c1c14]">{nextSessionInput}</span>
-            </p>
+          )}
+          <div>
+            <label className="block text-xs font-semibold text-[#1c1c14] mb-1.5">Class Name *</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Primary 1, JSS 1 Gold, SSS 1 Commercial"
+              value={newClassName}
+              onChange={(e) => setNewClassName(e.target.value)}
+              className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218]"
+            />
           </div>
-
-          <p className="text-xs text-red-600 font-semibold leading-relaxed">
-            Note: This action will update student classes and advance the school into the next academic session. Past attendance and grade history will remain preserved.
-          </p>
-
+          <div>
+            <label className="block text-xs font-semibold text-[#1c1c14] mb-1.5">Category</label>
+            <select
+              value={newClassCategory}
+              onChange={(e) => setNewClassCategory(e.target.value)}
+              className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218]"
+            >
+              <option value="Junior">Junior Secondary</option>
+              <option value="Senior">Senior Secondary</option>
+              <option value="Primary">Primary</option>
+              <option value="Pre-School">Pre-School / Nursery</option>
+            </select>
+          </div>
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
-              onClick={() => setIsRolloverConfirmOpen(false)}
-              className="px-4 py-2 border border-[#c9c7b6] text-[#48482d] hover:bg-[#ece7d0] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+              onClick={() => setIsAddClassModalOpen(false)}
+              className="px-4 py-2 border border-[#c9c7b6] text-[#48482d] hover:bg-[#ece7d0] rounded-lg text-xs font-semibold cursor-pointer"
             >
               Cancel
             </button>
             <button
-              type="button"
-              disabled={isRollingOver}
-              onClick={executeRollover}
-              className="px-4 py-2 bg-[#616218] hover:bg-[#494900] disabled:opacity-60 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              type="submit"
+              className="px-4 py-2 bg-[#616218] hover:bg-[#494900] text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer"
             >
-              {isRollingOver ? 'Processing...' : 'Confirm & Execute Rollover'}
+              Create Class
             </button>
           </div>
-        </div>
+        </form>
       </Modal>
 
       <Modal
@@ -1291,7 +871,7 @@ export function ClassScheduling() {
             </div>
 
             <div className="grid grid-cols-3 gap-2.5 p-3.5 rounded-lg bg-[#faf8f0] border border-[#c9c7b6]">
-              {SCHOOL_CLASSES.map((cls) => {
+              {availableClasses.map((cls) => {
                 const checked = subjectForm.allClasses || subjectForm.classes.includes(cls);
                 return (
                   <label

@@ -49,6 +49,7 @@ export const isServerSupabaseConfigured = Boolean(serverSupabase);
 
 export interface SchoolDatabase {
   users: any[];
+  classes: any[];
   subjects: any[];
   students: any[];
   teachers: any[];
@@ -177,6 +178,15 @@ async function hydrateFromSupabaseIfAvailable() {
       }));
     }
 
+    const { data: classes } = await serverSupabase.from('classes').select('*');
+    if (classes && classes.length > 0) {
+      db.classes = classes.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        category: c.category || (isSeniorClass(c.name) ? 'Senior' : 'Junior')
+      }));
+    }
+
     console.log(`[Al-Amin Store] Successfully hydrated state from Supabase PostgreSQL tables.`);
   } catch (err: any) {
     console.log(`[Al-Amin Store] Supabase tables not yet created or ready (${err?.message}). Running in-memory mode.`);
@@ -295,6 +305,7 @@ export const backendStore = {
   getBootstrapPayload(user?: any) {
     if (!user) {
       return {
+        classes: db.classes || [],
         subjects: db.subjects,
         students: [],
         teachers: [],
@@ -329,6 +340,7 @@ export const backendStore = {
       });
 
       return {
+        classes: db.classes || [],
         subjects: db.subjects.filter((s) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass))),
         students: studentObj ? [studentObj] : [],
         teachers: db.teachers.map(({ phone, email, qualification, staffId, ...safe }) => safe),
@@ -352,6 +364,7 @@ export const backendStore = {
       const assigned = teacherObj?.assignedClasses || [];
       const assignedClassNames = assigned.map((a: any) => a.class);
       return {
+        classes: db.classes || [],
         subjects: db.subjects,
         students: db.students.filter((s) => assignedClassNames.includes(s.class)),
         teachers: db.teachers,
@@ -372,6 +385,7 @@ export const backendStore = {
 
     // Admin role receives complete data
     return {
+      classes: db.classes || [],
       subjects: db.subjects,
       students: db.students,
       teachers: db.teachers,
@@ -533,6 +547,39 @@ export const backendStore = {
     return safeUser;
   },
 
+  getClasses() {
+    return db.classes || [];
+  },
+
+  addClass(classData: { name: string; category?: string }) {
+    const cleanName = String(classData.name || '').trim();
+    if (!cleanName) return { error: 'Class name is required.' };
+    const exists = (db.classes || []).some((c) => c.name.toLowerCase() === cleanName.toLowerCase());
+    if (exists) return { error: `Class "${cleanName}" already exists.` };
+    const newCls = {
+      id: `cls-${Date.now()}`,
+      name: cleanName,
+      category: classData.category || (isSeniorClass(cleanName) ? 'Senior' : 'Junior')
+    };
+    db.classes = [...(db.classes || []), newCls];
+    supabaseMirrorUpsert('classes', {
+      id: newCls.id,
+      name: newCls.name,
+      category: newCls.category
+    });
+    broadcastChange('classes', 'created');
+    return newCls;
+  },
+
+  deleteClass(id: string) {
+    const existing = (db.classes || []).find((c) => c.id === id);
+    if (!existing) return false;
+    db.classes = (db.classes || []).filter((c) => c.id !== id);
+    supabaseMirrorDelete('classes', id);
+    broadcastChange('classes', 'deleted');
+    return true;
+  },
+
   getSubjects() {
     return db.subjects;
   },
@@ -556,7 +603,9 @@ export const backendStore = {
     const cleanName = String(subjectData.name || '').trim();
     if (!cleanName) return null;
     const allClasses = Boolean(subjectData.allClasses);
-    const classes = allClasses ? [...SCHOOL_CLASSES] : (subjectData.classes || []);
+    const existingClassNames = (db.classes || []).map((c: any) => c.name);
+    const defaultClasses = existingClassNames.length > 0 ? existingClassNames : [...SCHOOL_CLASSES];
+    const classes = allClasses ? defaultClasses : (subjectData.classes || []);
     const seniorOnly = !allClasses && classes.length > 0 && classes.every((c: string) => isSeniorClass(c));
     const allDepartments = seniorOnly ? Boolean(subjectData.allDepartments) : true;
     const departments = seniorOnly
@@ -587,11 +636,13 @@ export const backendStore = {
 
   updateSubject(id: string, updates: any) {
     let target: any = null;
+    const existingClassNames = (db.classes || []).map((c: any) => c.name);
+    const defaultClasses = existingClassNames.length > 0 ? existingClassNames : [...SCHOOL_CLASSES];
     db.subjects = db.subjects.map((sub) => {
       if (sub.id !== id) return sub;
       const merged = { ...sub, ...updates };
       const allClasses = Boolean(merged.allClasses);
-      const classes = allClasses ? [...SCHOOL_CLASSES] : (merged.classes || []);
+      const classes = allClasses ? defaultClasses : (merged.classes || []);
       const seniorOnly = !allClasses && classes.length > 0 && classes.every((c: string) => isSeniorClass(c));
       const allDepartments = seniorOnly ? Boolean(merged.allDepartments) : true;
       const departments = seniorOnly
