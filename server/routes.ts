@@ -8,10 +8,12 @@ import {
 } from './auth.ts';
 import {
   backendStore,
-  resolveLocalUploadPath,
+  downloadFileFromBackendStorage,
+  isServerSupabaseConfigured,
   subscribeServerEvents,
   uploadFileToBackendStorage
 } from './store.ts';
+import { isPasswordResetEmailConfigured, sendPasswordResetEmail } from './mailer.ts';
 
 const router = Router();
 const upload = multer({
@@ -19,8 +21,38 @@ const upload = multer({
   limits: { fileSize: 15 * 1024 * 1024 }
 });
 
+function respondWithDatabaseError(res: Response, resource: string, error: unknown) {
+  console.error(`[Al-Amin API] Failed to access ${resource}:`, error);
+  const status = isServerSupabaseConfigured ? 500 : 503;
+  return res.status(status).json({
+    error: isServerSupabaseConfigured
+      ? `Failed to access ${resource}.`
+      : 'Database storage is not configured.'
+  });
+}
+
 const paramStr = (val: string | string[] | undefined): string =>
   Array.isArray(val) ? String(val[0] || '') : String(val || '');
+
+const passwordResetAttempts = new Map<string, { count: number; resetAt: number }>();
+const passwordResetWindowMs = 15 * 60 * 1000;
+
+function isPasswordResetRateLimited(req: Request) {
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  if (passwordResetAttempts.size > 10000) {
+    passwordResetAttempts.forEach((attempt, address) => {
+      if (now >= attempt.resetAt) passwordResetAttempts.delete(address);
+    });
+  }
+  const current = passwordResetAttempts.get(key);
+  if (!current || now >= current.resetAt) {
+    passwordResetAttempts.set(key, { count: 1, resetAt: now + passwordResetWindowMs });
+    return false;
+  }
+  current.count += 1;
+  return current.count > 5;
+}
 
 const paginateList = <T,>(items: T[], req: Request, extra: Record<string, unknown> = {}) => {
   const query = req.query as Record<string, string | undefined>;
@@ -45,6 +77,20 @@ const paginateList = <T,>(items: T[], req: Request, extra: Record<string, unknow
     limit,
     totalPages,
     ...extra
+  };
+};
+
+const getDatabasePagination = (req: Request): { page?: number; limit?: number } => {
+  const query = req.query as Record<string, string | undefined>;
+  if (!query.page && !query.limit) return {};
+
+  const requestedPage = Number(query.page);
+  const requestedLimit = Number(query.limit);
+  return {
+    page: Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1,
+    limit: Number.isInteger(requestedLimit) && requestedLimit > 0
+      ? Math.min(requestedLimit, 100)
+      : 20
   };
 };
 
@@ -73,8 +119,12 @@ router.get('/health', (_req: Request, res: Response) => {
   });
 });
 
-router.get('/bootstrap', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  res.json(backendStore.getBootstrapPayload(req.user));
+router.get('/bootstrap', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    res.json(await backendStore.getBootstrapPayload(req.user));
+  } catch (error) {
+    respondWithDatabaseError(res, 'bootstrap data', error);
+  }
 });
 
 router.get('/events', requireAuth, (req: AuthenticatedRequest, res: Response) => {
@@ -101,24 +151,28 @@ router.get('/events', requireAuth, (req: AuthenticatedRequest, res: Response) =>
 
 /* ── Auth ────────────────────────────────────────────────────────────────── */
 
-router.post('/auth/login', (req: Request, res: Response) => {
+router.post('/auth/login', async (req: Request, res: Response) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required.' });
   }
-  const user = backendStore.authenticate(email, password);
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid email or password.' });
-  }
-  if (user.role === 'teacher') {
-    const teacher = backendStore.getTeacherByEmailOrId(user.email, user.teacherId);
-    if (teacher) {
-      (user as any).classTeacherOf = teacher.classTeacherOf || [];
-      (user as any).teacherId = teacher.id;
+  try {
+    const user = await backendStore.authenticateInDatabase(email, password);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
     }
+    if (user.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecordByEmailOrId(user.email, user.teacherId);
+      if (teacher) {
+        (user as any).classTeacherOf = teacher.classTeacherOf || [];
+        (user as any).teacherId = teacher.id;
+      }
+    }
+    const token = signAuthToken(user);
+    res.json({ token, user });
+  } catch (error) {
+    respondWithDatabaseError(res, 'authentication', error);
   }
-  const token = signAuthToken(user);
-  res.json({ token, user });
 });
 
 router.post('/auth/register', (_req: Request, res: Response) => {
@@ -127,42 +181,85 @@ router.post('/auth/register', (_req: Request, res: Response) => {
   });
 });
 
-router.get('/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  const freshUser = req.user ? backendStore.getUserById(req.user.id) : null;
-  const user = freshUser || req.user;
-  if (user && user.role === 'teacher') {
-    const teacher = backendStore.getTeacherByEmailOrId(user.email, user.teacherId);
-    if (teacher) {
-      (user as any).classTeacherOf = teacher.classTeacherOf || [];
-      (user as any).teacherId = teacher.id;
+router.get('/auth/me', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = req.user ? await backendStore.getUserByIdFromDatabase(req.user.id) : null;
+    if (!user) return res.status(401).json({ error: 'Account no longer exists.' });
+    if (user.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecordByEmailOrId(user.email, user.teacherId);
+      if (teacher) {
+        (user as any).classTeacherOf = teacher.classTeacherOf || [];
+        (user as any).teacherId = teacher.id;
+      }
     }
+    res.json({ user });
+  } catch (error) {
+    respondWithDatabaseError(res, 'user profile', error);
   }
-  res.json({ user });
 });
 
 router.post('/auth/logout', (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-router.post('/auth/forgot-password', (req: Request, res: Response) => {
-  const { identifier } = req.body || {};
-  const result = backendStore.generatePasswordResetOtp(identifier);
-  if (result.error) {
-    return res.status(404).json(result);
+router.post('/auth/forgot-password', async (req: Request, res: Response) => {
+  if (isPasswordResetRateLimited(req)) {
+    return res.status(429).json({ error: 'Too many password reset requests. Try again later.' });
   }
-  res.json(result);
+  if (!isPasswordResetEmailConfigured()) {
+    return res.status(503).json({ error: 'Password reset is temporarily unavailable.' });
+  }
+
+  const { identifier } = req.body || {};
+  try {
+    const reset = await backendStore.generatePasswordResetOtp(identifier);
+    if (reset) {
+      try {
+        await sendPasswordResetEmail(reset.email, reset.otp);
+      } catch (error) {
+        backendStore.discardPasswordResetOtp(reset.email);
+        console.error('Password reset email delivery failed:', error);
+      }
+    }
+  } catch (error) {
+    return respondWithDatabaseError(res, 'password reset', error);
+  }
+  res.status(202).json({
+    message: 'If an account matches that identifier and email delivery succeeds, a verification code will be sent to its registered email.'
+  });
 });
 
-router.post('/auth/reset-password', (req: Request, res: Response) => {
-  const { identifier, otp, newPassword } = req.body || {};
-  const result = backendStore.resetPasswordWithOtp(identifier, otp, newPassword);
-  if (result.error) {
-    return res.status(400).json(result);
+router.post('/auth/reset-password', async (req: Request, res: Response) => {
+  if (isPasswordResetRateLimited(req)) {
+    return res.status(429).json({ error: 'Too many password reset attempts. Try again later.' });
   }
-  res.json(result);
+  const { identifier, otp, newPassword } = req.body || {};
+  try {
+    const result = await backendStore.resetPasswordWithOtp(identifier, otp, newPassword);
+    if (result.error) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (error) {
+    respondWithDatabaseError(res, 'password reset', error);
+  }
 });
 
 const handleAvatarUpload = async (req: AuthenticatedRequest, res: Response) => {
+  const targetUserId = paramStr(req.params.id) || req.user?.id || '';
+  const routePath = String(req.route?.path || '');
+  const isAdmin = req.user?.role === 'admin';
+  const ownsTarget = routePath.startsWith('/teachers/')
+    ? req.user?.role === 'teacher' && req.user.teacherId === targetUserId
+    : routePath.startsWith('/students/')
+    ? req.user?.role === 'student' && req.user.studentId === targetUserId
+    : routePath.startsWith('/users/')
+    ? req.user?.id === targetUserId
+    : !req.params.id || req.user?.id === targetUserId;
+  if (!isAdmin && !ownsTarget) {
+    return res.status(403).json({ error: 'You can only update your own profile photo.' });
+  }
+
   let file = req.file;
   if (!file && req.files) {
     if (Array.isArray(req.files) && req.files.length > 0) {
@@ -188,12 +285,12 @@ const handleAvatarUpload = async (req: AuthenticatedRequest, res: Response) => {
       avatarUrl = uploaded.fileUrl || `/files/download/${uploaded.filePath}`;
     }
 
-    const targetUserId = paramStr(req.params.id) || req.user?.id || '';
     if (!targetUserId) {
       return res.status(400).json({ error: 'User target could not be identified.' });
     }
 
-    const updatedUser = backendStore.updateUserAvatar(targetUserId, avatarUrl);
+    const updatedUser = await backendStore.updateUserAvatarInDatabase(targetUserId, avatarUrl);
+    if (!updatedUser) return res.status(404).json({ error: 'User account not found.' });
     res.json({ success: true, avatarUrl, user: updatedUser });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to update avatar photo.' });
@@ -226,227 +323,312 @@ router.put('/users/:id/avatar', requireAuth, upload.any(), handleAvatarUpload);
 
 /* ── Classes ─────────────────────────────────────────────────────────────── */
 
-router.get('/classes', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getClasses());
-});
-
-router.post('/classes', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
-  const result = backendStore.addClass(req.body || {});
-  if ((result as any).error) {
-    return res.status(400).json(result);
+router.get('/classes', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    res.json(await backendStore.getClasses());
+  } catch (error) {
+    respondWithDatabaseError(res, 'classes', error);
   }
-  res.status(201).json(result);
 });
 
-router.post('/classes/:id/class-teacher', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.post('/classes', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
+  try {
+    const result = await backendStore.addClass(req.body || {});
+    if ((result as any).error) return res.status(400).json(result);
+    res.status(201).json(result);
+  } catch (error) {
+    respondWithDatabaseError(res, 'classes', error);
+  }
+});
+
+router.post('/classes/:id/class-teacher', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { teacherId } = req.body || {};
   const classIdOrName = paramStr(req.params.id);
-  const result = backendStore.assignClassTeacher(classIdOrName, teacherId);
-  if ((result as any).error) {
-    return res.status(400).json(result);
+  try {
+    const result = await backendStore.assignClassTeacher(classIdOrName, teacherId);
+    if ((result as any).error) return res.status(400).json(result);
+    res.json(result);
+  } catch (error) {
+    respondWithDatabaseError(res, 'class teacher assignment', error);
   }
-  res.json(result);
 });
 
-router.put('/classes/:id', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.put('/classes/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const classIdOrName = paramStr(req.params.id);
   const { teacherId, classTeacherId } = req.body || {};
   const targetTeacherId = classTeacherId !== undefined ? classTeacherId : teacherId;
   if (targetTeacherId !== undefined) {
-    const result = backendStore.assignClassTeacher(classIdOrName, targetTeacherId);
-    if ((result as any).error) {
-      return res.status(400).json(result);
+    try {
+      const result = await backendStore.assignClassTeacher(classIdOrName, targetTeacherId);
+      if ((result as any).error) return res.status(400).json(result);
+      return res.json(result);
+    } catch (error) {
+      return respondWithDatabaseError(res, 'class teacher assignment', error);
     }
-    return res.json(result);
   }
   res.json({ ok: true });
 });
 
-router.delete('/classes/:id', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
-  const ok = backendStore.deleteClass(paramStr(req.params.id));
-  if (!ok) return res.status(404).json({ error: 'Class not found.' });
-  res.json({ ok: true });
+router.delete('/classes/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
+  try {
+    const ok = await backendStore.deleteClass(paramStr(req.params.id));
+    if (!ok) return res.status(404).json({ error: 'Class not found.' });
+    res.json({ ok: true });
+  } catch (error) {
+    respondWithDatabaseError(res, 'classes', error);
+  }
 });
 
 /* ── Subjects ────────────────────────────────────────────────────────────── */
 
-router.get('/subjects', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  let subjects = backendStore.getSubjects();
-  if (req.user?.role === 'student') {
-    const student = backendStore.getStudentById(req.user.studentId || '');
-    const enrolled = student?.enrolledSubjects || [];
-    if (enrolled.length > 0) {
-      subjects = subjects.filter((s: any) => enrolled.includes(s.name));
-    } else {
-      const studentClass = student?.class || '';
-      subjects = subjects.filter(
-        (s: any) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass))
+router.get('/subjects', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    let subjects = await backendStore.getSubjects();
+    if (req.user?.role === 'student') {
+      const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
+      const enrolled = student?.enrolledSubjects || [];
+      if (enrolled.length > 0) {
+        subjects = subjects.filter((s: any) => enrolled.includes(s.name));
+      } else {
+        const studentClass = student?.class || '';
+        subjects = subjects.filter(
+          (s: any) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass))
+        );
+      }
+    } else if (req.user?.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
+      const assigned = teacher?.assignedClasses || [];
+      const assignedSubjects = Array.from(new Set(assigned.map((a: any) => a.subject).filter(Boolean)));
+      if (assignedSubjects.length > 0) {
+        subjects = subjects.filter((s: any) => assignedSubjects.includes(s.name));
+      }
+    }
+
+    const { class: className, department } = req.query as Record<string, string | undefined>;
+    if (className) {
+      subjects = subjects.filter((subject: any) =>
+        subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(className))
       );
     }
-  } else if (req.user?.role === 'teacher') {
-    const teacher = backendStore.getTeacherById(req.user.teacherId || '');
-    const assigned = teacher?.assignedClasses || [];
-    const assignedSubjects = Array.from(new Set(assigned.map((a: any) => a.subject).filter(Boolean)));
-    if (assignedSubjects.length > 0) {
-      subjects = subjects.filter((s: any) => assignedSubjects.includes(s.name));
+    if (department) {
+      subjects = subjects.filter((subject: any) =>
+        subject.allDepartments || !Array.isArray(subject.departments) || subject.departments.includes(department)
+      );
     }
+    res.json(subjects);
+  } catch (error) {
+    respondWithDatabaseError(res, 'subjects', error);
   }
-
-  const { class: className, department } = req.query as Record<string, string | undefined>;
-  if (className) {
-    subjects = subjects.filter((subject: any) =>
-      subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(className))
-    );
-  }
-  if (department) {
-    subjects = subjects.filter((subject: any) =>
-      subject.allDepartments || !Array.isArray(subject.departments) || subject.departments.includes(department)
-    );
-  }
-  res.json(subjects);
 });
 
-router.post('/subjects', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const created = backendStore.addSubject(req.body || {});
-  if (!created) {
-    return res.status(400).json({ error: 'Subject name is required.' });
+router.post('/subjects', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+  try {
+    const created = await backendStore.addSubject(req.body || {});
+    if (!created) return res.status(400).json({ error: 'Subject name is required.' });
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'subjects', error);
   }
-  res.status(201).json(created);
 });
 
-router.put('/subjects/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const updated = backendStore.updateSubject(paramStr(req.params.id), req.body || {});
-  if (!updated) return res.status(404).json({ error: 'Subject not found.' });
-  res.json(updated);
+router.put('/subjects/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+  try {
+    const updated = await backendStore.updateSubject(paramStr(req.params.id), req.body || {});
+    if (!updated) return res.status(404).json({ error: 'Subject not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'subjects', error);
+  }
 });
 
-router.delete('/subjects/:id', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.delete('/subjects/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.deleteSubject(id);
-  if (!deleted) return res.status(404).json({ error: 'Subject not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.deleteSubject(id);
+    if (!deleted) return res.status(404).json({ error: 'Subject not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'subjects', error);
+  }
 });
 
 /* ── Students ────────────────────────────────────────────────────────────── */
 
-router.get('/students', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  if (req.user?.role === 'student') {
-    const student = backendStore.getStudentById(req.user.studentId || '');
-    return res.json(student ? [student] : []);
-  }
-
-  const { search, class: className, department, subject, status, page, limit } = req.query as Record<string, string>;
-  let allowedClasses: string[] | undefined = undefined;
-
-  if (req.user?.role === 'teacher') {
-    const teacher = backendStore.getTeacherById(req.user.teacherId || '');
-    const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
-    if (teacherClasses.length > 0) {
-      allowedClasses = teacherClasses;
+router.get('/students', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.user?.role === 'student') {
+      const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
+      return res.json(student ? [student] : []);
     }
+    const { search, class: className, department, subject, status, page, limit } = req.query as Record<string, string>;
+    let allowedClasses: string[] | undefined;
+
+    if (req.user?.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
+      allowedClasses = [...new Set([
+        ...(teacher?.assignedClasses || []).map((ac: any) => ac.class),
+        ...(teacher?.classTeacherOf || [])
+      ])];
+    }
+
+    const result = await backendStore.getStudents({
+      search,
+      class: className,
+      department,
+      subject,
+      status,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      allowedClasses
+    });
+    res.json(result);
+  } catch (error) {
+    respondWithDatabaseError(res, 'students', error);
   }
-
-  const result = backendStore.getStudents({
-    search,
-    class: className,
-    department,
-    subject,
-    status,
-    page: page ? Number(page) : undefined,
-    limit: limit ? Number(limit) : undefined,
-    allowedClasses
-  });
-
-  res.json(result);
 });
 
-router.get('/students/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+router.get('/students/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const targetId = paramStr(req.params.id);
   if (req.user?.role === 'student' && req.user.studentId !== targetId) {
     return res.status(403).json({ error: 'Access denied. You can only view your own student record.' });
   }
-  const student = backendStore.getStudentById(targetId);
-  if (!student) return res.status(404).json({ error: 'Student not found.' });
-  res.json(student);
+  try {
+    const student = await backendStore.getStudentDirectoryRecord(targetId);
+    if (!student) return res.status(404).json({ error: 'Student not found.' });
+    if (req.user?.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
+      const assigned = (teacher?.assignedClasses || []).some((item: any) => item.class === student.class) ||
+        (teacher?.classTeacherOf || []).includes(student.class);
+      if (!assigned) return res.status(403).json({ error: 'You can only view students in your assigned classes.' });
+    }
+    res.json(student);
+  } catch (error) {
+    respondWithDatabaseError(res, 'students', error);
+  }
 });
 
-router.post('/students', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.post('/students', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { name, email, portalPassword, password } = req.body || {};
   if (!name) return res.status(400).json({ error: 'Student name is required.' });
   const suppliedPassword = portalPassword || password;
   if (suppliedPassword && String(suppliedPassword).trim().length < 6) {
     return res.status(400).json({ error: 'Portal password must be at least 6 characters.' });
   }
-  if (email && backendStore.isEmailTaken(email)) {
-    return res.status(409).json({ error: `A portal account with email "${email}" already exists.` });
+  try {
+    if (email && await backendStore.isEmailTakenInDatabase(email)) {
+      return res.status(409).json({ error: `A portal account with email "${email}" already exists.` });
+    }
+    const created = await backendStore.createStudentInDatabase(req.body);
+    if (created && 'error' in created) return res.status(409).json(created);
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'students', error);
   }
-  const created = backendStore.addStudent(req.body);
-  res.status(201).json(created);
 });
 
-router.put('/students/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const updated = backendStore.updateStudent(paramStr(req.params.id), req.body || {});
-  if (!updated) return res.status(404).json({ error: 'Student not found.' });
-  res.json(updated);
+router.put('/students/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
+  try {
+    const updated = await backendStore.updateStudentInDatabase(paramStr(req.params.id), req.body || {});
+    if (!updated) return res.status(404).json({ error: 'Student not found.' });
+    if ('error' in updated) return res.status(409).json(updated);
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'students', error);
+  }
 });
 
-router.post('/students/:id/credentials', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.post('/students/:id/credentials', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { email, password } = req.body || {};
   if (password && String(password).trim().length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters.' });
   }
-  const result = backendStore.setPortalCredentials('student', paramStr(req.params.id), email, password);
-  if (!result) return res.status(404).json({ error: 'Student not found.' });
-  if ('error' in result) return res.status(409).json({ error: result.error });
-  res.json(result);
+  try {
+    const result = await backendStore.setPortalCredentialsInDatabase('student', paramStr(req.params.id), email, password);
+    if (!result) return res.status(404).json({ error: 'Student not found.' });
+    if ('error' in result) return res.status(409).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    respondWithDatabaseError(res, 'student credentials', error);
+  }
 });
 
-router.post('/students/:id/enroll-subject', requireAuth, (req: Request, res: Response) => {
+router.post('/students/:id/enroll-subject', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const { subject } = req.body || {};
   if (!subject) return res.status(400).json({ error: 'Subject name is required.' });
-  const updated = backendStore.enrollStudentSubject(paramStr(req.params.id), subject);
-  if (!updated) return res.status(404).json({ error: 'Student not found.' });
-  res.json(updated);
+  const studentId = paramStr(req.params.id);
+  try {
+    if (req.user?.role === 'teacher') {
+      const [student, teacher] = await Promise.all([
+        backendStore.getStudentDirectoryRecord(studentId),
+        backendStore.getTeacherDirectoryRecord(req.user.teacherId || '')
+      ]);
+      const isAssigned = (teacher?.assignedClasses || []).some(
+        (assignment: any) => assignment.class === student?.class && assignment.subject === subject
+      );
+      if (!isAssigned) return res.status(403).json({ error: 'You can only enroll students in your assigned classes and subjects.' });
+    }
+    const updated = await backendStore.enrollStudentSubjectInDatabase(studentId, subject);
+    if (!updated) return res.status(404).json({ error: 'Student not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'students', error);
+  }
 });
 
-router.delete('/students/:id', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.delete('/students/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.deleteStudent(id);
-  if (!deleted) return res.status(404).json({ error: 'Student not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.deleteStudentFromDatabase(id);
+    if (!deleted) return res.status(404).json({ error: 'Student not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'students', error);
+  }
 });
 
 /* ── Teachers ────────────────────────────────────────────────────────────── */
 
-router.get('/teachers', requireAuth, (req: Request, res: Response) => {
+router.get('/teachers', requireAuth, async (req: Request, res: Response) => {
   const { search, class: className, subject, status, page, limit } = req.query as Record<string, string>;
-  const result = backendStore.getTeachers({
-    search,
-    class: className,
-    subject,
-    status,
-    page: page ? Number(page) : undefined,
-    limit: limit ? Number(limit) : undefined
-  });
-  res.json(result);
+  try {
+    const result = await backendStore.getTeachers({
+      search,
+      class: className,
+      subject,
+      status,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined
+    });
+    res.json(result);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teachers', error);
+  }
 });
 
-router.get('/teachers/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+router.get('/teachers/me', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   if (req.user?.role !== 'teacher') {
     return res.status(403).json({ error: 'Only teachers can access their teacher profile.' });
   }
-  const teacher = backendStore.getTeacherByEmailOrId(req.user.email, req.user.teacherId);
-  if (!teacher) return res.status(404).json({ error: 'Teacher profile not found.' });
-  res.json(teacher);
+  try {
+    const teacher = await backendStore.getTeacherDirectoryRecordByEmailOrId(req.user.email, req.user.teacherId);
+    if (!teacher) return res.status(404).json({ error: 'Teacher profile not found.' });
+    res.json(teacher);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teachers', error);
+  }
 });
 
-router.get('/teachers/:id', requireAuth, (req: Request, res: Response) => {
-  const teacher = backendStore.getTeacherById(paramStr(req.params.id));
-  if (!teacher) return res.status(404).json({ error: 'Teacher not found.' });
-  res.json(teacher);
+router.get('/teachers/:id', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const teacher = await backendStore.getTeacherDirectoryRecord(paramStr(req.params.id));
+    if (!teacher) return res.status(404).json({ error: 'Teacher not found.' });
+    res.json(teacher);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teachers', error);
+  }
 });
 
-router.post('/teachers', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.post('/teachers', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { name, email, portalPassword, password } = req.body || {};
   if (!name) return res.status(400).json({ error: 'Teacher name is required.' });
   if (!email) return res.status(400).json({ error: 'Teacher school email is required.' });
@@ -454,43 +636,61 @@ router.post('/teachers', requireAuth, requireRole('admin'), (req: Request, res: 
   if (suppliedPassword && String(suppliedPassword).trim().length < 6) {
     return res.status(400).json({ error: 'Portal password must be at least 6 characters.' });
   }
-  if (backendStore.isEmailTaken(email)) {
-    return res.status(409).json({ error: `A portal account with email "${email}" already exists.` });
+  try {
+    if (await backendStore.isEmailTakenInDatabase(email)) {
+      return res.status(409).json({ error: `A portal account with email "${email}" already exists.` });
+    }
+    const created = await backendStore.createTeacherInDatabase(req.body);
+    if (created && 'error' in created) return res.status(409).json(created);
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teachers', error);
   }
-  const created = backendStore.addTeacher(req.body);
-  res.status(201).json(created);
 });
 
-router.post('/teachers/:id/credentials', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.post('/teachers/:id/credentials', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { email, password } = req.body || {};
   if (password && String(password).trim().length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters.' });
   }
-  const result = backendStore.setPortalCredentials('teacher', paramStr(req.params.id), email, password);
-  if (!result) return res.status(404).json({ error: 'Teacher not found.' });
-  if ('error' in result) return res.status(409).json({ error: result.error });
-  res.json(result);
+  try {
+    const result = await backendStore.setPortalCredentialsInDatabase('teacher', paramStr(req.params.id), email, password);
+    if (!result) return res.status(404).json({ error: 'Teacher not found.' });
+    if ('error' in result) return res.status(409).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teacher credentials', error);
+  }
 });
 
-router.put('/teachers/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const updated = backendStore.updateTeacher(paramStr(req.params.id), req.body || {});
-  if (!updated) return res.status(404).json({ error: 'Teacher not found.' });
-  res.json(updated);
+router.put('/teachers/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+  try {
+    const updated = await backendStore.updateTeacherInDatabase(paramStr(req.params.id), req.body || {});
+    if (!updated) return res.status(404).json({ error: 'Teacher not found.' });
+    if ('error' in updated) return res.status(409).json(updated);
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teachers', error);
+  }
 });
 
-router.post('/teachers/:id/assign-class', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.post('/teachers/:id/assign-class', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const body = req.body || {};
   const className = String(body.class || body.className || body.classSubject?.class || '');
   const subject = String(body.subject || body.subjectName || body.classSubject?.subject || '');
   if (!className || !subject) {
     return res.status(400).json({ error: 'Both class and subject are required.' });
   }
-  const updated = backendStore.assignTeacherClass(paramStr(req.params.id), { class: className, subject });
-  if (!updated) return res.status(404).json({ error: 'Teacher not found.' });
-  res.json(updated);
+  try {
+    const updated = await backendStore.assignTeacherClassInDatabase(paramStr(req.params.id), { class: className, subject });
+    if (!updated) return res.status(404).json({ error: 'Teacher not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teachers', error);
+  }
 });
 
-router.delete('/teachers/:id/assign-class', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.delete('/teachers/:id/assign-class', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   let className = String(req.body?.class || req.query?.class || '');
   let subject = String(req.body?.subject || req.query?.subject || '');
 
@@ -519,151 +719,243 @@ router.delete('/teachers/:id/assign-class', requireAuth, requireRole('admin'), (
   if (!className || !subject) {
     return res.status(400).json({ error: 'Both class and subject are required.' });
   }
-  const updated = backendStore.removeTeacherClass(paramStr(req.params.id), { class: className, subject });
-  if (!updated) return res.status(404).json({ error: 'Teacher not found.' });
-  res.json(updated);
+  try {
+    const updated = await backendStore.removeTeacherClassInDatabase(paramStr(req.params.id), { class: className, subject });
+    if (!updated) return res.status(404).json({ error: 'Teacher not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teachers', error);
+  }
 });
 
-router.post('/teachers/:id/class-teacher-of', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.post('/teachers/:id/class-teacher-of', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const teacherId = paramStr(req.params.id);
   const { classes } = req.body || {};
-  const result = backendStore.setTeacherClassTeacherOf(teacherId, Array.isArray(classes) ? classes : []);
-  if ((result as any).error) {
-    return res.status(400).json(result);
+  try {
+    const result = await backendStore.setTeacherClassTeacherOf(teacherId, Array.isArray(classes) ? classes : []);
+    if ((result as any).error) return res.status(400).json(result);
+    res.json(result);
+  } catch (error) {
+    respondWithDatabaseError(res, 'class teacher assignment', error);
   }
-  res.json(result);
 });
 
-router.delete('/teachers/:id', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.delete('/teachers/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.deleteTeacher(id);
-  if (!deleted) return res.status(404).json({ error: 'Teacher not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.deleteTeacherFromDatabase(id);
+    if (!deleted) return res.status(404).json({ error: 'Teacher not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'teacher class assignment', error);
+  }
 });
 
 /* ── Timetable & Alerts ──────────────────────────────────────────────────── */
 
-router.get('/timetable', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+router.get('/timetable', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const queryClass = typeof req.query.class === 'string' ? req.query.class : undefined;
-  if (req.user?.role === 'student') {
-    const student = backendStore.getStudentById(req.user.studentId || '');
-    const studentClass = student?.class || queryClass;
-    return res.json(backendStore.getTimetableSlots(studentClass));
+  try {
+    if (req.user?.role === 'student') {
+      const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
+      if (!student) return res.status(404).json({ error: 'Student profile not found.' });
+      return res.json(await backendStore.getTimetableSlots(student.class));
+    }
+    if (req.user?.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
+      const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
+      const allSlots = await backendStore.getTimetableSlots(queryClass);
+      return res.json(
+        allSlots.filter(
+          (t: any) =>
+            t.teacherId === req.user?.teacherId ||
+            (teacher?.name && t.teacherName === teacher.name) ||
+            (teacherClasses.length > 0 && teacherClasses.includes(t.class))
+        )
+      );
+    }
+    res.json(await backendStore.getTimetableSlots(queryClass));
+  } catch (error) {
+    respondWithDatabaseError(res, 'student or teacher profile', error);
   }
-  if (req.user?.role === 'teacher') {
-    const teacher = backendStore.getTeacherById(req.user.teacherId || '');
-    const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
-    const allSlots = backendStore.getTimetableSlots(queryClass);
-    return res.json(
-      allSlots.filter(
-        (t: any) =>
-          t.teacherId === req.user?.teacherId ||
-          (teacher?.name && t.teacher === teacher.name) ||
-          (teacherClasses.length > 0 && teacherClasses.includes(t.class))
-      )
-    );
+});
+
+router.post('/timetable', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+  try {
+    const created = await backendStore.addTimetableSlot(req.body || {});
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'classes', error);
   }
-  res.json(backendStore.getTimetableSlots(queryClass));
 });
 
-router.post('/timetable', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const created = backendStore.addTimetableSlot(req.body || {});
-  res.status(201).json(created);
+router.put('/timetable/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+  try {
+    const updated = await backendStore.updateTimetableSlot(paramStr(req.params.id), req.body || {});
+    if (!updated) return res.status(404).json({ error: 'Timetable slot not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'timetable', error);
+  }
 });
 
-router.put('/timetable/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const updated = backendStore.updateTimetableSlot(paramStr(req.params.id), req.body || {});
-  if (!updated) return res.status(404).json({ error: 'Timetable slot not found.' });
-  res.json(updated);
-});
-
-router.delete('/timetable/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.delete('/timetable/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.deleteTimetableSlot(id);
-  if (!deleted) return res.status(404).json({ error: 'Timetable slot not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.deleteTimetableSlot(id);
+    if (!deleted) return res.status(404).json({ error: 'Timetable slot not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'timetable', error);
+  }
 });
 
-router.post('/timetable/reschedule', requireAuth, requireRole('admin', 'teacher'), (req: AuthenticatedRequest, res: Response) => {
+router.post('/timetable/reschedule', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const { slotId, targetDay, targetStartTime, targetEndTime, actorTeacherName } = req.body || {};
   if (!slotId || !targetDay || !targetStartTime || !targetEndTime) {
     return res.status(400).json({ error: 'slotId, targetDay, targetStartTime, and targetEndTime are required.' });
   }
   const actor = actorTeacherName || req.user?.name || 'Teaching Staff';
-  const result = backendStore.rescheduleTeacherSlot(slotId, targetDay, targetStartTime, targetEndTime, actor);
-  if (!result.success) {
-    return res.status(409).json(result);
+  try {
+    const result = await backendStore.rescheduleTeacherSlot(slotId, targetDay, targetStartTime, targetEndTime, actor);
+    if (!result.success) {
+      return res.status(409).json(result);
+    }
+    res.json(result);
+  } catch (error) {
+    respondWithDatabaseError(res, 'timetable reschedule', error);
   }
-  res.json(result);
 });
 
-router.get('/alerts', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+router.get('/alerts', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const role = req.user?.role;
-  const alerts = backendStore.getAlerts().filter((alert: any) =>
-    !alert.targetRole || alert.targetRole === 'all' || alert.targetRole === role
-  );
-  res.json(alerts);
+  try {
+    res.json(await backendStore.getAlerts(role));
+  } catch (error) {
+    respondWithDatabaseError(res, 'alerts', error);
+  }
 });
 
-router.delete('/alerts/:id', requireAuth, (req: Request, res: Response) => {
+router.delete('/alerts/:id', requireAuth, async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.dismissAlert(id);
-  if (!deleted) return res.status(404).json({ error: 'Alert not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.dismissAlert(id);
+    if (!deleted) return res.status(404).json({ error: 'Alert not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'alerts', error);
+  }
 });
 
 /* ── Attendance ──────────────────────────────────────────────────────────── */
 
-router.get('/attendance', requireAuth, (req: Request, res: Response) => {
-  const { date, class: className } = req.query as Record<string, string | undefined>;
-  const attendance = backendStore.getAttendance();
-  const filteredAttendance = Object.fromEntries(
-    Object.entries(attendance).filter(([, entry]: [string, any]) =>
-      (!date && !className) ||
-      Boolean(
-        entry &&
-        (!date || entry.date === date) &&
-        (!className || (entry.className || entry.class) === className)
-      )
-    )
-  );
-  res.json(filteredAttendance);
+router.get('/attendance', requireAuth, async (req: Request, res: Response) => {
+  const { date, class: requestedClass } = req.query as Record<string, string | undefined>;
+  try {
+    const user = (req as AuthenticatedRequest).user;
+    if (user?.role === 'student') {
+      const student = await backendStore.getStudentDirectoryRecord(user.studentId || '');
+      if (!student) return res.status(404).json({ error: 'Student profile not found.' });
+      const attendance = await backendStore.getAttendance(date, student.class);
+      res.json(Object.fromEntries(Object.entries(attendance).map(([key, entry]: [string, any]) => [
+        key,
+        { ...entry, records: { [student.id]: entry.records?.[student.id] } }
+      ])));
+      return;
+    }
+    if (user?.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecord(user.teacherId || '');
+      const assignedClasses = [...new Set([
+        ...(teacher?.assignedClasses || []).map((assignment: any) => assignment.class),
+        ...(teacher?.classTeacherOf || [])
+      ].filter(Boolean))];
+      if (requestedClass && !assignedClasses.includes(requestedClass)) {
+        return res.status(403).json({ error: 'You can only view attendance for your assigned classes.' });
+      }
+      const classes = requestedClass ? [requestedClass] : assignedClasses;
+      const rows = await Promise.all(classes.map((className) => backendStore.getAttendance(date, className)));
+      res.json(Object.assign({}, ...rows));
+      return;
+    }
+    res.json(await backendStore.getAttendance(date, requestedClass));
+  } catch (error) {
+    respondWithDatabaseError(res, 'attendance', error);
+  }
 });
 
-router.post('/attendance', requireAuth, requireRole('admin', 'teacher'), (req: AuthenticatedRequest, res: Response) => {
+router.post('/attendance', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const { date, className, submittedBy, records } = req.body || {};
   if (!date || !className || !records) {
     return res.status(400).json({ error: 'date, className, and records are required.' });
   }
 
   // Authorization check: Only admin or the assigned class teacher for this class can submit attendance
-  if (req.user?.role !== 'admin') {
-    const teacher = backendStore.getTeacherByEmailOrId(req.user?.email, req.user?.teacherId);
-    const assignedClasses = teacher?.classTeacherOf || [];
-    if (!assignedClasses.includes(className)) {
-      return res.status(403).json({
-        error: `Access Denied: Only the assigned Class Teacher for "${className}" can mark attendance for this class.`
-      });
+  try {
+    if (req.user?.role !== 'admin') {
+      const teacher = await backendStore.getTeacherDirectoryRecordByEmailOrId(req.user?.email, req.user?.teacherId);
+      const assignedClasses = teacher?.classTeacherOf || [];
+      if (!assignedClasses.includes(className)) {
+        return res.status(403).json({
+          error: `Access Denied: Only the assigned Class Teacher for "${className}" can mark attendance for this class.`
+        });
+      }
     }
+    const actor = submittedBy || req.user?.name || 'Staff';
+    const entry = await backendStore.saveClassAttendance(date, className, actor, records);
+    res.status(201).json(entry);
+  } catch (error) {
+    respondWithDatabaseError(res, 'attendance', error);
   }
-
-  const actor = submittedBy || req.user?.name || 'Staff';
-  const entry = backendStore.saveClassAttendance(date, className, actor, records);
-  res.status(201).json(entry);
 });
 
-router.get('/attendance/student/:studentId', requireAuth, (req: Request, res: Response) => {
-  const history = backendStore.getStudentAttendanceHistory(paramStr(req.params.studentId));
-  res.json(history);
+router.get('/attendance/student/:studentId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const studentId = paramStr(req.params.studentId);
+  if (req.user?.role === 'student' && req.user.studentId !== studentId) {
+    return res.status(403).json({ error: 'You can only view your own attendance history.' });
+  }
+  try {
+    if (req.user?.role === 'teacher') {
+      const [student, teacher] = await Promise.all([
+        backendStore.getStudentDirectoryRecord(studentId),
+        backendStore.getTeacherDirectoryRecord(req.user.teacherId || '')
+      ]);
+      const assignedClasses = [...(teacher?.assignedClasses || []).map((item: any) => item.class), ...(teacher?.classTeacherOf || [])];
+      if (!student || !assignedClasses.includes(student.class)) {
+        return res.status(403).json({ error: 'You can only view attendance for students in your assigned classes.' });
+      }
+    }
+    const history = await backendStore.getStudentAttendanceHistory(studentId);
+    res.json(history);
+  } catch (error) {
+    respondWithDatabaseError(res, 'attendance', error);
+  }
 });
 
 /* ── Grades & Report Cards ───────────────────────────────────────────────── */
 
-router.get('/grades', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getGrades());
+router.get('/grades', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.user?.role === 'student') {
+      return res.json(await backendStore.getGrades(req.user.studentId ? [req.user.studentId] : []));
+    }
+    if (req.user?.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
+      const allowedClasses: string[] = [...new Set<string>(
+        (teacher?.assignedClasses || [])
+          .map((item: any) => item.class)
+          .filter((className: unknown): className is string => typeof className === 'string' && Boolean(className))
+      )];
+      const students = allowedClasses.length ? await backendStore.getStudents({ allowedClasses }) : [];
+      const studentRecords = Array.isArray(students) ? students : students.data;
+      return res.json(await backendStore.getGrades(studentRecords.map((student: any) => student.id)));
+    }
+    res.json(await backendStore.getGrades());
+  } catch (error) {
+    respondWithDatabaseError(res, 'grades', error);
+  }
 });
 
-router.post('/grades', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.post('/grades', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const body = req.body || {};
   const studentId = body.studentId;
   const term = body.term;
@@ -672,61 +964,90 @@ router.post('/grades', requireAuth, requireRole('admin', 'teacher'), (req: Reque
     return res.status(400).json({ error: 'studentId, term, and subject are required.' });
   }
   const gradeData = body.grade && typeof body.grade === 'object' ? body.grade : body;
-  const saved = backendStore.saveGrade(
-    studentId,
-    term,
-    subject,
-    {
-      ca1: Number(gradeData.ca1 ?? 0),
-      ca2: Number(gradeData.ca2 ?? 0),
-      exam: Number(gradeData.exam ?? 0),
-      remark: gradeData.remark || ''
-    },
-    body.session || gradeData.session || '2026/2027'
-  );
-  res.status(201).json(saved);
+  try {
+    if (req.user?.role === 'teacher') {
+      const [student, teacher] = await Promise.all([
+        backendStore.getStudentDirectoryRecord(String(studentId)),
+        backendStore.getTeacherDirectoryRecord(req.user.teacherId || '')
+      ]);
+      const assigned = (teacher?.assignedClasses || []).some(
+        (assignment: any) => assignment.class === student?.class && assignment.subject === subject
+      );
+      if (!assigned) return res.status(403).json({ error: 'You can only enter grades for your assigned classes and subjects.' });
+    }
+    const saved = await backendStore.saveGrade(
+      studentId,
+      term,
+      subject,
+      {
+        ca1: Number(gradeData.ca1 ?? 0),
+        ca2: Number(gradeData.ca2 ?? 0),
+        exam: Number(gradeData.exam ?? 0),
+        remark: gradeData.remark || ''
+      },
+      body.session || gradeData.session || '2026/2027'
+    );
+    res.status(201).json(saved);
+  } catch (error) {
+    respondWithDatabaseError(res, 'grades', error);
+  }
 });
 
-router.get('/reports/:studentId', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+router.get('/reports/:studentId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const targetId = paramStr(req.params.studentId);
   if (req.user?.role === 'student' && req.user.studentId !== targetId) {
     return res.status(403).json({ error: 'Access denied. You can only view your own report card.' });
   }
   const term = typeof req.query.term === 'string' ? req.query.term : 'Term1';
   const session = typeof req.query.session === 'string' ? req.query.session : '2026/2027';
-  const report = backendStore.getStudentReportCard(targetId, term, session);
-  if (!report) return res.status(404).json({ error: 'Student report not found.' });
-  res.json(report);
+  try {
+    if (req.user?.role === 'teacher') {
+      const [student, teacher] = await Promise.all([
+        backendStore.getStudentDirectoryRecord(targetId),
+        backendStore.getTeacherDirectoryRecord(req.user.teacherId || '')
+      ]);
+      const assigned = (teacher?.assignedClasses || []).some((item: any) => item.class === student?.class) ||
+        (teacher?.classTeacherOf || []).includes(student?.class);
+      if (!student || !assigned) return res.status(403).json({ error: 'You can only view reports for students in your assigned classes.' });
+    }
+    const report = await backendStore.getStudentReportCard(targetId, term, session);
+    if (!report) return res.status(404).json({ error: 'Student report not found.' });
+    res.json(report);
+  } catch (error) {
+    respondWithDatabaseError(res, 'student report', error);
+  }
 });
 
 /* ── Resources, Equipment & Maintenance ──────────────────────────────────── */
 
-router.get('/resources', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  const all = backendStore.getResources();
+router.get('/resources', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+  const all = await backendStore.getResources();
   let resources = all;
   if (req.user?.role === 'student') {
-    const student = backendStore.getStudentById(req.user.studentId || '');
-    const studentClass = student?.class || '';
-    const studentSubjects = student?.enrolledSubjects || [];
+    const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
+    if (!student) return res.status(403).json({ error: 'Student profile is unavailable.' });
+    const studentClass = student.class || '';
+    const studentSubjects = student.enrolledSubjects || [];
     resources = all.filter(
       (r: any) =>
-        r.accessLevel === 'students' &&
+        ['all', 'student', 'students'].includes(r.accessLevel) &&
         (r.allClasses || (r.classes && r.classes.includes(studentClass))) &&
         (!r.subject || r.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(r.subject))
     );
   } else if (req.user?.role === 'teacher') {
-    const teacher = backendStore.getTeacherById(req.user.teacherId || '');
+    const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
     const teacherSubjects = (teacher?.assignedClasses || []).map((ac: any) => ac.subject);
-    const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
-    if (teacherSubjects.length > 0) {
-      resources = all.filter(
-        (r: any) =>
-          r.uploadedBy === teacher?.name ||
-          teacherSubjects.includes(r.subject) ||
-          r.allClasses ||
-          (r.classes && r.classes.some((c: string) => teacherClasses.includes(c)))
-      );
-    }
+    const teacherClasses = [
+      ...(teacher?.assignedClasses || []).map((ac: any) => ac.class),
+      ...(teacher?.classTeacherOf || [])
+    ];
+    resources = all.filter((resource: any) =>
+      resource.uploadedBy === teacher?.name ||
+      ['all', 'teachers', 'staff'].includes(resource.accessLevel) ||
+      ((!resource.subject || teacherSubjects.includes(resource.subject)) &&
+        (resource.allClasses || (resource.classes || []).some((className: string) => teacherClasses.includes(className))))
+    );
   }
 
   const query = req.query as Record<string, string | undefined>;
@@ -752,80 +1073,163 @@ router.get('/resources', requireAuth, (req: AuthenticatedRequest, res: Response)
   }
 
   res.json(paginateList(resources, req, { subjects, resourceCount }));
+  } catch (error) {
+    respondWithDatabaseError(res, 'student or teacher profile', error);
+  }
 });
 
-router.post('/resources', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.post('/resources', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const { title } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Resource title is required.' });
-  const created = backendStore.addResource(req.body);
-  res.status(201).json(created);
+  try {
+    const created = await backendStore.addResource(req.body);
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'resources', error);
+  }
 });
 
-router.put('/resources/:id', requireAuth, (req: Request, res: Response) => {
-  const updated = backendStore.updateResource(paramStr(req.params.id), req.body || {});
-  if (!updated) return res.status(404).json({ error: 'Resource not found.' });
-  res.json(updated);
+router.put('/resources/:id', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const updated = await backendStore.updateResource(paramStr(req.params.id), req.body || {});
+    if (!updated) return res.status(404).json({ error: 'Resource not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'resources', error);
+  }
 });
 
-router.delete('/resources/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.delete('/resources/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.deleteResource(id);
-  if (!deleted) return res.status(404).json({ error: 'Resource not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.deleteResource(id);
+    if (!deleted) return res.status(404).json({ error: 'Resource not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'resources', error);
+  }
 });
 
-router.get('/equipment', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getEquipment());
+router.get('/equipment', requireAuth, async (req: Request, res: Response) => {
+  const query = req.query as Record<string, string | undefined>;
+  const pagination = getDatabasePagination(req);
+  try {
+    const result = await backendStore.getEquipment((query.search || '').trim(), pagination.page, pagination.limit);
+    if (pagination.page === undefined) return res.json(result.data);
+    res.json({
+      data: result.data,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      totalPages: Math.ceil(result.total / (result.limit || pagination.limit || 20))
+    });
+  } catch (error) {
+    respondWithDatabaseError(res, 'equipment', error);
+  }
 });
 
-router.post('/equipment', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.post('/equipment', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const { name } = req.body || {};
   if (!name) return res.status(400).json({ error: 'Equipment name is required.' });
-  const created = backendStore.addEquipment(req.body);
-  res.status(201).json(created);
+  try {
+    const created = await backendStore.addEquipment(req.body);
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'equipment', error);
+  }
 });
 
-router.delete('/equipment/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.delete('/equipment/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.deleteEquipment(id);
-  if (!deleted) return res.status(404).json({ error: 'Equipment not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.deleteEquipment(id);
+    if (!deleted) return res.status(404).json({ error: 'Equipment not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'equipment', error);
+  }
 });
 
-router.get('/maintenance', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getMaintenance());
+router.get('/maintenance', requireAuth, async (req: Request, res: Response) => {
+  const query = req.query as Record<string, string | undefined>;
+  const pagination = getDatabasePagination(req);
+  try {
+    const result = await backendStore.getMaintenance((query.search || '').trim(), pagination.page, pagination.limit);
+    if (pagination.page === undefined) return res.json(result.data);
+    res.json({
+      data: result.data,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      totalPages: Math.ceil(result.total / (result.limit || pagination.limit || 20)),
+      openCount: result.openCount
+    });
+  } catch (error) {
+    respondWithDatabaseError(res, 'maintenance requests', error);
+  }
 });
 
-router.post('/maintenance', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.post('/maintenance', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const { itemName } = req.body || {};
   if (!itemName) return res.status(400).json({ error: 'Item name is required.' });
-  const created = backendStore.addMaintenance(req.body);
-  res.status(201).json(created);
+  try {
+    const created = await backendStore.addMaintenance(req.body);
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'maintenance requests', error);
+  }
 });
 
-router.patch('/maintenance/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.patch('/maintenance/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const { status } = req.body || {};
   if (!status) return res.status(400).json({ error: 'Status is required.' });
-  const updated = backendStore.updateMaintenanceStatus(paramStr(req.params.id), status);
-  if (!updated) return res.status(404).json({ error: 'Maintenance request not found.' });
-  res.json(updated);
+  try {
+    const updated = await backendStore.updateMaintenanceStatus(paramStr(req.params.id), status);
+    if (!updated) return res.status(404).json({ error: 'Maintenance request not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'maintenance requests', error);
+  }
 });
 
 /* ── Documents ───────────────────────────────────────────────────────────── */
 
-router.get('/documents', requireAuth, (req: Request, res: Response) => {
-  const documents = backendStore.getDocuments();
-  const categories = [...new Set(documents.map((document: any) => document.category).filter(Boolean))];
-  const categoryCounts = documents.reduce((counts: Record<string, number>, document: any) => {
+router.get('/documents', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+  const documents = await backendStore.getDocuments();
+  let visibleDocuments = documents;
+  if (req.user?.role === 'student') {
+    const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
+    if (!student) return res.status(403).json({ error: 'Student profile is unavailable.' });
+    const studentClass = student.class || '';
+    visibleDocuments = documents.filter((document: any) =>
+      ['all', 'student', 'students'].includes(document.accessLevel) &&
+      ((document.allowedClasses || ['All Classes']).includes('All Classes') ||
+        (studentClass && (document.allowedClasses || []).includes(studentClass)))
+    );
+  } else if (req.user?.role === 'teacher') {
+    const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
+    const teacherClasses = [
+      ...(teacher?.assignedClasses || []).map((item: any) => item.class),
+      ...(teacher?.classTeacherOf || [])
+    ];
+    visibleDocuments = documents.filter((document: any) =>
+      ['all', 'staff', 'teacher', 'teachers'].includes(document.accessLevel) &&
+      ((document.allowedClasses || ['All Classes']).includes('All Classes') ||
+        teacherClasses.some((className) => (document.allowedClasses || []).includes(className)))
+    );
+  }
+  const categories = [...new Set(visibleDocuments.map((document: any) => document.category).filter(Boolean))];
+  const categoryCounts = visibleDocuments.reduce((counts: Record<string, number>, document: any) => {
     if (document.category) counts[document.category] = (counts[document.category] || 0) + 1;
     return counts;
   }, {});
-  const restrictedCount = documents.filter(
+  const restrictedCount = visibleDocuments.filter(
     (document: any) => document.accessLevel === 'staff' || document.accessLevel === 'admin'
   ).length;
   const query = req.query as Record<string, string | undefined>;
   const search = (query.search || '').trim().toLowerCase();
-  let filteredDocuments = documents;
+  let filteredDocuments = visibleDocuments;
 
   if (search) {
     filteredDocuments = filteredDocuments.filter((document: any) =>
@@ -842,47 +1246,63 @@ router.get('/documents', requireAuth, (req: Request, res: Response) => {
   res.json(paginateList(filteredDocuments, req, {
     categories,
     categoryCounts,
-    documentCount: documents.length,
+    documentCount: visibleDocuments.length,
     restrictedCount
   }));
+  } catch (error) {
+    respondWithDatabaseError(res, 'documents', error);
+  }
 });
 
-router.post('/documents', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.post('/documents', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const { name } = req.body || {};
   if (!name) return res.status(400).json({ error: 'Document name is required.' });
-  const created = backendStore.addDocument(req.body);
-  res.status(201).json(created);
+  try {
+    const created = await backendStore.addDocument(req.body);
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'documents', error);
+  }
 });
 
-router.patch('/documents/:id/access', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.patch('/documents/:id/access', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const { accessLevel, allowedClasses } = req.body || {};
   if (!accessLevel) return res.status(400).json({ error: 'accessLevel is required.' });
-  const updated = backendStore.updateDocumentAccess(
-    paramStr(req.params.id),
-    accessLevel,
-    Array.isArray(allowedClasses) ? allowedClasses : ['All Classes']
-  );
-  if (!updated) return res.status(404).json({ error: 'Document not found.' });
-  res.json(updated);
+  try {
+    const updated = await backendStore.updateDocumentAccess(
+      paramStr(req.params.id),
+      accessLevel,
+      Array.isArray(allowedClasses) ? allowedClasses : ['All Classes']
+    );
+    if (!updated) return res.status(404).json({ error: 'Document not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'documents', error);
+  }
 });
 
-router.delete('/documents/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.delete('/documents/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.deleteDocument(id);
-  if (!deleted) return res.status(404).json({ error: 'Document not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.deleteDocument(id);
+    if (!deleted) return res.status(404).json({ error: 'Document not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'documents', error);
+  }
 });
 
 /* ── Announcements ───────────────────────────────────────────────────────── */
 
-router.get('/announcements', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+router.get('/announcements', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
   const query = req.query as Record<string, string | undefined>;
   const search = (query.search || '').trim().toLowerCase();
   const type = query.type || '';
   const audience = query.audience || '';
   const scope = query.scope || '';
 
-  let announcements = backendStore.getAnnouncements().filter((announcement: any) => {
+  let announcements = (await backendStore.getAnnouncements()).filter((announcement: any) => {
     if (req.user?.role === 'student' &&
       announcement.targetRole && announcement.targetRole !== 'all' && announcement.targetRole !== 'student') {
       return false;
@@ -912,60 +1332,107 @@ router.get('/announcements', requireAuth, (req: AuthenticatedRequest, res: Respo
     );
   }
   res.json(paginateList(announcements, req));
+  } catch (error) {
+    respondWithDatabaseError(res, 'announcements', error);
+  }
 });
 
-router.post('/announcements', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.post('/announcements', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const { title, content } = req.body || {};
   if (!title || !content) return res.status(400).json({ error: 'Title and content are required.' });
-  const created = backendStore.addAnnouncement(req.body);
-  res.status(201).json(created);
+  try {
+    const created = await backendStore.addAnnouncement(req.body);
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'announcements', error);
+  }
 });
 
-router.put('/announcements/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const updated = backendStore.updateAnnouncement(paramStr(req.params.id), req.body || {});
-  if (!updated) return res.status(404).json({ error: 'Announcement not found.' });
-  res.json(updated);
+router.put('/announcements/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+  try {
+    const updated = await backendStore.updateAnnouncement(paramStr(req.params.id), req.body || {});
+    if (!updated) return res.status(404).json({ error: 'Announcement not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'announcements', error);
+  }
 });
 
-router.delete('/announcements/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.delete('/announcements/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.deleteAnnouncement(id);
-  if (!deleted) return res.status(404).json({ error: 'Announcement not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.deleteAnnouncement(id);
+    if (!deleted) return res.status(404).json({ error: 'Announcement not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'announcements', error);
+  }
 });
 
 /* ── Teacher Availability ────────────────────────────────────────────────── */
 
-router.get('/availability', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getTeacherAvailability());
+router.get('/availability', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    res.json(await backendStore.getTeacherAvailability(
+      req.user?.role === 'teacher' ? req.user.teacherId : undefined
+    ));
+  } catch (error) {
+    respondWithDatabaseError(res, 'teacher availability', error);
+  }
 });
 
-router.post('/availability', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const created = backendStore.addTeacherAvailabilitySlot(req.body || {});
-  res.status(201).json(created);
+router.post('/availability', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
+  if (req.user?.role === 'teacher' && !req.user.teacherId) {
+    return res.status(403).json({ error: 'Teacher profile is not linked to this account.' });
+  }
+  try {
+    const created = await backendStore.addTeacherAvailabilitySlot({
+      ...(req.body || {}),
+      ...(req.user?.role === 'teacher' ? { teacherId: req.user.teacherId, teacherName: req.user.name } : {})
+    });
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teacher availability', error);
+  }
 });
 
-router.patch('/availability/:id/toggle', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const updated = backendStore.toggleTeacherAvailabilitySlot(paramStr(req.params.id));
-  if (!updated) return res.status(404).json({ error: 'Availability slot not found.' });
-  res.json(updated);
+router.patch('/availability/:id/toggle', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const updated = await backendStore.toggleTeacherAvailabilitySlot(
+      paramStr(req.params.id),
+      req.user?.role === 'teacher' ? req.user.teacherId : undefined
+    );
+    if (!updated) return res.status(404).json({ error: 'Availability slot not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teacher availability', error);
+  }
 });
 
-router.delete('/availability/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.delete('/availability/:id', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.deleteTeacherAvailabilitySlot(id);
-  if (!deleted) return res.status(404).json({ error: 'Availability slot not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.deleteTeacherAvailabilitySlot(
+      id,
+      req.user?.role === 'teacher' ? req.user.teacherId : undefined
+    );
+    if (!deleted) return res.status(404).json({ error: 'Availability slot not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'teacher availability', error);
+  }
 });
 
 /* ── Assignments ─────────────────────────────────────────────────────────── */
 
-router.get('/assignments', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  const all = backendStore.getAssignments();
+router.get('/assignments', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+  const all = await backendStore.getAssignments();
   let assignments = all;
   if (req.user?.role === 'student') {
-    const student = backendStore.getStudentById(req.user.studentId || '');
-    const studentClass = student?.class || '';
+    const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
+    if (!student) return res.status(403).json({ error: 'Student profile is unavailable.' });
+    const studentClass = student.class || '';
     const studentSubjects = student?.enrolledSubjects || [];
     assignments = all.filter(
       (a: any) =>
@@ -973,17 +1440,16 @@ router.get('/assignments', requireAuth, (req: AuthenticatedRequest, res: Respons
         (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
     );
   } else if (req.user?.role === 'teacher') {
-    const teacher = backendStore.getTeacherById(req.user.teacherId || '');
+    const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
     const teacherSubjects = (teacher?.assignedClasses || []).map((ac: any) => ac.subject);
-    const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
-    if (teacherClasses.length > 0 || teacherSubjects.length > 0) {
-      assignments = all.filter(
-        (a: any) =>
-          a.author === teacher?.name ||
-          teacherClasses.includes(a.class) ||
-          teacherSubjects.includes(a.subject)
-      );
-    }
+    const teacherClasses = [
+      ...(teacher?.assignedClasses || []).map((ac: any) => ac.class),
+      ...(teacher?.classTeacherOf || [])
+    ];
+    assignments = all.filter((assignment: any) =>
+      assignment.teacherName === teacher?.name ||
+      (teacherClasses.includes(assignment.class) && teacherSubjects.includes(assignment.subject))
+    );
   }
 
   const query = req.query as Record<string, string | undefined>;
@@ -1002,94 +1468,171 @@ router.get('/assignments', requireAuth, (req: AuthenticatedRequest, res: Respons
   }
 
   res.json(paginateList(assignments, req, { subjects }));
+  } catch (error) {
+    respondWithDatabaseError(res, 'student or teacher profile', error);
+  }
 });
 
-router.post('/assignments', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.post('/assignments', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const { title, subject } = req.body || {};
   if (!title || !subject) return res.status(400).json({ error: 'Title and subject are required.' });
-  const created = backendStore.addAssignment(req.body);
-  res.status(201).json(created);
+  try {
+    const created = await backendStore.addAssignment(req.body);
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'classes', error);
+  }
 });
 
-router.put('/assignments/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
-  const updated = backendStore.updateAssignment(paramStr(req.params.id), req.body || {});
-  if (!updated) return res.status(404).json({ error: 'Assignment not found.' });
-  res.json(updated);
+router.put('/assignments/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+  try {
+    const updated = await backendStore.updateAssignment(paramStr(req.params.id), req.body || {});
+    if (!updated) return res.status(404).json({ error: 'Assignment not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'classes', error);
+  }
 });
 
-router.delete('/assignments/:id', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.delete('/assignments/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
-  const deleted = backendStore.deleteAssignment(id);
-  if (!deleted) return res.status(404).json({ error: 'Assignment not found.' });
-  res.json({ ok: true, id });
+  try {
+    const deleted = await backendStore.deleteAssignment(id);
+    if (!deleted) return res.status(404).json({ error: 'Assignment not found.' });
+    res.json({ ok: true, id });
+  } catch (error) {
+    respondWithDatabaseError(res, 'assignments', error);
+  }
 });
 
-router.post('/assignments/:id/submit', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  const { studentId, studentName, notes, fileName, fileUrl, filePath } = req.body || {};
-  const resolvedId = studentId || req.user?.studentId || req.user?.id || '';
+router.post('/assignments/:id/submit', requireAuth, requireRole('student'), async (req: AuthenticatedRequest, res: Response) => {
+  const { notes, fileName, fileUrl, filePath } = req.body || {};
+  const resolvedId = req.user?.studentId || '';
   if (!resolvedId) return res.status(400).json({ error: 'Student identifier is required.' });
+  let assignment;
+  let studentRecord;
+  try {
+    assignment = await backendStore.getAssignmentById(paramStr(req.params.id));
+    studentRecord = await backendStore.getStudentDirectoryRecord(resolvedId);
+  } catch (error) {
+    return respondWithDatabaseError(res, 'student', error);
+  }
+  if (!assignment) return res.status(404).json({ error: 'Assignment not found.' });
+  if (!studentRecord || (assignment.class && assignment.class !== 'All Classes' && assignment.class !== studentRecord.class)) {
+    return res.status(403).json({ error: 'This assignment is not available to your class.' });
+  }
+  const enrolledSubjects = studentRecord.enrolledSubjects || [];
+  if (
+    assignment.subject &&
+    assignment.subject !== 'General' &&
+    enrolledSubjects.length > 0 &&
+    !enrolledSubjects.includes(assignment.subject)
+  ) {
+    return res.status(403).json({ error: 'This assignment is not available to your enrolled subjects.' });
+  }
   const student = {
     id: resolvedId,
-    name: studentName || req.user?.name || 'Student'
+    name: req.user?.name || 'Student'
   };
-  const updated = backendStore.submitStudentAssignment(paramStr(req.params.id), student, {
-    notes,
-    fileName,
-    fileUrl,
-    filePath
-  });
-  if (!updated) return res.status(404).json({ error: 'Assignment not found.' });
-  res.json(updated);
+  try {
+    const updated = await backendStore.submitStudentAssignment(paramStr(req.params.id), student, {
+      notes,
+      fileName,
+      fileUrl,
+      filePath
+    });
+    if (!updated) return res.status(404).json({ error: 'Assignment not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'classes', error);
+  }
 });
 
 /* ── Student Requests ────────────────────────────────────────────────────── */
 
-router.get('/requests', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getRequests());
+router.get('/requests', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const studentId = req.user?.role === 'student' ? req.user.studentId : undefined;
+    res.json(await backendStore.getRequests(studentId));
+  } catch (error) {
+    respondWithDatabaseError(res, 'student requests', error);
+  }
 });
 
-router.post('/requests', requireAuth, (req: Request, res: Response) => {
+router.post('/requests', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { title } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Request title is required.' });
-  const created = backendStore.addRequest(req.body);
-  res.status(201).json(created);
+  try {
+    const student = req.user?.role === 'student'
+      ? await backendStore.getStudentDirectoryRecord(req.user.studentId || '')
+      : null;
+    const created = await backendStore.addRequest({
+      ...(req.body || {}),
+      ...(student ? {
+        studentId: student.id,
+        studentName: student.name,
+        admissionNumber: student.admissionNumber,
+        class: student.class
+      } : {})
+    });
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'student requests', error);
+  }
 });
 
-router.patch('/requests/:id/status', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
+router.patch('/requests/:id/status', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
   const { status, staffResponse } = req.body || {};
   if (!status) return res.status(400).json({ error: 'Status is required.' });
-  const updated = backendStore.updateRequestStatus(paramStr(req.params.id), status, staffResponse || '');
-  if (!updated) return res.status(404).json({ error: 'Student request not found.' });
-  res.json(updated);
+  try {
+    const updated = await backendStore.updateRequestStatus(paramStr(req.params.id), status, staffResponse || '');
+    if (!updated) return res.status(404).json({ error: 'Student request not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'student requests', error);
+  }
 });
 
 /* ── Public Enquiries ────────────────────────────────────────────────────── */
 
-router.get('/enquiries', requireAuth, requireRole('admin'), (_req: Request, res: Response) => {
-  res.json(backendStore.getEnquiries());
+router.get('/enquiries', requireAuth, requireRole('admin'), async (_req: Request, res: Response) => {
+  try {
+    res.json(await backendStore.getEnquiries());
+  } catch (error) {
+    respondWithDatabaseError(res, 'enquiries', error);
+  }
 });
 
-router.post('/enquiries', (req: Request, res: Response) => {
+router.post('/enquiries', async (req: Request, res: Response) => {
   const { kind, parentName, email } = req.body || {};
   if (!parentName || !email) {
     return res.status(400).json({ error: 'Parent name and email are required.' });
   }
-  const entry = backendStore.addEnquiry(kind || 'enquiry', req.body || {});
-  res.status(201).json(entry);
+  try {
+    const entry = await backendStore.addEnquiry(kind || 'enquiry', req.body || {});
+    res.status(201).json(entry);
+  } catch (error) {
+    respondWithDatabaseError(res, 'enquiries', error);
+  }
 });
 
 /* ── Direct Messages ─────────────────────────────────────────────────────── */
 
-router.get('/messages', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getDirectMessages());
+router.get('/messages', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    res.json(await backendStore.getDirectMessages());
+  } catch (error) {
+    respondWithDatabaseError(res, 'messages', error);
+  }
 });
 
-router.post('/messages', requireAuth, requireRole('admin'), (req: AuthenticatedRequest, res: Response) => {
+router.post('/messages', requireAuth, requireRole('admin'), async (req: AuthenticatedRequest, res: Response) => {
   const { recipient, subject, content, role } = req.body || {};
   if (!recipient || !subject || !content) {
     return res.status(400).json({ error: 'recipient, subject, and content are required.' });
   }
-  const created = backendStore.addDirectMessage({
+  try {
+  const created = await backendStore.addDirectMessage({
     senderId: req.user?.id || '',
     senderName: req.user?.name || 'Administrator',
     recipient,
@@ -1098,55 +1641,77 @@ router.post('/messages', requireAuth, requireRole('admin'), (req: AuthenticatedR
     content
   });
   res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'messages', error);
+  }
 });
 
 /* ── Staff Leaves ────────────────────────────────────────────────────────── */
 
-router.get('/staff-leaves', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+router.get('/staff-leaves', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const teacherId = req.user?.role === 'teacher' ? req.user.teacherId : (typeof req.query.teacherId === 'string' ? req.query.teacherId : undefined);
-  res.json(backendStore.getStaffLeaves(teacherId));
+  try {
+    res.json(await backendStore.getStaffLeaves(teacherId));
+  } catch (error) {
+    respondWithDatabaseError(res, 'staff leaves', error);
+  }
 });
 
-router.post('/staff-leaves', requireAuth, requireRole('admin', 'teacher'), (req: AuthenticatedRequest, res: Response) => {
+router.post('/staff-leaves', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const { type, startDate, endDate, reason, days } = req.body || {};
   if (!startDate || !endDate || !reason) {
     return res.status(400).json({ error: 'startDate, endDate, and reason are required.' });
   }
-  const teacher = req.user?.teacherId ? backendStore.getTeacherById(req.user.teacherId) : null;
-  const created = backendStore.addStaffLeave({
-    teacherId: teacher?.id || req.body?.teacherId || '',
-    teacherName: teacher?.name || req.body?.teacherName || req.user?.name || 'Staff',
-    type: type || 'Casual Leave',
-    startDate,
-    endDate,
-    days: days || 1,
-    reason
-  });
-  res.status(201).json(created);
+  try {
+    const teacher = req.user?.teacherId
+      ? await backendStore.getTeacherDirectoryRecord(req.user.teacherId)
+      : null;
+    const created = await backendStore.addStaffLeave({
+      teacherId: teacher?.id || req.body?.teacherId || '',
+      teacherName: teacher?.name || req.body?.teacherName || req.user?.name || 'Staff',
+      type: type || 'Casual Leave',
+      startDate,
+      endDate,
+      days: days || 1,
+      reason
+    });
+    res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'teacher profile', error);
+  }
 });
 
-router.patch('/staff-leaves/:id', requireAuth, requireRole('admin'), (req: AuthenticatedRequest, res: Response) => {
+router.patch('/staff-leaves/:id', requireAuth, requireRole('admin'), async (req: AuthenticatedRequest, res: Response) => {
   const { status } = req.body || {};
   if (!status) return res.status(400).json({ error: 'Status is required.' });
-  const updated = backendStore.updateStaffLeaveStatus(paramStr(req.params.id), status, req.user?.name || 'Administrator');
-  if (!updated) return res.status(404).json({ error: 'Leave request not found.' });
-  res.json(updated);
+  try {
+    const updated = await backendStore.updateStaffLeaveStatus(paramStr(req.params.id), status, req.user?.name || 'Administrator');
+    if (!updated) return res.status(404).json({ error: 'Leave request not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'staff leaves', error);
+  }
 });
 
 /* ── Help Tickets ────────────────────────────────────────────────────────── */
 
-router.get('/help-tickets', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+router.get('/help-tickets', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const studentId = req.user?.role === 'student' ? req.user.studentId : undefined;
-  res.json(backendStore.getHelpTickets(studentId));
+  try {
+    res.json(await backendStore.getHelpTickets(studentId));
+  } catch (error) {
+    respondWithDatabaseError(res, 'help tickets', error);
+  }
 });
 
-router.post('/help-tickets', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+router.post('/help-tickets', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { subject, description, category, priority } = req.body || {};
   if (!subject || !description) {
     return res.status(400).json({ error: 'Subject and description are required.' });
   }
   const studentName = req.user?.name || 'Student';
-  const created = backendStore.addHelpTicket({
+  try {
+  const created = await backendStore.addHelpTicket({
     studentId: req.user?.studentId || req.user?.id || '',
     studentName,
     subject,
@@ -1164,9 +1729,12 @@ router.post('/help-tickets', requireAuth, (req: AuthenticatedRequest, res: Respo
     ]
   });
   res.status(201).json(created);
+  } catch (error) {
+    respondWithDatabaseError(res, 'help tickets', error);
+  }
 });
 
-router.post('/help-tickets/:id/reply', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+router.post('/help-tickets/:id/reply', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { message } = req.body || {};
   if (!message) return res.status(400).json({ error: 'Message is required.' });
   const reply = {
@@ -1176,18 +1744,33 @@ router.post('/help-tickets/:id/reply', requireAuth, (req: AuthenticatedRequest, 
     message,
     timestamp: new Date().toLocaleString('en-GB')
   };
-  const updated = backendStore.addHelpTicketReply(paramStr(req.params.id), reply);
-  if (!updated) return res.status(404).json({ error: 'Help ticket not found.' });
-  res.json(updated);
+  try {
+    const studentId = req.user?.role === 'student' ? req.user.studentId : undefined;
+    const updated = await backendStore.addHelpTicketReply(paramStr(req.params.id), reply, studentId);
+    if (!updated) return res.status(404).json({ error: 'Help ticket not found.' });
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'help tickets', error);
+  }
 });
 
 /* ── Files Upload & Download ─────────────────────────────────────────────── */
 
-router.post('/files/upload', requireAuth, upload.single('file'), async (req: Request, res: Response) => {
+router.post('/files/upload', requireAuth, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded. Attach multipart field named "file".' });
   }
-  const folder = typeof req.body?.folder === 'string' && req.body.folder ? req.body.folder : 'general';
+  const requestedFolder = typeof req.body?.folder === 'string' && req.body.folder ? req.body.folder : 'general';
+  let folder = requestedFolder;
+  if (req.user?.role === 'student') {
+    const studentFolder = String(req.user.studentId || '').replace(/[^A-Za-z0-9_-]/g, '');
+    if (requestedFolder !== 'submissions' || !studentFolder) {
+      return res.status(403).json({ error: 'Students may only upload assignment submissions.' });
+    }
+    folder = `submissions-${studentFolder}`;
+  } else if (req.user?.role === 'teacher' && !['resources', 'assignments'].includes(requestedFolder)) {
+    return res.status(403).json({ error: 'You do not have permission to upload files to this area.' });
+  }
   try {
     const uploaded = await uploadFileToBackendStorage(folder, req.file);
     res.status(201).json(uploaded);
@@ -1196,56 +1779,93 @@ router.post('/files/upload', requireAuth, upload.single('file'), async (req: Req
   }
 });
 
-router.get('/files/download/:folder/:filename', (req: Request, res: Response) => {
-  const filePath = resolveLocalUploadPath(paramStr(req.params.folder), paramStr(req.params.filename));
-  if (!filePath) {
-    return res.status(404).json({ error: 'File not found on server.' });
+router.get('/files/download/:folder/:filename', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const folder = paramStr(req.params.folder);
+  const filename = paramStr(req.params.filename);
+  if (!/^[A-Za-z0-9_-]+$/.test(folder) || !/^[A-Za-z0-9._-]+$/.test(filename)) {
+    return res.status(404).json({ error: 'File not found.' });
   }
-  res.download(filePath);
+  const relativePath = `${folder}/${filename}`;
+  if (!await backendStore.canAccessFile(relativePath, req.user)) {
+    return res.status(403).json({ error: 'You do not have access to this file.' });
+  }
+
+  try {
+    const file = await downloadFileFromBackendStorage(relativePath);
+    if (!file) return res.status(404).json({ error: 'File not found.' });
+    res.type('application/octet-stream').attachment(filename).send(file);
+  } catch (error) {
+    console.error('File download failed:', error);
+    res.status(500).json({ error: 'File download failed.' });
+  }
 });
 
 /* ── Academic Session Rollover & Promotion ───────────────────────────────── */
 
-router.get('/academic/promotion-candidates', requireAuth, requireRole('admin'), (_req: Request, res: Response) => {
-  const candidates = backendStore.getPromotionCandidates();
-  res.json({ candidates });
+router.get('/academic/promotion-candidates', requireAuth, requireRole('admin'), async (_req: Request, res: Response) => {
+  try {
+    const candidates = await backendStore.getPromotionCandidates();
+    res.json({ candidates });
+  } catch (error) {
+    respondWithDatabaseError(res, 'promotion candidates', error);
+  }
 });
 
-router.post('/academic/rollover-session', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+router.post('/academic/rollover-session', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { nextSession, promotions } = req.body || {};
   if (!nextSession || !Array.isArray(promotions)) {
     return res.status(400).json({ error: 'nextSession and promotions array are required.' });
   }
-  const result = backendStore.executeSessionRollover({ nextSession, promotions });
-  res.json(result);
+  try {
+    const result = await backendStore.executeSessionRollover({ nextSession, promotions });
+    res.json(result);
+  } catch (error) {
+    respondWithDatabaseError(res, 'academic session rollover', error);
+  }
 });
 
 /* ── Academic Sessions & Terms ───────────────────────────────────────────── */
 
-router.get('/academic/sessions', requireAuth, (_req: Request, res: Response) => {
-  const settings = backendStore.getSettings();
-  res.json({
-    sessions: ['2026/2027', '2025/2026', '2024/2025'],
-    currentSession: settings.currentSession || '2026/2027',
-    terms: ['Term 1', 'Term 2', 'Term 3'],
-    currentTerm: settings.currentTerm || 'Term 1'
-  });
+router.get('/academic/sessions', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    const settings = await backendStore.getSettings();
+    res.json({
+      sessions: ['2026/2027', '2025/2026', '2024/2025'],
+      currentSession: settings.currentSession || '2026/2027',
+      terms: ['Term 1', 'Term 2', 'Term 3'],
+      currentTerm: settings.currentTerm || 'Term 1'
+    });
+  } catch (error) {
+    respondWithDatabaseError(res, 'institution settings', error);
+  }
 });
 
 /* ── Institution Settings ─────────────────────────────────────────────────── */
 
-router.get('/settings', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getSettings());
+router.get('/settings', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    res.json(await backendStore.getSettings());
+  } catch (error) {
+    respondWithDatabaseError(res, 'institution settings', error);
+  }
 });
 
-router.put('/settings', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
-  const updated = backendStore.updateSettings(req.body || {});
-  res.json(updated);
+router.put('/settings', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
+  try {
+    const updated = await backendStore.updateSettings(req.body || {});
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'institution settings', error);
+  }
 });
 
-router.post('/settings', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
-  const updated = backendStore.updateSettings(req.body || {});
-  res.json(updated);
+router.post('/settings', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
+  try {
+    const updated = await backendStore.updateSettings(req.body || {});
+    res.json(updated);
+  } catch (error) {
+    respondWithDatabaseError(res, 'institution settings', error);
+  }
 });
 
 export default router;

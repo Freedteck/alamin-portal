@@ -1,6 +1,6 @@
 -- Al-Amin Group of Schools Management System
 -- Complete Supabase PostgreSQL Schema, RLS Policies, Storage & Subject Catalog
--- Run this once in the Supabase SQL Editor (https://supabase.com/dashboard -> SQL Editor)
+-- Run in the Supabase SQL Editor for setup; re-run after schema, RLS, or storage-policy changes.
 -- Note: Demo/mock school records are intentionally excluded; only core subjects are seeded.
 --       Teachers and students cannot self-register; accounts are provisioned exclusively by Admin.
 
@@ -70,6 +70,16 @@ CREATE TABLE IF NOT EXISTS public.subjects (
   departments JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+INSERT INTO public.classes (id, name, category)
+VALUES
+  ('cls-1', 'JSS 1', 'Junior'),
+  ('cls-2', 'JSS 2', 'Junior'),
+  ('cls-3', 'JSS 3', 'Junior'),
+  ('cls-4', 'SSS 1', 'Senior'),
+  ('cls-5', 'SSS 2', 'Senior'),
+  ('cls-6', 'SSS 3', 'Senior')
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS public.students (
   id TEXT PRIMARY KEY,
@@ -443,6 +453,9 @@ ALTER TABLE public.teacher_availability ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.student_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.enquiries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.direct_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.staff_leaves ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.help_tickets ENABLE ROW LEVEL SECURITY;
 
 -- Portal users table is strictly server-side (Express uses SUPABASE_SECRET_KEY, bypassing RLS)
 DROP POLICY IF EXISTS "No direct client access to portal_users" ON public.portal_users;
@@ -519,8 +532,12 @@ CREATE POLICY "Admin and staff manage timetable" ON public.timetable_slots FOR A
   WITH CHECK (public.current_user_role() IN ('admin', 'teacher'));
 
 DROP POLICY IF EXISTS "Authenticated manage timetable alerts" ON public.timetable_alerts;
-CREATE POLICY "Authenticated manage timetable alerts" ON public.timetable_alerts FOR ALL TO authenticated
-  USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Authenticated read timetable alerts" ON public.timetable_alerts;
+CREATE POLICY "Authenticated read timetable alerts" ON public.timetable_alerts FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Admin and staff manage timetable alerts" ON public.timetable_alerts;
+CREATE POLICY "Admin and staff manage timetable alerts" ON public.timetable_alerts FOR ALL TO authenticated
+  USING (public.current_user_role() IN ('admin', 'teacher'))
+  WITH CHECK (public.current_user_role() IN ('admin', 'teacher'));
 
 DROP POLICY IF EXISTS "Authenticated read attendance" ON public.attendance_records;
 CREATE POLICY "Authenticated read attendance" ON public.attendance_records FOR SELECT TO authenticated USING (true);
@@ -579,14 +596,83 @@ CREATE POLICY "Admin and staff manage teacher availability" ON public.teacher_av
 DROP POLICY IF EXISTS "Authenticated read assignments" ON public.assignments;
 CREATE POLICY "Authenticated read assignments" ON public.assignments FOR SELECT TO authenticated USING (true);
 DROP POLICY IF EXISTS "Admin and staff insert delete assignments" ON public.assignments;
-CREATE POLICY "Admin and staff insert delete assignments" ON public.assignments FOR INSERT TO authenticated
-  WITH CHECK (public.current_user_role() IN ('admin', 'teacher'));
+CREATE POLICY "Admin and assigned teachers insert assignments" ON public.assignments FOR INSERT TO authenticated
+  WITH CHECK (
+    public.current_user_role() = 'admin'
+    OR (
+      public.current_user_role() = 'teacher'
+      AND EXISTS (
+        SELECT 1
+        FROM public.teachers t
+        JOIN public.profiles p ON LOWER(p.email) = LOWER(t.email)
+        WHERE p.id = auth.uid()
+          AND (
+            t.name = assignments.teacher_name
+            OR t.assigned_classes @> jsonb_build_array(
+              jsonb_build_object('class', assignments.class, 'subject', assignments.subject)
+            )
+          )
+      )
+    )
+  );
 DROP POLICY IF EXISTS "Authenticated update assignments" ON public.assignments;
 CREATE POLICY "Authenticated update assignments" ON public.assignments FOR UPDATE TO authenticated
-  USING (true) WITH CHECK (true);
+  USING (
+    public.current_user_role() = 'admin'
+    OR (
+      public.current_user_role() = 'teacher'
+      AND EXISTS (
+        SELECT 1
+        FROM public.teachers t
+        JOIN public.profiles p ON LOWER(p.email) = LOWER(t.email)
+        WHERE p.id = auth.uid()
+          AND (
+            t.name = assignments.teacher_name
+            OR t.assigned_classes @> jsonb_build_array(
+              jsonb_build_object('class', assignments.class, 'subject', assignments.subject)
+            )
+          )
+      )
+    )
+  )
+  WITH CHECK (
+    public.current_user_role() = 'admin'
+    OR (
+      public.current_user_role() = 'teacher'
+      AND EXISTS (
+        SELECT 1
+        FROM public.teachers t
+        JOIN public.profiles p ON LOWER(p.email) = LOWER(t.email)
+        WHERE p.id = auth.uid()
+          AND (
+            t.name = assignments.teacher_name
+            OR t.assigned_classes @> jsonb_build_array(
+              jsonb_build_object('class', assignments.class, 'subject', assignments.subject)
+            )
+          )
+      )
+    )
+  );
 DROP POLICY IF EXISTS "Admin and staff delete assignments" ON public.assignments;
-CREATE POLICY "Admin and staff delete assignments" ON public.assignments FOR DELETE TO authenticated
-  USING (public.current_user_role() IN ('admin', 'teacher'));
+CREATE POLICY "Admin and assigned teachers delete assignments" ON public.assignments FOR DELETE TO authenticated
+  USING (
+    public.current_user_role() = 'admin'
+    OR (
+      public.current_user_role() = 'teacher'
+      AND EXISTS (
+        SELECT 1
+        FROM public.teachers t
+        JOIN public.profiles p ON LOWER(p.email) = LOWER(t.email)
+        WHERE p.id = auth.uid()
+          AND (
+            t.name = assignments.teacher_name
+            OR t.assigned_classes @> jsonb_build_array(
+              jsonb_build_object('class', assignments.class, 'subject', assignments.subject)
+            )
+          )
+      )
+    )
+  );
 
 DROP POLICY IF EXISTS "Authenticated read student requests" ON public.student_requests;
 CREATE POLICY "Authenticated read student requests" ON public.student_requests FOR SELECT TO authenticated USING (true);
@@ -607,45 +693,40 @@ CREATE POLICY "Admins read enquiries" ON public.enquiries
 
 -- Direct Messages, Staff Leaves & Help Tickets
 DROP POLICY IF EXISTS "Authenticated direct messages read" ON public.direct_messages;
-CREATE POLICY "Authenticated direct messages read" ON public.direct_messages FOR SELECT TO authenticated USING (true);
 DROP POLICY IF EXISTS "Authenticated direct messages insert" ON public.direct_messages;
-CREATE POLICY "Authenticated direct messages insert" ON public.direct_messages FOR INSERT TO authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "Deny direct client access to direct_messages" ON public.direct_messages;
+CREATE POLICY "Deny direct client access to direct_messages" ON public.direct_messages
+  AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
 
 DROP POLICY IF EXISTS "Authenticated staff leaves read" ON public.staff_leaves;
-CREATE POLICY "Authenticated staff leaves read" ON public.staff_leaves FOR SELECT TO authenticated USING (true);
 DROP POLICY IF EXISTS "Authenticated staff leaves insert" ON public.staff_leaves;
-CREATE POLICY "Authenticated staff leaves insert" ON public.staff_leaves FOR INSERT TO authenticated WITH CHECK (true);
 DROP POLICY IF EXISTS "Admin staff leaves update" ON public.staff_leaves;
-CREATE POLICY "Admin staff leaves update" ON public.staff_leaves FOR UPDATE TO authenticated USING (public.current_user_role() IN ('admin', 'teacher'));
+DROP POLICY IF EXISTS "Deny direct client access to staff_leaves" ON public.staff_leaves;
+CREATE POLICY "Deny direct client access to staff_leaves" ON public.staff_leaves
+  AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
 
 DROP POLICY IF EXISTS "Authenticated help tickets read" ON public.help_tickets;
-CREATE POLICY "Authenticated help tickets read" ON public.help_tickets FOR SELECT TO authenticated USING (true);
 DROP POLICY IF EXISTS "Authenticated help tickets insert" ON public.help_tickets;
-CREATE POLICY "Authenticated help tickets insert" ON public.help_tickets FOR INSERT TO authenticated WITH CHECK (true);
 DROP POLICY IF EXISTS "Authenticated help tickets update" ON public.help_tickets;
-CREATE POLICY "Authenticated help tickets update" ON public.help_tickets FOR UPDATE TO authenticated USING (true);
+DROP POLICY IF EXISTS "Deny direct client access to help_tickets" ON public.help_tickets;
+CREATE POLICY "Deny direct client access to help_tickets" ON public.help_tickets
+  AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
 
 -- ============================================================
 -- 5. SUPABASE STORAGE BUCKET & POLICIES (school-files)
 -- ============================================================
 INSERT INTO storage.buckets (id, name, public)
-VALUES ('school-files', 'school-files', true)
-ON CONFLICT (id) DO NOTHING;
+VALUES ('school-files', 'school-files', false)
+ON CONFLICT (id) DO UPDATE SET public = false;
 
 DROP POLICY IF EXISTS "School files public read" ON storage.objects;
-CREATE POLICY "School files public read" ON storage.objects
-  FOR SELECT TO authenticated, anon
-  USING (bucket_id = 'school-files');
-
 DROP POLICY IF EXISTS "Authenticated upload school files" ON storage.objects;
-CREATE POLICY "Authenticated upload school files" ON storage.objects
-  FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'school-files');
-
 DROP POLICY IF EXISTS "Admin and staff delete school files" ON storage.objects;
-CREATE POLICY "Admin and staff delete school files" ON storage.objects
-  FOR DELETE TO authenticated
-  USING (bucket_id = 'school-files' AND public.current_user_role() IN ('admin', 'teacher'));
+DROP POLICY IF EXISTS "Deny direct client access to school files" ON storage.objects;
+CREATE POLICY "Deny direct client access to school files" ON storage.objects
+  AS RESTRICTIVE FOR ALL TO anon, authenticated
+  USING (bucket_id = 'school-files' AND false)
+  WITH CHECK (bucket_id = 'school-files' AND false);
 
 -- ============================================================
 -- 6. REALTIME PUBLICATION (MULTI-DEVICE LIVE SYNC)

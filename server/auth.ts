@@ -1,7 +1,10 @@
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'alamin-school-portal-dev-jwt-secret-key';
+const JWT_SECRET = (process.env.JWT_SECRET || '').trim();
+if (JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET must be configured with at least 32 characters.');
+}
 
 export interface AuthUser {
   id: string;
@@ -34,7 +37,10 @@ export function signAuthToken(user: AuthUser): string {
 export function verifyAuthToken(token: string): AuthUser | null {
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as any;
-    if (!decoded?.sub || !decoded?.role) return null;
+    if (
+      !decoded?.sub ||
+      !['admin', 'teacher', 'student'].includes(decoded.role)
+    ) return null;
     return {
       id: String(decoded.sub),
       email: String(decoded.email || ''),

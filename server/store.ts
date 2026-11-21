@@ -1,12 +1,9 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import crypto from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
   SCHOOL_CLASSES,
   SSS_DEPARTMENTS,
   computeGrade,
-  createInitialDbSnapshot,
   createInitialUsers,
   generateAdmissionNumber,
   hashPassword,
@@ -14,7 +11,6 @@ import {
   verifyPassword
 } from './seed.ts';
 
-export const UPLOADS_DIR = path.resolve(process.cwd(), 'uploads');
 const SUPABASE_BUCKET = 'school-files';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim();
@@ -47,31 +43,6 @@ if (isValidHttpUrl(SUPABASE_URL) && SUPABASE_KEY) {
 
 export const isServerSupabaseConfigured = Boolean(serverSupabase);
 
-export interface SchoolDatabase {
-  users: any[];
-  classes: any[];
-  subjects: any[];
-  students: any[];
-  teachers: any[];
-  timetable: any[];
-  alerts: any[];
-  attendance: Record<string, any>;
-  grades: Record<string, any>;
-  resources: any[];
-  equipment: any[];
-  maintenance: any[];
-  documents: any[];
-  announcements: any[];
-  availability: any[];
-  assignments: any[];
-  requests: any[];
-  enquiries: any[];
-  messages: any[];
-  leaves: any[];
-  tickets: any[];
-  settings?: Record<string, any>;
-}
-
 type SseListener = (event: { resource: string; action: string; timestamp: string }) => void;
 const sseListeners = new Set<SseListener>();
 
@@ -92,244 +63,182 @@ export function broadcastChange(resource: string, action = 'updated') {
   });
 }
 
-function ensureDirectories() {
-  if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
-
-let db: SchoolDatabase = createInitialDbSnapshot();
-
-async function hydrateFromSupabaseIfAvailable() {
-  if (!serverSupabase) return;
-  try {
-    const { data: users, error: errUsers } = await serverSupabase.from('portal_users').select('*');
-    if (!errUsers && users && users.length > 0) {
-      db.users = users.map((u: any) => ({
-        id: u.id,
-        email: u.email,
-        name: u.name,
-        role: u.role,
-        studentId: u.student_id,
-        teacherId: u.teacher_id,
-        avatarUrl: u.avatar_url || '',
-        passwordHash: u.password_hash,
-        createdAt: u.created_at
-      }));
-    }
-
-    const hasAdmin = db.users && db.users.some((u) => u.role === 'admin');
-    if (!errUsers && (!users || users.length === 0 || !hasAdmin)) {
-      const initialUsers = createInitialUsers();
-      await serverSupabase.from('portal_users').upsert(
-        initialUsers.map((u) => ({
-          id: u.id,
-          email: u.email,
-          name: u.name,
-          role: u.role,
-          password_hash: u.passwordHash,
-          avatar_url: ''
-        }))
-      );
-      initialUsers.forEach((u) => {
-        if (!db.users.some((existing) => existing.id === u.id || existing.email === u.email)) {
-          db.users.push(u);
-        }
-      });
-      console.log(`[Al-Amin Store] Provisioned initial admin user (${initialUsers[0]?.email}) to Supabase portal_users.`);
-    }
-
-    const { data: students } = await serverSupabase.from('students').select('*');
-    if (students && students.length > 0) {
-      db.students = students.map((s: any) => ({
-        id: s.id,
-        name: s.name,
-        admissionNumber: s.admission_number,
-        class: s.class,
-        department: s.department,
-        gender: s.gender,
-        dob: s.dob,
-        stateOfOrigin: s.state_of_origin,
-        lga: s.lga,
-        address: s.address,
-        email: s.email,
-        parentName: s.parent_name,
-        parentPhone: s.parent_phone,
-        parentEmail: s.parent_email,
-        parentOccupation: s.parent_occupation || '',
-        parentRelationship: s.parent_relationship || '',
-        emergencyContact: s.emergency_contact || {},
-        enrolledSubjects: s.enrolled_subjects || [],
-        attendanceRate: s.attendance_rate || 0,
-        gpa: s.gpa || '0.00',
-        avatarUrl: s.avatar_url || '',
-        status: s.status || 'active'
-      }));
-    }
-
-    const { data: teachers } = await serverSupabase.from('teachers').select('*');
-    if (teachers && teachers.length > 0) {
-      db.teachers = teachers.map((t: any) => {
-        const rawClassTeacher = t.class_teacher_of ?? t.form_teacher_of;
-        let classTeacherOf: string[] = [];
-        if (Array.isArray(rawClassTeacher)) {
-          classTeacherOf = rawClassTeacher.filter(Boolean);
-        } else if (typeof rawClassTeacher === 'string' && rawClassTeacher.trim()) {
-          try {
-            const parsed = JSON.parse(rawClassTeacher);
-            classTeacherOf = Array.isArray(parsed) ? parsed.filter(Boolean) : [rawClassTeacher.trim()];
-          } catch {
-            classTeacherOf = [rawClassTeacher.trim()];
-          }
-        }
-        return {
-          id: t.id,
-          name: t.name,
-          staffId: t.staff_id,
-          email: t.email,
-          phone: t.phone,
-          qualification: t.qualification,
-          address: t.address || '',
-          dateOfBirth: t.date_of_birth || '',
-          startDate: t.start_date || '',
-          position: t.position || 'Subject Teacher',
-          department: t.department || 'Academic Faculty',
-          emergencyContact: t.emergency_contact || {},
-          assignedClasses: t.assigned_classes || [],
-          classTeacherOf,
-          avatarUrl: t.avatar_url || '',
-          status: t.status || 'active'
-        };
-      });
-    }
-
-    const { data: subjects } = await serverSupabase.from('subjects').select('*');
-    if (subjects && subjects.length > 0) {
-      db.subjects = subjects.map((sub: any) => ({
-        id: sub.id,
-        name: sub.name,
-        allClasses: sub.all_classes,
-        classes: sub.classes || [],
-        allDepartments: sub.all_departments,
-        departments: sub.departments || []
-      }));
-    }
-
-    const { data: classes } = await serverSupabase.from('classes').select('*');
-    if (classes && classes.length > 0) {
-      db.classes = classes.map((c: any) => ({
-        id: c.id,
-        name: c.name,
-        category: c.category || (isSeniorClass(c.name) ? 'Senior' : 'Junior'),
-        classTeacherId: c.class_teacher_id || '',
-        classTeacherName: c.class_teacher_name || ''
-      }));
-    }
-
-    const { data: settings } = await serverSupabase.from('institution_settings').select('*').limit(1).maybeSingle();
-    if (settings) {
-      db.settings = {
-        institutionName: settings.institution_name,
-        establishedYear: settings.established_year,
-        officialEmail: settings.official_email,
-        phone: settings.phone,
-        address: settings.address,
-        website: settings.website,
-        registrationNumber: settings.registration_number,
-        timezone: settings.timezone,
-        dateFormat: settings.date_format,
-        academicTerm: settings.academic_term,
-        currentSession: settings.current_session,
-        currentTerm: settings.current_term,
-        language: settings.language,
-        emailNotifications: settings.email_notifications,
-        smsAlerts: settings.sms_alerts,
-        maintenanceMode: settings.maintenance_mode,
-        updatedAt: settings.updated_at
-      };
-    }
-
-    const { data: messages } = await serverSupabase.from('direct_messages').select('*');
-    if (messages && messages.length > 0) {
-      db.messages = messages.map((m: any) => ({
-        id: m.id,
-        senderId: m.sender_id,
-        senderName: m.sender_name,
-        recipient: m.recipient,
-        role: m.role,
-        subject: m.subject,
-        content: m.content,
-        sentDate: m.sent_date,
-        status: m.status,
-        createdAt: m.created_at
-      }));
-    }
-
-    const { data: leaves } = await serverSupabase.from('staff_leaves').select('*');
-    if (leaves && leaves.length > 0) {
-      db.leaves = leaves.map((l: any) => ({
-        id: l.id,
-        teacherId: l.teacher_id,
-        teacherName: l.teacher_name,
-        type: l.type,
-        startDate: l.start_date,
-        endDate: l.end_date,
-        days: l.days,
-        reason: l.reason,
-        status: l.status,
-        submittedDate: l.submitted_date,
-        approvedBy: l.approved_by,
-        createdAt: l.created_at
-      }));
-    }
-
-    const { data: tickets } = await serverSupabase.from('help_tickets').select('*');
-    if (tickets && tickets.length > 0) {
-      db.tickets = tickets.map((tk: any) => ({
-        id: tk.id,
-        studentId: tk.student_id,
-        studentName: tk.student_name,
-        subject: tk.subject,
-        description: tk.description,
-        category: tk.category,
-        priority: tk.priority,
-        status: tk.status,
-        assignedTo: tk.assigned_to,
-        createdDate: tk.created_date,
-        lastUpdated: tk.last_updated,
-        responses: tk.responses || [],
-        createdAt: tk.created_at
-      }));
-    }
-
-    console.log(`[Al-Amin Store] Successfully hydrated state from Supabase PostgreSQL tables.`);
-  } catch (err: any) {
-    console.log(`[Al-Amin Store] Supabase tables not yet created or ready (${err?.message}). Running in-memory mode.`);
+function requireServerSupabase(): SupabaseClient {
+  if (!serverSupabase) {
+    throw new Error('Supabase is required for this data operation. Configure SUPABASE_URL and SUPABASE_SECRET_KEY.');
   }
+  return serverSupabase;
 }
 
-hydrateFromSupabaseIfAvailable();
-
-function persistDb() {
-  // Pure in-memory cache, synchronized directly with Supabase PostgreSQL.
-  // No local JSON files are stored.
+function mapEquipmentRow(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    quantity: row.quantity,
+    available: row.available,
+    location: row.location,
+    condition: row.condition,
+    addedDate: row.added_date
+  };
 }
 
-function supabaseMirrorUpsert(table: string, rowOrRows: any, onConflict = 'id') {
-  if (!serverSupabase) return;
-  const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
-  if (rows.length === 0) return;
-  serverSupabase
-    .from(table)
-    .upsert(rows, { onConflict })
-    .then(() => {});
+function mapMaintenanceRow(row: any) {
+  return {
+    id: row.id,
+    itemName: row.item_name,
+    issue: row.issue,
+    priority: row.priority,
+    status: row.status,
+    reportedDate: row.reported_date,
+    reportedBy: row.reported_by
+  };
 }
 
-function supabaseMirrorDelete(table: string, id: string, idCol = 'id') {
-  if (!serverSupabase || !id) return;
-  serverSupabase
-    .from(table)
-    .delete()
-    .eq(idCol, id)
-    .then(() => {});
+function mapClassRow(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category || (isSeniorClass(row.name) ? 'Senior' : 'Junior'),
+    classTeacherId: row.class_teacher_id || '',
+    classTeacherName: row.class_teacher_name || ''
+  };
+}
+
+function mapSubjectRow(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    allClasses: row.all_classes,
+    classes: row.classes || [],
+    allDepartments: row.all_departments,
+    departments: row.departments || []
+  };
+}
+
+function mapStudentRow(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    admissionNumber: row.admission_number,
+    class: row.class,
+    department: row.department,
+    gender: row.gender,
+    dob: row.dob,
+    stateOfOrigin: row.state_of_origin,
+    lga: row.lga,
+    address: row.address,
+    email: row.email,
+    parentName: row.parent_name,
+    parentPhone: row.parent_phone,
+    parentEmail: row.parent_email,
+    parentOccupation: row.parent_occupation || '',
+    parentRelationship: row.parent_relationship || '',
+    emergencyContact: row.emergency_contact || {},
+    enrolledSubjects: row.enrolled_subjects || [],
+    attendanceRate: row.attendance_rate || 0,
+    gpa: row.gpa || '0.00',
+    avatarUrl: row.avatar_url || '',
+    status: row.status || 'active',
+    createdAt: row.created_at
+  };
+}
+
+function mapTeacherRow(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    staffId: row.staff_id,
+    email: row.email,
+    phone: row.phone,
+    qualification: row.qualification,
+    address: row.address,
+    dateOfBirth: row.date_of_birth,
+    startDate: row.start_date,
+    position: row.position,
+    department: row.department,
+    emergencyContact: row.emergency_contact || {},
+    assignedClasses: row.assigned_classes || [],
+    classTeacherOf: row.class_teacher_of || [],
+    avatarUrl: row.avatar_url || '',
+    status: row.status || 'active',
+    createdAt: row.created_at
+  };
+}
+
+function mapDatabaseRow(row: any): any {
+  return Object.fromEntries(
+    Object.entries(row || {}).map(([key, value]) => [
+      key.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase()),
+      value
+    ])
+  );
+}
+
+function mapDatabaseRows(rows: unknown): any[] {
+  return Array.isArray(rows) ? rows.map(mapDatabaseRow) : [];
+}
+
+function toDatabaseRow(record: Record<string, any>) {
+  return Object.fromEntries(
+    Object.entries(record || {}).map(([key, value]) => [
+      key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`),
+      value
+    ])
+  );
+}
+
+function quotePostgrestSearch(value: string) {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/[%_]/g, '\\$&');
+}
+
+function toStudentDatabaseRow(student: any) {
+  return {
+    name: student.name,
+    admission_number: student.admissionNumber,
+    class: student.class,
+    department: student.department || '',
+    gender: student.gender || 'Male',
+    dob: student.dob || student.dateOfBirth || '',
+    state_of_origin: student.stateOfOrigin || '',
+    lga: student.lga || '',
+    address: student.address || '',
+    email: student.email || '',
+    parent_name: student.parentName || '',
+    parent_phone: student.parentPhone || '',
+    parent_email: student.parentEmail || '',
+    parent_occupation: student.parentOccupation || '',
+    parent_relationship: student.parentRelationship || '',
+    emergency_contact: student.emergencyContact || {},
+    enrolled_subjects: student.enrolledSubjects || [],
+    attendance_rate: student.attendanceRate ?? 0,
+    gpa: String(student.gpa || '0.00'),
+    avatar_url: student.avatarUrl || '',
+    status: student.status || 'active'
+  };
+}
+
+function toTeacherDatabaseRow(teacher: any) {
+  return {
+    name: teacher.name,
+    staff_id: teacher.staffId,
+    email: teacher.email || '',
+    phone: teacher.phone || '',
+    qualification: teacher.qualification || '',
+    address: teacher.address || '',
+    date_of_birth: teacher.dateOfBirth || '',
+    start_date: teacher.startDate || '',
+    position: teacher.position || 'Subject Teacher',
+    department: teacher.department || 'Academic Faculty',
+    emergency_contact: teacher.emergencyContact || {},
+    assigned_classes: teacher.assignedClasses || [],
+    class_teacher_of: teacher.classTeacherOf || [],
+    avatar_url: teacher.avatarUrl || '',
+    status: teacher.status || 'active'
+  };
 }
 
 const timeToMinutes = (t = '') => {
@@ -349,7 +258,6 @@ export async function uploadFileToBackendStorage(
   folder: string,
   file: Express.Multer.File
 ): Promise<{ fileName: string; fileSize: string; filePath: string; fileUrl: string }> {
-  ensureDirectories();
   const safeFolder = String(folder || 'general').replace(/[^a-zA-Z0-9_-]/g, '');
   const cleanOriginal = String(file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
   const storedName = `${Date.now()}_${cleanOriginal}`;
@@ -362,64 +270,201 @@ export async function uploadFileToBackendStorage(
       ? `${(file.size / 1024).toFixed(1)} KB`
       : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
 
-  if (serverSupabase) {
-    const { error } = await serverSupabase.storage
-      .from(SUPABASE_BUCKET)
-      .upload(relativePath, file.buffer, {
-        contentType: file.mimetype || 'application/octet-stream',
-        upsert: false
-      });
-
-    if (!error) {
-      const { data: pub } = serverSupabase.storage
-        .from(SUPABASE_BUCKET)
-        .getPublicUrl(relativePath);
-      return {
-        fileName: file.originalname,
-        fileSize: sizeLabel,
-        filePath: relativePath,
-        fileUrl: pub?.publicUrl || `/api/files/download/${relativePath}`
-      };
-    }
-  }
-
-  const folderDir = path.join(UPLOADS_DIR, safeFolder);
-  if (!fs.existsSync(folderDir)) fs.mkdirSync(folderDir, { recursive: true });
-  fs.writeFileSync(path.join(folderDir, storedName), file.buffer);
+  const { error } = await requireServerSupabase().storage
+    .from(SUPABASE_BUCKET)
+    .upload(relativePath, file.buffer, {
+      contentType: file.mimetype || 'application/octet-stream',
+      upsert: false
+    });
+  if (error) throw error;
 
   return {
     fileName: file.originalname,
     fileSize: sizeLabel,
     filePath: relativePath,
-    fileUrl: `/api/files/download/${safeFolder}/${storedName}`
+    fileUrl: `/api/files/download/${relativePath}`
   };
 }
 
-export function resolveLocalUploadPath(folder: string, filename: string): string | null {
-  const safeFolder = String(folder || '').replace(/[^a-zA-Z0-9_-]/g, '');
-  const safeFile = path.basename(String(filename || ''));
-  if (!safeFolder || !safeFile) return null;
-  const fullPath = path.join(UPLOADS_DIR, safeFolder, safeFile);
-  return fs.existsSync(fullPath) ? fullPath : null;
+export async function downloadFileFromBackendStorage(filePath: string): Promise<Buffer | null> {
+  const { data, error } = await requireServerSupabase().storage.from(SUPABASE_BUCKET).download(filePath);
+  if (error) throw error;
+  if (!data) return null;
+  return Buffer.from(await data.arrayBuffer());
 }
 
 interface PasswordResetOtp {
   email: string;
   code: string;
   expiresAt: number;
+  failedAttempts: number;
 }
 const passwordResetOtps = new Map<string, PasswordResetOtp>();
 
 export const backendStore = {
   getStorageMode() {
-    return isServerSupabaseConfigured ? 'supabase-postgres' : 'server-json-store';
+    return isServerSupabaseConfigured ? 'supabase-postgres' : 'supabase-unavailable';
   },
 
-  getBootstrapPayload(user?: any) {
+  async ensureInitialAdmin() {
+    const client = requireServerSupabase();
+    const { data: admins, error: adminError } = await client.from('portal_users')
+      .select('id,password_hash').eq('role', 'admin');
+    if (adminError) throw adminError;
+    const legacyAdminIds = (admins || [])
+      .filter((admin) => verifyPassword('admin123', admin.password_hash))
+      .map((admin) => admin.id);
+    if (legacyAdminIds.length) {
+      const { error } = await client.from('portal_users').delete().in('id', legacyAdminIds);
+      if (error) throw error;
+      console.warn('Removed legacy administrator account(s) using the known default password.');
+    }
+
+    const remainingAdmins = (admins || []).filter((admin) => !legacyAdminIds.includes(admin.id));
+    if (remainingAdmins.length) return;
+    const [initialAdmin] = createInitialUsers();
+    if (!initialAdmin) {
+      throw new Error('No administrator account exists. Set INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD (at least 12 characters).');
+    }
+    const { error } = await client.from('portal_users').insert({
+      id: initialAdmin.id,
+      email: initialAdmin.email,
+      name: initialAdmin.name,
+      role: initialAdmin.role,
+      student_id: '',
+      teacher_id: '',
+      password_hash: initialAdmin.passwordHash,
+      avatar_url: ''
+    });
+    if (error) throw error;
+    console.info(`[Al-Amin Store] Provisioned initial administrator ${initialAdmin.email}.`);
+  },
+
+  async canAccessFile(filePath: string, user: any) {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+
+    const sameFile = (entry: any, path: string) =>
+      [entry.filePath, entry.attachmentPath, entry.fileUrl, entry.attachmentUrl]
+        .some((value) => value === path || value === `/api/files/download/${path}`);
+    const classMatches = (classes: any, className: string) =>
+      !Array.isArray(classes) || classes.length === 0 || classes.includes('All Classes') || classes.includes(className);
+
+    if (user.role === 'student') {
+      const student = await this.getStudentDirectoryRecord(user.studentId);
+      if (!student) return false;
+      const className = student.class;
+      const studentSubjectNames = student.enrolledSubjects?.length
+        ? student.enrolledSubjects
+        : (await this.getSubjects())
+          .filter((subject) =>
+            subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(className))
+          )
+          .map((subject) => subject.name);
+      const subjectMatches = (subject: string) =>
+        !subject || subject === 'General' || studentSubjectNames.includes(subject);
+      const [resources, documents, assignments, account] = await Promise.all([
+        this.getResources(),
+        this.getDocuments(),
+        this.getAssignments(),
+        this.getUserByIdFromDatabase(user.id)
+      ]);
+      const hasResource = resources.some((item) =>
+        sameFile(item, filePath) &&
+        ['students', 'all'].includes(String(item.accessLevel || '').toLowerCase()) &&
+        classMatches(item.classes, className) &&
+        subjectMatches(item.subject)
+      );
+      const hasDocument = documents.some((item) =>
+        sameFile(item, filePath) &&
+        ['all', 'student', 'students'].includes(String(item.accessLevel || '').toLowerCase()) &&
+        classMatches(item.allowedClasses, className)
+      );
+      const assignmentFile = assignments.some((assignment) =>
+        sameFile(assignment, filePath) &&
+        (!assignment.class || assignment.class === 'All Classes' || assignment.class === className) &&
+        subjectMatches(assignment.subject)
+      );
+      const submissionFile = assignments.some((assignment) =>
+        (assignment.submissions || []).some((submission: any) =>
+          submission.studentId === user.studentId &&
+          filePath.startsWith(`submissions-${String(student.id).replace(/[^A-Za-z0-9_-]/g, '')}/`) &&
+          sameFile(submission, filePath)
+        )
+      );
+      return hasResource || hasDocument || assignmentFile ||
+        (submissionFile && account?.studentId === user.studentId) ||
+        student.avatarUrl === `/api/files/download/${filePath}`;
+    }
+
+    if (user.role === 'teacher') {
+      const teacher = await this.getTeacherDirectoryRecord(user.teacherId);
+      if (!teacher) return false;
+      const assigned = teacher.assignedClasses || [];
+      const classNames = assigned.map((item: any) => item.class).filter(Boolean);
+      const subjectNames = assigned.map((item: any) => item.subject).filter(Boolean);
+      const [resources, documents, assignments, account] = await Promise.all([
+        this.getResources(),
+        this.getDocuments(),
+        this.getAssignments(),
+        this.getUserByIdFromDatabase(user.id)
+      ]);
+      const hasResource = resources.some((item) =>
+        sameFile(item, filePath) &&
+        String(item.accessLevel || '').toLowerCase() !== 'admin' &&
+        (
+          item.uploadedBy === teacher.name ||
+          item.accessLevel === 'teachers' ||
+          !Array.isArray(item.classes) ||
+          item.classes.includes('All Classes') ||
+          item.classes.some((className: string) => classNames.includes(className)) ||
+          subjectNames.includes(item.subject)
+        )
+      );
+      const hasDocument = documents.some((item) =>
+        sameFile(item, filePath) &&
+        ['all', 'teacher', 'teachers', 'staff'].includes(String(item.accessLevel || '').toLowerCase()) &&
+        (
+          !Array.isArray(item.allowedClasses) ||
+          item.allowedClasses.length === 0 ||
+          item.allowedClasses.includes('All Classes') ||
+          classNames.some((className: string) => item.allowedClasses.includes(className))
+        )
+      );
+      const assignmentFile = assignments.some((assignment) =>
+        sameFile(assignment, filePath) &&
+        (
+          assignment.teacherId === user.teacherId ||
+          assignment.teacherName === teacher.name ||
+          assignment.author === teacher.name ||
+          (classNames.includes(assignment.class) && subjectNames.includes(assignment.subject))
+        )
+      );
+      const submissionFile = assignments.some((assignment) =>
+        (assignment.submissions || []).some((submission: any) =>
+          sameFile(submission, filePath) &&
+          (
+            assignment.teacherId === user.teacherId ||
+            assignment.teacherName === teacher.name ||
+            assignment.author === teacher.name ||
+            (classNames.includes(assignment.class) && subjectNames.includes(assignment.subject))
+          )
+        )
+      );
+      return hasResource || hasDocument || assignmentFile || submissionFile ||
+        teacher.avatarUrl === `/api/files/download/${filePath}` ||
+        account?.avatarUrl === `/api/files/download/${filePath}`;
+    }
+
+    return false;
+  },
+
+  async getBootstrapPayload(user?: any) {
+    const [classes, subjects] = await Promise.all([this.getClasses(), this.getSubjects()]);
     if (!user) {
       return {
-        classes: db.classes || [],
-        subjects: db.subjects,
+        classes,
+        subjects,
         students: [],
         teachers: [],
         timetable: [],
@@ -437,172 +482,226 @@ export const backendStore = {
       };
     }
 
+    const [
+      studentsResult,
+      teachers,
+      timetable,
+      alerts,
+      allAttendance,
+      resources,
+      equipmentResult,
+      maintenanceResult,
+      documents,
+      announcements,
+      availability,
+      assignments,
+      allRequests
+    ] = await Promise.all([
+      this.getStudents(),
+      this.getTeachers(),
+      this.getTimetableSlots(),
+      this.getAlerts(user.role),
+      this.getAttendance(),
+      this.getResources(),
+      this.getEquipment(),
+      this.getMaintenance(),
+      this.getDocuments(),
+      this.getAnnouncements(),
+      this.getTeacherAvailability(),
+      this.getAssignments(),
+      this.getRequests(user.role === 'student' ? user.studentId : undefined)
+    ]);
+    const allStudents = Array.isArray(studentsResult) ? studentsResult : studentsResult.data || [];
+    const allTeachers = Array.isArray(teachers) ? teachers : teachers.data || [];
+    const equipment = equipmentResult.data || [];
+    const maintenance = maintenanceResult.data || [];
+
     if (user.role === 'student') {
-      const studentObj = db.students.find((s) => s.id === user.studentId) || null;
+      const studentObj = await this.getStudentDirectoryRecord(user.studentId);
       const studentClass = studentObj?.class || '';
       const enrolledSubjects = studentObj?.enrolledSubjects || [];
-      const studentGrades = user.studentId ? (db.grades[user.studentId] || {}) : {};
-
-      const scopedAttendance: Record<string, any> = {};
-      Object.keys(db.attendance || {}).forEach((key) => {
-        const entry = db.attendance[key];
-        if (entry && entry.records && entry.records[user.studentId]) {
-          scopedAttendance[key] = entry;
-        }
-      });
-
-      const studentSubjects = db.subjects.filter((s) =>
+      const studentSubjects = subjects.filter((s) =>
         enrolledSubjects.length > 0
           ? enrolledSubjects.includes(s.name)
           : (s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass)))
       );
       const studentSubjectNames = studentSubjects.map((s) => s.name);
+      const studentGrades = user.studentId ? await this.getGrades([user.studentId]) : {};
+      const studentAttendance = await this.getAttendance(undefined, studentClass);
+      const scopedAttendance = Object.fromEntries(Object.entries(studentAttendance)
+        .filter(([, entry]: [string, any]) => entry.records?.[user.studentId])
+        .map(([key, entry]: [string, any]) => [key, {
+          ...entry,
+          records: { [user.studentId]: entry.records[user.studentId] }
+        }]));
+      const classTeachers = allTeachers.filter((teacher) =>
+        (teacher.assignedClasses || []).some((assignment: any) => assignment.class === studentClass)
+      );
 
       return {
-        classes: (db.classes || []).filter((c) => !studentClass || c.name === studentClass),
+        classes: classes.filter((c) => !studentClass || c.name === studentClass),
         subjects: studentSubjects,
         students: studentObj ? [studentObj] : [],
-        teachers: db.teachers
-          .filter((t) => (t.assignedClasses || []).some((ac: any) => ac.class === studentClass))
+        teachers: classTeachers
           .map(({ phone, email, qualification, staffId, ...safe }) => safe),
-        timetable: db.timetable.filter((t) => t.class === studentClass),
-        alerts: db.alerts.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'student'),
+        timetable: timetable.filter((slot) => slot.class === studentClass || slot.class === 'All Classes'),
+        alerts,
         attendance: scopedAttendance,
-        grades: { [user.studentId]: studentGrades },
-        resources: db.resources.filter(
+        grades: studentGrades,
+        resources: resources.filter(
           (r) =>
             r.accessLevel === 'students' &&
-            (r.allClasses || (r.classes && r.classes.includes(studentClass))) &&
+            (r.allClasses || (r.classes && (r.classes.includes(studentClass) || r.classes.includes('All Classes')))) &&
             (!r.subject || r.subject === 'General' || studentSubjectNames.includes(r.subject))
         ),
         equipment: [],
         maintenance: [],
-        documents: db.documents.filter((d) => d.access === 'all' || d.access === 'student'),
-        announcements: db.announcements.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'student'),
-        availability: db.availability,
-        assignments: db.assignments.filter(
+        documents: documents.filter((d) => ['all', 'student', 'students'].includes(String(d.accessLevel || '').toLowerCase())),
+        announcements: announcements.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'student'),
+        availability: [],
+        assignments: assignments.filter(
           (a) =>
             (!a.class || a.class === 'All Classes' || a.class === studentClass) &&
             (!a.subject || a.subject === 'General' || studentSubjectNames.includes(a.subject))
         ),
-        requests: db.requests.filter((r) => r.studentId === user.studentId)
+        requests: allRequests.filter((request) => request.studentId === user.studentId)
       };
     }
 
     if (user.role === 'teacher') {
-      const teacherObj = db.teachers.find((t) => t.id === user.teacherId) || null;
+      const teacherObj = await this.getTeacherDirectoryRecord(user.teacherId);
       const assigned = teacherObj?.assignedClasses || [];
       const assignedClassNames = Array.from(new Set(assigned.map((a: any) => a.class).filter(Boolean)));
       const assignedSubjectNames = Array.from(new Set(assigned.map((a: any) => a.subject).filter(Boolean)));
 
       const teacherSubjects = assignedSubjectNames.length > 0
-        ? db.subjects.filter((s) => assignedSubjectNames.includes(s.name))
-        : db.subjects;
+        ? subjects.filter((s) => assignedSubjectNames.includes(s.name))
+        : subjects;
 
       const teacherClasses = assignedClassNames.length > 0
-        ? (db.classes || []).filter((c) => assignedClassNames.includes(c.name))
-        : (db.classes || []);
+        ? classes.filter((c) => assignedClassNames.includes(c.name))
+        : [];
 
       const teacherStudents = assignedClassNames.length > 0
-        ? db.students.filter((s) => assignedClassNames.includes(s.class))
-        : db.students;
+        ? allStudents.filter((s) => assignedClassNames.includes(s.class))
+        : [];
 
       const scopedAttendance: Record<string, any> = {};
-      Object.keys(db.attendance || {}).forEach((key) => {
-        const entry = db.attendance[key];
-        if (
-          assignedClassNames.length === 0 ||
-          assignedClassNames.includes(entry?.className) ||
-          assignedClassNames.includes(entry?.class)
-        ) {
-          scopedAttendance[key] = entry;
-        }
+      Object.entries(allAttendance).forEach(([key, entry]: [string, any]) => {
+        if (assignedClassNames.includes(entry.className)) scopedAttendance[key] = entry;
       });
+      const teacherGrades = await this.getGrades(teacherStudents.map((student) => student.id));
 
       return {
         classes: teacherClasses,
         subjects: teacherSubjects,
         students: teacherStudents,
-        teachers: db.teachers,
-        timetable: db.timetable.filter(
+        teachers: allTeachers.map(({ email, phone, ...safe }) => safe),
+        timetable: timetable.filter(
           (t) =>
             t.teacherId === user.teacherId ||
-            (teacherObj?.name && t.teacher === teacherObj.name) ||
+            (teacherObj?.name && t.teacherName === teacherObj.name) ||
             assignedClassNames.includes(t.class)
         ),
-        alerts: db.alerts.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'teacher'),
+        alerts,
         attendance: scopedAttendance,
-        grades: db.grades,
-        resources: db.resources.filter(
+        grades: teacherGrades,
+        resources: resources.filter(
           (r) =>
             r.uploadedBy === teacherObj?.name ||
             assignedSubjectNames.includes(r.subject) ||
             r.accessLevel === 'teachers' ||
             (r.classes && r.classes.some((c: string) => assignedClassNames.includes(c)))
         ),
-        equipment: db.equipment,
-        maintenance: db.maintenance,
-        documents: db.documents.filter((d) => d.access !== 'admin'),
-        announcements: db.announcements.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'teacher'),
-        availability: db.availability.filter((a) => a.teacherId === user.teacherId),
-        assignments: db.assignments.filter(
+        equipment,
+        maintenance,
+        documents: documents.filter((d) => d.accessLevel !== 'admin'),
+        announcements: announcements.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'teacher'),
+        availability: availability.filter((slot) => slot.teacherId === user.teacherId),
+        assignments: assignments.filter(
           (a) =>
             a.teacherId === user.teacherId ||
             a.author === teacherObj?.name ||
             (assignedClassNames.includes(a.class) && assignedSubjectNames.includes(a.subject))
         ),
-        requests: db.requests.filter((r) => r.teacherId === user.teacherId)
+        requests: allRequests.filter((request) => request.teacherId === user.teacherId)
       };
     }
 
-    // Admin role receives complete data
     return {
-      classes: db.classes || [],
-      subjects: db.subjects,
-      students: db.students,
-      teachers: db.teachers,
-      timetable: db.timetable,
-      alerts: db.alerts,
-      attendance: db.attendance,
-      grades: db.grades,
-      resources: db.resources,
-      equipment: db.equipment,
-      maintenance: db.maintenance,
-      documents: db.documents,
-      announcements: db.announcements,
-      availability: db.availability,
-      assignments: db.assignments,
-      requests: db.requests
+      classes,
+      subjects,
+      students: allStudents,
+      teachers: allTeachers,
+      timetable,
+      alerts,
+      attendance: allAttendance,
+      grades: await this.getGrades(),
+      resources,
+      equipment,
+      maintenance,
+      documents,
+      announcements,
+      availability,
+      assignments,
+      requests: allRequests
     };
   },
 
-  authenticate(identifier: string, password: string) {
+  async authenticateInDatabase(identifier: string, password: string) {
     const clean = String(identifier || '').trim().toLowerCase();
-    if (!clean) return null;
-    let user = db.users.find((u) => u.email.toLowerCase() === clean);
+    if (!clean || !password) return null;
+    const client = requireServerSupabase();
+    let query = client.from('portal_users').select('*').ilike('email', quotePostgrestSearch(clean));
+    let { data: user, error } = await query.maybeSingle();
+    if (error) throw error;
+
     if (!user) {
-      const matchedStudent = db.students.find(
-        (s) => String(s.admissionNumber || '').trim().toLowerCase() === clean
-      );
-      if (matchedStudent) {
-        user = db.users.find((u) => u.studentId === matchedStudent.id);
+      const { data: student, error: studentError } = await client.from('students')
+        .select('id')
+        .ilike('admission_number', quotePostgrestSearch(clean))
+        .maybeSingle();
+      if (studentError) throw studentError;
+      if (student) {
+        const result = await client.from('portal_users').select('*').eq('student_id', student.id).maybeSingle();
+        if (result.error) throw result.error;
+        user = result.data;
       }
     }
+
     if (!user) {
-      const matchedTeacher = db.teachers.find(
-        (t) => String(t.staffId || '').trim().toLowerCase() === clean
-      );
-      if (matchedTeacher) {
-        user = db.users.find((u) => u.teacherId === matchedTeacher.id);
+      const { data: teacher, error: teacherError } = await client.from('teachers')
+        .select('id')
+        .ilike('staff_id', quotePostgrestSearch(clean))
+        .maybeSingle();
+      if (teacherError) throw teacherError;
+      if (teacher) {
+        const result = await client.from('portal_users').select('*').eq('teacher_id', teacher.id).maybeSingle();
+        if (result.error) throw result.error;
+        user = result.data;
       }
     }
-    if (!user) return null;
-    if (!verifyPassword(password, user.passwordHash)) return null;
-    const { passwordHash: _ignored, ...safeUser } = user;
-    return safeUser;
+
+    if (!user || !verifyPassword(password, user.password_hash)) return null;
+    const { password_hash: _ignored, student_id, teacher_id, ...safeUser } = user;
+    return {
+      ...safeUser,
+      studentId: student_id || undefined,
+      teacherId: teacher_id || undefined
+    };
   },
 
-  provisionPortalUser({
+  async isEmailTakenInDatabase(email: string, linkedId?: string) {
+    const clean = String(email || '').trim().toLowerCase();
+    if (!clean) return false;
+    let query = requireServerSupabase().from('portal_users').select('id').ilike('email', quotePostgrestSearch(clean));
+    if (linkedId) query = query.neq('id', linkedId);
+    const { data, error } = await query.limit(1);
+    if (error) throw error;
+    return Boolean(data?.length);
+  },
+
+  async provisionPortalUserInDatabase({
     email,
     password,
     name,
@@ -617,59 +716,44 @@ export const backendStore = {
     studentId?: string;
     teacherId?: string;
   }) {
+    const client = requireServerSupabase();
     const cleanEmail = String(email || '').trim().toLowerCase();
-    if (!cleanEmail) {
-      return { error: 'A valid portal email address is required.' };
+    if (!cleanEmail) return { error: 'A valid portal email address is required.' };
+
+    const linkedColumn = studentId ? 'student_id' : 'teacher_id';
+    const linkedValue = studentId || teacherId || '';
+    const [{ data: linkedUser, error: linkedError }, taken] = await Promise.all([
+      client.from('portal_users').select('id').eq(linkedColumn, linkedValue).maybeSingle(),
+      this.isEmailTakenInDatabase(cleanEmail)
+    ]);
+    if (linkedError) throw linkedError;
+    if (taken) {
+      const { data: emailOwner, error } = await client.from('portal_users')
+        .select('id')
+        .ilike('email', quotePostgrestSearch(cleanEmail))
+        .maybeSingle();
+      if (error) throw error;
+      if (!emailOwner || emailOwner.id !== linkedUser?.id) {
+        return { error: `An account with email "${cleanEmail}" already exists.` };
+      }
     }
 
-    const existing = db.users.find(
-      (u) =>
-        u.email.toLowerCase() === cleanEmail &&
-        !(studentId && u.studentId === studentId) &&
-        !(teacherId && u.teacherId === teacherId)
-    );
-    if (existing) {
-      return { error: `An account with email "${cleanEmail}" already exists.` };
-    }
-
-    const rawPassword =
-      String(password || '').trim().length >= 6
-        ? String(password || '').trim()
-        : `Alamin#${crypto.randomBytes(3).toString('hex')}`;
-
-    const existingLinkedIndex = db.users.findIndex(
-      (u) => (studentId && u.studentId === studentId) || (teacherId && u.teacherId === teacherId)
-    );
-
+    const rawPassword = String(password || '').trim().length >= 6
+      ? String(password).trim()
+      : `Alamin#${crypto.randomBytes(3).toString('hex')}`;
     const userRecord = {
-      id: existingLinkedIndex >= 0 ? db.users[existingLinkedIndex].id : `usr_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`,
+      id: linkedUser?.id || `usr_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`,
       email: cleanEmail,
       name: String(name || '').trim() || cleanEmail.split('@')[0],
       role,
-      ...(studentId ? { studentId } : {}),
-      ...(teacherId ? { teacherId } : {}),
-      passwordHash: hashPassword(rawPassword)
-    };
-
-    if (existingLinkedIndex >= 0) {
-      db.users[existingLinkedIndex] = userRecord;
-    } else {
-      db.users.push(userRecord);
-    }
-    persistDb();
-    supabaseMirrorUpsert('portal_users', {
-      id: userRecord.id,
-      email: userRecord.email,
-      name: userRecord.name,
-      role: userRecord.role,
-      student_id: userRecord.studentId || '',
-      teacher_id: userRecord.teacherId || '',
-      password_hash: userRecord.passwordHash,
+      student_id: studentId || '',
+      teacher_id: teacherId || '',
+      password_hash: hashPassword(rawPassword),
       updated_at: new Date().toISOString()
-    });
-    const { passwordHash: _ignored, ...safeUser } = userRecord;
+    };
+    const { error } = await client.from('portal_users').upsert(userRecord, { onConflict: 'id' });
+    if (error) throw error;
     return {
-      user: safeUser,
       credentials: {
         email: cleanEmail,
         temporaryPassword: rawPassword
@@ -677,56 +761,118 @@ export const backendStore = {
     };
   },
 
-  setPortalCredentials(
+  async updatePortalAccountEmailInDatabase(
     role: 'teacher' | 'student',
     entityId: string,
-    emailInput?: string,
-    passwordInput?: string
+    email: string,
+    name: string
   ) {
-    const entity = role === 'student' ? this.getStudentById(entityId) : this.getTeacherById(entityId);
-    if (!entity) return null;
-    const email = String(emailInput || entity.email || '').trim().toLowerCase();
-    if (!email) {
-      return { error: 'Email address is required to provision portal credentials.' };
+    const client = requireServerSupabase();
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const linkedColumn = role === 'student' ? 'student_id' : 'teacher_id';
+    const { data: linkedUser, error: linkedError } = await client.from('portal_users')
+      .select('id')
+      .eq(linkedColumn, entityId)
+      .maybeSingle();
+    if (linkedError) throw linkedError;
+    if (!linkedUser) return null;
+
+    const taken = await this.isEmailTakenInDatabase(cleanEmail);
+    if (taken) {
+      const { data: owner, error } = await client.from('portal_users')
+        .select('id')
+        .ilike('email', quotePostgrestSearch(cleanEmail))
+        .maybeSingle();
+      if (error) throw error;
+      if (owner?.id !== linkedUser.id) return { error: `An account with email "${cleanEmail}" already exists.` };
     }
-    if (entity.email !== email) {
-      if (role === 'student') {
-        this.updateStudent(entityId, { email });
-      } else {
-        this.updateTeacher(entityId, { email });
-      }
-    }
-    return this.provisionPortalUser({
-      email,
-      password: passwordInput,
-      name: entity.name,
-      role,
-      studentId: role === 'student' ? entityId : undefined,
-      teacherId: role === 'teacher' ? entityId : undefined
-    });
+
+    const { error } = await client.from('portal_users')
+      .update({ email: cleanEmail, name: String(name || '').trim() })
+      .eq('id', linkedUser.id);
+    if (error) throw error;
+    return null;
   },
 
-  isEmailTaken(email: string) {
-    const clean = String(email || '').trim().toLowerCase();
-    if (!clean) return false;
-    return db.users.some((u) => u.email.toLowerCase() === clean);
+  async getUserByIdFromDatabase(id: string) {
+    const { data, error } = await requireServerSupabase()
+      .from('portal_users')
+      .select('id,email,name,role,student_id,teacher_id,avatar_url,created_at')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+    return {
+      id: data.id,
+      email: data.email,
+      name: data.name,
+      role: data.role,
+      studentId: data.student_id || undefined,
+      teacherId: data.teacher_id || undefined,
+      avatarUrl: data.avatar_url || '',
+      createdAt: data.created_at
+    };
   },
 
-  getUserById(id: string) {
-    const user = db.users.find((u) => u.id === id);
+  async updateUserAvatarInDatabase(userId: string, avatarUrl: string) {
+    const client = requireServerSupabase();
+    let { data: user, error } = await client.from('portal_users')
+      .select('id,email,name,role,student_id,teacher_id,avatar_url,created_at')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!user) {
+      const { data, error: lookupError } = await client.from('portal_users')
+        .select('id,email,name,role,student_id,teacher_id,avatar_url,created_at')
+        .eq('student_id', userId)
+        .maybeSingle();
+      if (lookupError) throw lookupError;
+      user = data;
+    }
+    if (!user) {
+      const { data, error: lookupError } = await client.from('portal_users')
+        .select('id,email,name,role,student_id,teacher_id,avatar_url,created_at')
+        .eq('teacher_id', userId)
+        .maybeSingle();
+      if (lookupError) throw lookupError;
+      user = data;
+    }
     if (!user) return null;
-    const { passwordHash: _ignored, ...safeUser } = user;
-    return safeUser;
+    const { data: updatedUser, error: updateError } = await client.from('portal_users')
+      .update({ avatar_url: avatarUrl })
+      .eq('id', user.id)
+      .select('id,email,name,role,student_id,teacher_id,avatar_url,created_at')
+      .single();
+    if (updateError) throw updateError;
+    user = updatedUser;
+    const entityTable = user.role === 'student' ? 'students' : user.role === 'teacher' ? 'teachers' : null;
+    const entityId = user.student_id || user.teacher_id;
+    if (entityTable && entityId) {
+      const { error: entityError } = await client.from(entityTable).update({ avatar_url: avatarUrl }).eq('id', entityId);
+      if (entityError) throw entityError;
+    }
+    broadcastChange('users', 'updated');
+    if (entityTable) broadcastChange(entityTable, 'updated');
+    const { student_id, teacher_id, ...safeUser } = user;
+    return { ...safeUser, studentId: student_id || undefined, teacherId: teacher_id || undefined };
   },
 
-  getClasses() {
-    return db.classes || [];
+  async getClasses() {
+    const { data, error } = await requireServerSupabase().from('classes').select('*').order('name');
+    if (error) throw error;
+    return (data || []).map(mapClassRow);
   },
 
-  addClass(classData: { name: string; category?: string; classTeacherId?: string; classTeacherName?: string }) {
+  async getDefaultClassName() {
+    const classes = await this.getClasses();
+    return classes[0]?.name || 'JSS 1';
+  },
+
+  async addClass(classData: { name: string; category?: string; classTeacherId?: string; classTeacherName?: string }) {
     const cleanName = String(classData.name || '').trim();
     if (!cleanName) return { error: 'Class name is required.' };
-    const exists = (db.classes || []).some((c) => c.name.toLowerCase() === cleanName.toLowerCase());
+    const classes = await this.getClasses();
+    const exists = classes.some((c) => c.name.toLowerCase() === cleanName.toLowerCase());
     if (exists) return { error: `Class "${cleanName}" already exists.` };
     const newCls = {
       id: `cls-${Date.now()}`,
@@ -735,112 +881,145 @@ export const backendStore = {
       classTeacherId: classData.classTeacherId || '',
       classTeacherName: classData.classTeacherName || ''
     };
-    db.classes = [...(db.classes || []), newCls];
-    supabaseMirrorUpsert('classes', {
+    const { data, error } = await requireServerSupabase().from('classes').insert({
       id: newCls.id,
       name: newCls.name,
       category: newCls.category,
       class_teacher_id: newCls.classTeacherId,
       class_teacher_name: newCls.classTeacherName
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('classes', 'created');
-    return newCls;
+    return mapClassRow(data);
   },
 
-  assignClassTeacher(classIdOrName: string, teacherId: string | null | undefined) {
-    const cls = (db.classes || []).find(
+  async assignClassTeacher(classIdOrName: string, teacherId: string | null | undefined) {
+    const classes = await this.getClasses();
+    const cls = classes.find(
       (c) => c.id === classIdOrName || c.name.toLowerCase() === classIdOrName.toLowerCase()
     );
     if (!cls) return { error: `Class "${classIdOrName}" not found.` };
 
-    const oldTeacherId = cls.classTeacherId;
-    const targetTeacher = teacherId ? this.getTeacherById(teacherId) : null;
-    if (teacherId && !targetTeacher) {
-      return { error: 'Teacher not found.' };
-    }
+    const client = requireServerSupabase();
+    const { data: targetTeacher, error: teacherError } = teacherId
+      ? await client.from('teachers').select('id,name,class_teacher_of').eq('id', teacherId).maybeSingle()
+      : { data: null, error: null };
+    if (teacherError) throw teacherError;
+    if (teacherId && !targetTeacher) return { error: 'Teacher not found.' };
 
-    // 1. Remove this class from previous teacher's classTeacherOf list
-    if (oldTeacherId && oldTeacherId !== teacherId) {
-      const oldTeacher = this.getTeacherById(oldTeacherId);
+    const teacherUpdates: PromiseLike<{ error: any }>[] = [];
+    if (cls.classTeacherId && cls.classTeacherId !== teacherId) {
+      const { data: oldTeacher, error } = await client
+        .from('teachers')
+        .select('id,class_teacher_of')
+        .eq('id', cls.classTeacherId)
+        .maybeSingle();
+      if (error) throw error;
       if (oldTeacher) {
-        const updatedClasses = (oldTeacher.classTeacherOf || []).filter((c: string) => c !== cls.name);
-        this.updateTeacher(oldTeacher.id, { classTeacherOf: updatedClasses });
+        teacherUpdates.push(client.from('teachers').update({
+          class_teacher_of: (oldTeacher.class_teacher_of || []).filter((name: string) => name !== cls.name)
+        }).eq('id', oldTeacher.id));
       }
     }
-
-    // 2. Add this class to new teacher's classTeacherOf list
     if (targetTeacher) {
-      const existingClasses = targetTeacher.classTeacherOf || [];
+      const existingClasses = targetTeacher.class_teacher_of || [];
       if (!existingClasses.includes(cls.name)) {
-        this.updateTeacher(targetTeacher.id, { classTeacherOf: [...existingClasses, cls.name] });
+        teacherUpdates.push(client.from('teachers').update({
+          class_teacher_of: [...existingClasses, cls.name]
+        }).eq('id', targetTeacher.id));
       }
-      cls.classTeacherId = targetTeacher.id;
-      cls.classTeacherName = targetTeacher.name;
-    } else {
-      cls.classTeacherId = '';
-      cls.classTeacherName = '';
     }
+    const updates = await Promise.all(teacherUpdates);
+    const failedTeacherUpdate = updates.find(({ error }) => error);
+    if (failedTeacherUpdate?.error) throw failedTeacherUpdate.error;
 
-    supabaseMirrorUpsert('classes', {
-      id: cls.id,
-      name: cls.name,
-      category: cls.category,
-      class_teacher_id: cls.classTeacherId || '',
-      class_teacher_name: cls.classTeacherName || ''
-    });
+    const nextClass = {
+      ...cls,
+      classTeacherId: targetTeacher?.id || '',
+      classTeacherName: targetTeacher?.name || ''
+    };
+    const { data, error } = await client.from('classes').update({
+      class_teacher_id: nextClass.classTeacherId,
+      class_teacher_name: nextClass.classTeacherName
+    }).eq('id', cls.id).select('*').single();
+    if (error) throw error;
+
     broadcastChange('classes', 'updated');
 
-    return cls;
+    return mapClassRow(data);
   },
 
-  setTeacherClassTeacherOf(teacherId: string, classes: string[]) {
-    const teacher = this.getTeacherById(teacherId);
+  async setTeacherClassTeacherOf(teacherId: string, classes: string[]) {
+    const { data: teacher, error } = await requireServerSupabase()
+      .from('teachers')
+      .select('id,class_teacher_of')
+      .eq('id', teacherId)
+      .maybeSingle();
+    if (error) throw error;
     if (!teacher) return { error: 'Teacher not found.' };
 
-    const currentAssigned = teacher.classTeacherOf || [];
+    const currentAssigned = teacher.class_teacher_of || [];
     const targetClasses = Array.isArray(classes) ? classes : [];
 
-    // Remove from classes no longer in the list
-    currentAssigned.forEach((clsName: string) => {
+    for (const clsName of currentAssigned) {
       if (!targetClasses.includes(clsName)) {
-        this.assignClassTeacher(clsName, null);
-      }
-    });
-
-    // Assign to classes in the new list
-    targetClasses.forEach((clsName: string) => {
-      this.assignClassTeacher(clsName, teacherId);
-    });
-
-    return this.getTeacherById(teacherId);
-  },
-
-  deleteClass(id: string) {
-    const existing = (db.classes || []).find((c) => c.id === id);
-    if (!existing) return false;
-    if (existing.classTeacherId) {
-      const teacher = this.getTeacherById(existing.classTeacherId);
-      if (teacher) {
-        const updatedClasses = (teacher.classTeacherOf || []).filter((c: string) => c !== existing.name);
-        this.updateTeacher(teacher.id, { classTeacherOf: updatedClasses });
+        const result = await this.assignClassTeacher(clsName, null);
+        if ((result as any).error) throw new Error((result as any).error);
       }
     }
-    db.classes = (db.classes || []).filter((c) => c.id !== id);
-    supabaseMirrorDelete('classes', id);
+
+    for (const clsName of targetClasses) {
+      const result = await this.assignClassTeacher(clsName, teacherId);
+      if ((result as any).error) throw new Error((result as any).error);
+    }
+
+    const updatedTeacher = await this.getTeacherDirectoryRecord(teacherId);
+    return updatedTeacher ? { ...updatedTeacher, classTeacherOf: targetClasses } : { error: 'Teacher not found.' };
+  },
+
+  async deleteClass(id: string) {
+    const classes = await this.getClasses();
+    const existing = classes.find((c) => c.id === id);
+    if (!existing) return false;
+    if (existing.classTeacherId) {
+      const { data: teacher, error: teacherError } = await requireServerSupabase()
+        .from('teachers')
+        .select('id,class_teacher_of')
+        .eq('id', existing.classTeacherId)
+        .maybeSingle();
+      if (teacherError) throw teacherError;
+      if (teacher) {
+        const { error } = await requireServerSupabase().from('teachers').update({
+          class_teacher_of: (teacher.class_teacher_of || []).filter((name: string) => name !== existing.name)
+        }).eq('id', teacher.id);
+        if (error) throw error;
+      }
+    }
+    const { data, error } = await requireServerSupabase()
+      .from('classes')
+      .delete()
+      .eq('id', id)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
     broadcastChange('classes', 'deleted');
     return true;
   },
 
-  getSubjects() {
-    return db.subjects;
+  async getSubjects() {
+    const { data, error } = await requireServerSupabase().from('subjects').select('*').order('name');
+    if (error) throw error;
+    return (data || []).map(mapSubjectRow);
   },
 
-  getSubjectsForClass(className: string, department = '') {
+  async getSubjectsForClass(className: string, department = '') {
+    const subjects = await this.getSubjects();
     if (!className || className === 'All Classes') {
-      return db.subjects.map((s) => s.name);
+      return subjects.map((s) => s.name);
     }
     const senior = isSeniorClass(className);
-    return db.subjects
+    return subjects
       .filter((sub) => {
         const classMatch = sub.allClasses || (sub.classes || []).includes(className);
         if (!classMatch) return false;
@@ -850,11 +1029,11 @@ export const backendStore = {
       .map((s) => s.name);
   },
 
-  addSubject(subjectData: any) {
+  async addSubject(subjectData: any) {
     const cleanName = String(subjectData.name || '').trim();
     if (!cleanName) return null;
     const allClasses = Boolean(subjectData.allClasses);
-    const existingClassNames = (db.classes || []).map((c: any) => c.name);
+    const existingClassNames = (await this.getClasses()).map((c: any) => c.name);
     const defaultClasses = existingClassNames.length > 0 ? existingClassNames : [...SCHOOL_CLASSES];
     const classes = allClasses ? defaultClasses : (subjectData.classes || []);
     const seniorOnly = !allClasses && classes.length > 0 && classes.every((c: string) => isSeniorClass(c));
@@ -871,69 +1050,64 @@ export const backendStore = {
       allDepartments,
       departments
     };
-    db.subjects.push(newSub);
-    persistDb();
-    supabaseMirrorUpsert('subjects', {
+    const { data, error } = await requireServerSupabase().from('subjects').insert({
       id: newSub.id,
       name: newSub.name,
       all_classes: newSub.allClasses,
       classes: newSub.classes,
       all_departments: newSub.allDepartments,
       departments: newSub.departments
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('subjects', 'created');
-    return newSub;
+    return mapSubjectRow(data);
   },
 
-  updateSubject(id: string, updates: any) {
-    let target: any = null;
-    const existingClassNames = (db.classes || []).map((c: any) => c.name);
+  async updateSubject(id: string, updates: any) {
+    const client = requireServerSupabase();
+    const [{ data: existing, error: existingError }, classes] = await Promise.all([
+      client.from('subjects').select('*').eq('id', id).maybeSingle(),
+      this.getClasses()
+    ]);
+    if (existingError) throw existingError;
+    if (!existing) return null;
+    const existingSubject = mapSubjectRow(existing);
+    const existingClassNames = classes.map((c: any) => c.name);
     const defaultClasses = existingClassNames.length > 0 ? existingClassNames : [...SCHOOL_CLASSES];
-    db.subjects = db.subjects.map((sub) => {
-      if (sub.id !== id) return sub;
-      const merged = { ...sub, ...updates };
-      const allClasses = Boolean(merged.allClasses);
-      const classes = allClasses ? defaultClasses : (merged.classes || []);
-      const seniorOnly = !allClasses && classes.length > 0 && classes.every((c: string) => isSeniorClass(c));
-      const allDepartments = seniorOnly ? Boolean(merged.allDepartments) : true;
-      const departments = seniorOnly
-        ? (allDepartments ? [...SSS_DEPARTMENTS] : (merged.departments || []))
-        : [...SSS_DEPARTMENTS];
-      target = {
-        ...merged,
-        name: String(merged.name || '').trim(),
-        allClasses,
-        classes,
-        allDepartments,
-        departments
-      };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('subjects', {
-      id: target.id,
-      name: target.name,
-      all_classes: target.allClasses,
-      classes: target.classes,
-      all_departments: target.allDepartments,
-      departments: target.departments
-    });
+    const merged = { ...existingSubject, ...updates };
+    const allClasses = Boolean(merged.allClasses);
+    const subjectClasses = allClasses ? defaultClasses : (merged.classes || []);
+    const seniorOnly = !allClasses && subjectClasses.length > 0 && subjectClasses.every((c: string) => isSeniorClass(c));
+    const allDepartments = seniorOnly ? Boolean(merged.allDepartments) : true;
+    const departments = seniorOnly
+      ? (allDepartments ? [...SSS_DEPARTMENTS] : (merged.departments || []))
+      : [...SSS_DEPARTMENTS];
+    const { data, error } = await client.from('subjects').update({
+      name: String(merged.name || '').trim(),
+      all_classes: allClasses,
+      classes: subjectClasses,
+      all_departments: allDepartments,
+      departments
+    }).eq('id', id).select('*').single();
+    if (error) throw error;
     broadcastChange('subjects', 'updated');
-    return target;
+    return mapSubjectRow(data);
   },
 
-  deleteSubject(id: string) {
-    const before = db.subjects.length;
-    db.subjects = db.subjects.filter((s) => s.id !== id);
-    if (db.subjects.length === before) return false;
-    persistDb();
-    supabaseMirrorDelete('subjects', id);
+  async deleteSubject(id: string) {
+    const { data, error } = await requireServerSupabase()
+      .from('subjects')
+      .delete()
+      .eq('id', id)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
     broadcastChange('subjects', 'deleted');
     return true;
   },
 
-  getStudents(options?: {
+  async getStudents(options?: {
     search?: string;
     class?: string;
     department?: string;
@@ -943,203 +1117,193 @@ export const backendStore = {
     limit?: number;
     allowedClasses?: string[];
   }) {
-    let list = db.students || [];
-
-    if (options?.allowedClasses && options.allowedClasses.length > 0) {
-      list = list.filter((s) => options.allowedClasses!.includes(s.class));
-    }
-
-    if (options?.class && options.class !== 'all') {
-      const cls = options.class.toLowerCase().trim();
-      list = list.filter((s) => (s.class || '').toLowerCase().trim() === cls);
-    }
-
-    if (options?.department && options.department !== 'all') {
-      const dept = options.department.toLowerCase().trim();
-      list = list.filter((s) => (s.department || '').toLowerCase().trim() === dept);
-    }
-
-    if (options?.subject && options.subject !== 'all') {
-      const sub = options.subject.toLowerCase().trim();
-      list = list.filter((s) =>
-        (s.enrolledSubjects || []).some((es: string) => es.toLowerCase().trim() === sub)
-      );
-    }
-
-    if (options?.status && options.status !== 'all') {
-      const st = options.status.toLowerCase().trim();
-      list = list.filter((s) => (s.status || '').toLowerCase().trim() === st);
-    }
-
-    if (options?.search) {
-      const term = options.search.toLowerCase().trim();
-      list = list.filter((s) =>
-        (s.name || '').toLowerCase().includes(term) ||
-        (s.admissionNumber || '').toLowerCase().includes(term) ||
-        (s.email || '').toLowerCase().includes(term) ||
-        (s.parentName || '').toLowerCase().includes(term) ||
-        (s.parentPhone || '').toLowerCase().includes(term) ||
-        (s.class || '').toLowerCase().includes(term)
-      );
-    }
-
-    const total = list.length;
-
-    if (options?.page || options?.limit) {
-      const page = Math.max(1, Number(options.page || 1));
-      const limit = Math.max(1, Math.min(100, Number(options.limit || 10)));
-      const offset = (page - 1) * limit;
-      const data = list.slice(offset, offset + limit);
-
-      const classCounts: Record<string, number> = {};
-      for (const s of (db.students || [])) {
-        if (s.class) {
-          classCounts[s.class] = (classCounts[s.class] || 0) + 1;
-        }
+    const client = requireServerSupabase();
+    const paginated = Boolean(options?.page || options?.limit);
+    const requestedPage = Number(options?.page);
+    const requestedLimit = Number(options?.limit);
+    const page = paginated
+      ? Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1
+      : undefined;
+    const limit = paginated
+      ? Number.isInteger(requestedLimit) && requestedLimit > 0 ? Math.min(100, requestedLimit) : 10
+      : undefined;
+    const buildQuery = () => {
+      let query = client.from('students').select('*', { count: 'exact' }).order('created_at', { ascending: false });
+      if (options?.allowedClasses !== undefined) {
+        query = options.allowedClasses.length
+          ? query.in('class', options.allowedClasses)
+          : query.eq('id', '');
       }
-
-      return {
-        data,
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-        classCounts
-      };
-    }
-
-    return list;
-  },
-
-  getStudentById(id: string) {
-    return db.students.find((s) => s.id === id) || null;
-  },
-
-  addStudent(studentData: any) {
-    const {
-      password: rawPass,
-      portalPassword: rawPortalPass,
-      portalCredentials: _ignoredCreds,
-      ...cleanStudentData
-    } = studentData || {};
-
-    const admissionNumber =
-      cleanStudentData.admissionNumber || generateAdmissionNumber(cleanStudentData.class || 'JSS 1', db.students);
-    const defaultPortalEmail = `${admissionNumber.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@student.alamin.sch.ng`;
-    const portalEmail = String(cleanStudentData.email || defaultPortalEmail).trim().toLowerCase();
-
-    const newStudent = {
-      id: cleanStudentData.id || `s_${Date.now()}`,
-      ...cleanStudentData,
-      email: portalEmail,
-      department: isSeniorClass(cleanStudentData.class) ? cleanStudentData.department || 'Science' : '',
-      admissionNumber,
-      attendanceRate: cleanStudentData.attendanceRate ?? 0,
-      gpa: cleanStudentData.gpa || '0.00',
-      status: cleanStudentData.status || 'active',
-      createdAt: new Date().toISOString()
+      if (options?.class && options.class !== 'all') {
+        query = query.ilike('class', quotePostgrestSearch(options.class.trim()));
+      }
+      if (options?.department && options.department !== 'all') {
+        query = query.ilike('department', quotePostgrestSearch(options.department.trim()));
+      }
+      if (options?.subject && options.subject !== 'all') {
+        query = query.contains('enrolled_subjects', [options.subject.trim()]);
+      }
+      if (options?.status && options.status !== 'all') {
+        query = query.ilike('status', quotePostgrestSearch(options.status.trim()));
+      }
+      if (options?.search?.trim()) {
+        const pattern = `"%${quotePostgrestSearch(options.search.trim())}%"`;
+        query = query.or([
+          `name.ilike.${pattern}`,
+          `admission_number.ilike.${pattern}`,
+          `email.ilike.${pattern}`,
+          `parent_name.ilike.${pattern}`,
+          `parent_phone.ilike.${pattern}`,
+          `class.ilike.${pattern}`
+        ].join(','));
+      }
+      if (page !== undefined && limit !== undefined) {
+        query = query.range((page - 1) * limit, page * limit - 1);
+      }
+      return query;
     };
-    db.students = [newStudent, ...db.students];
-    persistDb();
 
-    const provisioned = this.provisionPortalUser({
-      email: portalEmail,
-      password: rawPortalPass || rawPass,
-      name: newStudent.name,
-      role: 'student',
-      studentId: newStudent.id
-    });
+    const { data, error, count } = await buildQuery();
+    if (error) throw error;
+    const records = (data || []).map(mapStudentRow);
+    if (!paginated) return records;
 
-    supabaseMirrorUpsert('students', {
-      id: newStudent.id,
-      name: newStudent.name,
-      admission_number: newStudent.admissionNumber,
-      class: newStudent.class,
-      department: newStudent.department,
-      gender: newStudent.gender || 'Male',
-      dob: newStudent.dob || newStudent.dateOfBirth || '',
-      state_of_origin: newStudent.stateOfOrigin || '',
-      lga: newStudent.lga || '',
-      address: newStudent.address || '',
-      email: newStudent.email || '',
-      parent_name: newStudent.parentName || '',
-      parent_phone: newStudent.parentPhone || '',
-      parent_email: newStudent.parentEmail || '',
-      parent_occupation: newStudent.parentOccupation || '',
-      parent_relationship: newStudent.parentRelationship || '',
-      emergency_contact: newStudent.emergencyContact || {},
-      enrolled_subjects: newStudent.enrolledSubjects || [],
-      attendance_rate: newStudent.attendanceRate,
-      gpa: String(newStudent.gpa),
-      avatar_url: newStudent.avatarUrl || '',
-      status: newStudent.status
-    });
+    const { data: classRows, error: classError } = await client.from('students').select('class');
+    if (classError) throw classError;
+    const classCounts: Record<string, number> = {};
+    for (const row of classRows || []) {
+      if (row.class) classCounts[row.class] = (classCounts[row.class] || 0) + 1;
+    }
+    return {
+      data: records,
+      total: count || 0,
+      page,
+      limit,
+      totalPages: Math.ceil((count || 0) / limit!),
+      classCounts
+    };
+  },
+
+  async getStudentDirectoryRecord(id: string) {
+    const { data, error } = await requireServerSupabase()
+      .from('students')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? mapStudentRow(data) : null;
+  },
+
+  async createStudentInDatabase(studentData: any) {
+    const {
+      password: rawPassword,
+      portalPassword,
+      portalCredentials: _ignoredCredentials,
+      ...input
+    } = studentData || {};
+    const client = requireServerSupabase();
+    const className = input.class || 'JSS 1';
+    const { count, error: countError } = await client.from('students')
+      .select('id', { count: 'exact', head: true })
+      .eq('class', className);
+    if (countError) throw countError;
+    const admissionNumber = input.admissionNumber || generateAdmissionNumber(className, Array(count || 0).fill({ class: className }));
+    const email = String(input.email || `${admissionNumber.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@student.alamin.sch.ng`)
+      .trim()
+      .toLowerCase();
+    const student = {
+      id: input.id || `s_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`,
+      ...input,
+      name: String(input.name || '').trim(),
+      admissionNumber,
+      class: className,
+      department: isSeniorClass(className) ? input.department || 'Science' : '',
+      email,
+      attendanceRate: input.attendanceRate ?? 0,
+      gpa: input.gpa || '0.00',
+      status: input.status || 'active'
+    };
+    const { data: row, error } = await client.from('students')
+      .insert({ id: student.id, ...toStudentDatabaseRow(student) })
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    let provisioned;
+    try {
+      provisioned = await this.provisionPortalUserInDatabase({
+        email,
+        password: portalPassword || rawPassword,
+        name: student.name,
+        role: 'student',
+        studentId: student.id
+      });
+    } catch (provisionError) {
+      const { error: rollbackError } = await client.from('students').delete().eq('id', student.id);
+      if (rollbackError) console.error('[Al-Amin Store] Failed to roll back student after portal account provisioning failed:', rollbackError.message);
+      throw provisionError;
+    }
+    if ('error' in provisioned) {
+      const { error: rollbackError } = await client.from('students').delete().eq('id', student.id);
+      if (rollbackError) console.error('[Al-Amin Store] Failed to roll back student after portal account provisioning failed:', rollbackError.message);
+      return provisioned;
+    }
     broadcastChange('students', 'created');
     return {
-      ...newStudent,
-      ...('credentials' in provisioned && provisioned.credentials ? { portalCredentials: provisioned.credentials } : {})
+      ...mapStudentRow(row),
+      ...(provisioned.credentials ? { portalCredentials: provisioned.credentials } : {})
     };
   },
 
-  updateStudent(id: string, updates: any) {
-    let target: any = null;
-    db.students = db.students.map((s) => {
-      if (s.id !== id) return s;
-      target = { ...s, ...updates };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('students', {
-      id: target.id,
-      name: target.name,
-      admission_number: target.admissionNumber,
-      class: target.class,
-      department: target.department || '',
-      gender: target.gender || 'Male',
-      dob: target.dob || target.dateOfBirth || '',
-      state_of_origin: target.stateOfOrigin || '',
-      lga: target.lga || '',
-      address: target.address || '',
-      email: target.email || '',
-      parent_name: target.parentName || '',
-      parent_phone: target.parentPhone || '',
-      parent_email: target.parentEmail || '',
-      parent_occupation: target.parentOccupation || '',
-      parent_relationship: target.parentRelationship || '',
-      emergency_contact: target.emergencyContact || {},
-      enrolled_subjects: target.enrolledSubjects || [],
-      attendance_rate: target.attendanceRate ?? 100,
-      gpa: String(target.gpa || '3.80'),
-      avatar_url: target.avatarUrl || '',
-      status: target.status || 'active'
-    });
+  async updateStudentInDatabase(id: string, updates: any) {
+    const client = requireServerSupabase();
+    const existing = await this.getStudentDirectoryRecord(id);
+    if (!existing) return null;
+    const merged = { ...existing, ...updates };
+    const updatePayload = toStudentDatabaseRow(merged);
+    const { data, error } = await client.from('students')
+      .update(updatePayload)
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+
+    const nextEmail = String(merged.email || '').trim().toLowerCase();
+    if (nextEmail && nextEmail !== existing.email) {
+      const emailUpdate = await this.updatePortalAccountEmailInDatabase('student', id, nextEmail, merged.name);
+      if (emailUpdate && 'error' in emailUpdate) {
+        const { error: rollbackError } = await client.from('students')
+          .update({ email: existing.email })
+          .eq('id', id);
+        if (rollbackError) console.error('[Al-Amin Store] Failed to restore student email after portal account update failed:', rollbackError.message);
+        return emailUpdate;
+      }
+    }
     broadcastChange('students', 'updated');
-    return target;
+    return mapStudentRow(data);
   },
 
-  enrollStudentSubject(studentId: string, subject: string) {
-    const student = this.getStudentById(studentId);
+  async enrollStudentSubjectInDatabase(studentId: string, subject: string) {
+    const student = await this.getStudentDirectoryRecord(studentId);
     if (!student) return null;
-    const existing = student.enrolledSubjects || [];
-    if (existing.includes(subject)) return student;
-    return this.updateStudent(studentId, { enrolledSubjects: [...existing, subject] });
+    const enrolledSubjects = student.enrolledSubjects || [];
+    if (enrolledSubjects.includes(subject)) return student;
+    return this.updateStudentInDatabase(studentId, { enrolledSubjects: [...enrolledSubjects, subject] });
   },
 
-  deleteStudent(id: string) {
-    const before = db.students.length;
-    db.students = db.students.filter((s) => s.id !== id);
-    if (db.students.length === before) return false;
-    const linkedUserIds = db.users.filter((u) => u.studentId === id).map((u) => u.id);
-    db.users = db.users.filter((u) => u.studentId !== id);
-    persistDb();
-    supabaseMirrorDelete('students', id);
-    linkedUserIds.forEach((uid) => supabaseMirrorDelete('portal_users', uid));
+  async deleteStudentFromDatabase(id: string) {
+    const client = requireServerSupabase();
+    const { data, error } = await client.from('students').delete().eq('id', id).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
+    const { error: userError } = await client.from('portal_users').delete().eq('student_id', id);
+    if (userError) throw userError;
     broadcastChange('students', 'deleted');
     return true;
   },
 
-  getTeachers(options?: {
+  async getTeachers(options?: {
     search?: string;
     class?: string;
     subject?: string;
@@ -1147,243 +1311,290 @@ export const backendStore = {
     page?: number;
     limit?: number;
   }) {
-    let list = db.teachers || [];
-
-    if (options?.status && options.status !== 'all') {
-      const st = options.status.toLowerCase().trim();
-      list = list.filter((t) => (t.status || '').toLowerCase().trim() === st);
-    }
-
+    const client = requireServerSupabase();
+    const paginated = Boolean(options?.page || options?.limit);
+    const requestedPage = Number(options?.page);
+    const requestedLimit = Number(options?.limit);
+    const page = paginated
+      ? Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1
+      : undefined;
+    const limit = paginated
+      ? Number.isInteger(requestedLimit) && requestedLimit > 0 ? Math.min(100, requestedLimit) : 10
+      : undefined;
+    let matchingTeacherIds: string[] | undefined;
     if (options?.class && options.class !== 'all') {
-      const cls = options.class.toLowerCase().trim();
-      list = list.filter((t) =>
-        (t.assignedClasses || []).some((ac: any) => (ac.class || '').toLowerCase().trim() === cls) ||
-        (t.classTeacherOf || []).some((c: string) => c.toLowerCase().trim() === cls)
-      );
+      const className = options.class.trim();
+      const [{ data: assignedTeachers, error: assignedError }, { data: classTeachers, error: classTeacherError }] = await Promise.all([
+        client.from('teachers').select('id').contains('assigned_classes', [{ class: className }]),
+        client.from('teachers').select('id').contains('class_teacher_of', [className])
+      ]);
+      if (assignedError) throw assignedError;
+      if (classTeacherError) throw classTeacherError;
+      matchingTeacherIds = [...new Set([
+        ...(assignedTeachers || []).map((teacher) => teacher.id),
+        ...(classTeachers || []).map((teacher) => teacher.id)
+      ])];
     }
-
-    if (options?.subject && options.subject !== 'all') {
-      const sub = options.subject.toLowerCase().trim();
-      list = list.filter((t) =>
-        (t.assignedClasses || []).some((ac: any) => (ac.subject || '').toLowerCase().trim() === sub)
-      );
-    }
-
-    if (options?.search) {
-      const term = options.search.toLowerCase().trim();
-      list = list.filter((t) =>
-        (t.name || '').toLowerCase().includes(term) ||
-        (t.staffId || '').toLowerCase().includes(term) ||
-        (t.email || '').toLowerCase().includes(term) ||
-        (t.qualification || '').toLowerCase().includes(term)
-      );
-    }
-
-    const total = list.length;
-
-    if (options?.page || options?.limit) {
-      const page = Math.max(1, Number(options.page || 1));
-      const limit = Math.max(1, Math.min(100, Number(options.limit || 10)));
-      const offset = (page - 1) * limit;
-      const data = list.slice(offset, offset + limit);
-
-      const totalTeachers = (db.teachers || []).length;
-      const activeTeachers = (db.teachers || []).filter((t) => t.status === 'active').length;
-      const totalAllocations = (db.teachers || []).reduce(
-        (acc, t) => acc + (t.assignedClasses ? t.assignedClasses.length : 0),
-        0
-      );
-
-      return {
-        data,
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-        stats: {
-          totalTeachers,
-          activeTeachers,
-          totalAllocations
-        }
-      };
-    }
-
-    return list;
-  },
-
-  getTeacherById(id: string) {
-    return db.teachers.find((t) => t.id === id) || null;
-  },
-
-  getTeacherByEmailOrId(email?: string, teacherId?: string) {
-    if (teacherId) {
-      const t = db.teachers.find((tch) => tch.id === teacherId);
-      if (t) return t;
-    }
-    if (email) {
-      const cleanEmail = email.trim().toLowerCase();
-      const t = db.teachers.find((tch) => tch.email && tch.email.trim().toLowerCase() === cleanEmail);
-      if (t) return t;
-    }
-    return null;
-  },
-
-  addTeacher(teacherData: any) {
-    const {
-      password: rawPass,
-      portalPassword: rawPortalPass,
-      portalCredentials: _ignoredCreds,
-      ...cleanTeacherData
-    } = teacherData || {};
-
-    const nextNum = db.teachers.length + 1;
-    const staffId = cleanTeacherData.staffId || `ASS/staff/${String(nextNum).padStart(3, '0')}`;
-    const defaultEmail = `${staffId.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@staff.alamin.sch.ng`;
-    const portalEmail = String(cleanTeacherData.email || defaultEmail).trim().toLowerCase();
-
-    const newTeacher = {
-      id: cleanTeacherData.id || `t_${Date.now()}`,
-      staffId,
-      status: 'active',
-      assignedClasses: [],
-      classTeacherOf: Array.isArray(cleanTeacherData.classTeacherOf) ? cleanTeacherData.classTeacherOf : [],
-      ...cleanTeacherData,
-      email: portalEmail
+    const buildQuery = () => {
+      let query = client.from('teachers').select('*', { count: 'exact' }).order('created_at', { ascending: false });
+      if (options?.status && options.status !== 'all') {
+        query = query.ilike('status', quotePostgrestSearch(options.status.trim()));
+      }
+      if (matchingTeacherIds) {
+        query = matchingTeacherIds.length
+          ? query.in('id', matchingTeacherIds)
+          : query.eq('id', '');
+      }
+      if (options?.subject && options.subject !== 'all') {
+        query = query.contains('assigned_classes', [{ subject: options.subject.trim() }]);
+      }
+      if (options?.search?.trim()) {
+        const pattern = `"%${quotePostgrestSearch(options.search.trim())}%"`;
+        query = query.or([
+          `name.ilike.${pattern}`,
+          `staff_id.ilike.${pattern}`,
+          `email.ilike.${pattern}`,
+          `qualification.ilike.${pattern}`
+        ].join(','));
+      }
+      if (page !== undefined && limit !== undefined) {
+        query = query.range((page - 1) * limit, page * limit - 1);
+      }
+      return query;
     };
-    db.teachers = [newTeacher, ...db.teachers];
-    persistDb();
+    const { data, error, count } = await buildQuery();
+    if (error) throw error;
+    const records = (data || []).map(mapTeacherRow);
+    if (!paginated) return records;
 
-    const provisioned = this.provisionPortalUser({
-      email: portalEmail,
-      password: rawPortalPass || rawPass,
-      name: newTeacher.name,
-      role: 'teacher',
-      teacherId: newTeacher.id
-    });
+    const [{ count: totalTeachers, error: totalError }, { count: activeTeachers, error: activeError }, { data: allocationRows, error: allocationError }] = await Promise.all([
+      client.from('teachers').select('id', { count: 'exact', head: true }),
+      client.from('teachers').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+      client.from('teachers').select('assigned_classes')
+    ]);
+    if (totalError) throw totalError;
+    if (activeError) throw activeError;
+    if (allocationError) throw allocationError;
+    const totalAllocations = (allocationRows || []).reduce(
+      (total, teacher) => total + (Array.isArray(teacher.assigned_classes) ? teacher.assigned_classes.length : 0),
+      0
+    );
+    return {
+      data: records,
+      total: count || 0,
+      page,
+      limit,
+      totalPages: Math.ceil((count || 0) / limit!),
+      stats: { totalTeachers: totalTeachers || 0, activeTeachers: activeTeachers || 0, totalAllocations }
+    };
+  },
 
-    supabaseMirrorUpsert('teachers', {
-      id: newTeacher.id,
-      name: newTeacher.name,
-      staff_id: newTeacher.staffId,
-      email: newTeacher.email || '',
-      phone: newTeacher.phone || '',
-      qualification: newTeacher.qualification || '',
-      address: newTeacher.address || '',
-      date_of_birth: newTeacher.dateOfBirth || '',
-      start_date: newTeacher.startDate || '',
-      position: newTeacher.position || 'Subject Teacher',
-      department: newTeacher.department || 'Academic Faculty',
-      emergency_contact: newTeacher.emergencyContact || {},
-      assigned_classes: newTeacher.assignedClasses,
-      class_teacher_of: newTeacher.classTeacherOf || [],
-      avatar_url: newTeacher.avatarUrl || '',
-      status: newTeacher.status
-    });
+  async getTeacherDirectoryRecord(id: string) {
+    const { data, error } = await requireServerSupabase()
+      .from('teachers')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? mapTeacherRow(data) : null;
+  },
+
+  async getTeacherDirectoryRecordByEmailOrId(email?: string, teacherId?: string) {
+    const client = requireServerSupabase();
+    if (teacherId) {
+      const byId = await this.getTeacherDirectoryRecord(teacherId);
+      if (byId) return byId;
+    }
+    if (!email) return null;
+    const { data, error } = await client.from('teachers')
+      .select('*')
+      .ilike('email', quotePostgrestSearch(email.trim()))
+      .maybeSingle();
+    if (error) throw error;
+    return data ? mapTeacherRow(data) : null;
+  },
+
+  async createTeacherInDatabase(teacherData: any) {
+    const {
+      password: rawPassword,
+      portalPassword,
+      portalCredentials: _ignoredCredentials,
+      ...input
+    } = teacherData || {};
+    const client = requireServerSupabase();
+    const { count, error: countError } = await client.from('teachers')
+      .select('id', { count: 'exact', head: true });
+    if (countError) throw countError;
+    const staffId = input.staffId || `ASS/staff/${String((count || 0) + 1).padStart(3, '0')}`;
+    const email = String(input.email || `${staffId.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@staff.alamin.sch.ng`)
+      .trim()
+      .toLowerCase();
+    const teacher = {
+      id: input.id || `t_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`,
+      ...input,
+      name: String(input.name || '').trim(),
+      staffId,
+      email,
+      status: input.status || 'active',
+      assignedClasses: Array.isArray(input.assignedClasses) ? input.assignedClasses : [],
+      classTeacherOf: Array.isArray(input.classTeacherOf) ? input.classTeacherOf : []
+    };
+    const { data: row, error } = await client.from('teachers')
+      .insert({ id: teacher.id, ...toTeacherDatabaseRow(teacher) })
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    let provisioned;
+    try {
+      provisioned = await this.provisionPortalUserInDatabase({
+        email,
+        password: portalPassword || rawPassword,
+        name: teacher.name,
+        role: 'teacher',
+        teacherId: teacher.id
+      });
+    } catch (provisionError) {
+      const { error: rollbackError } = await client.from('teachers').delete().eq('id', teacher.id);
+      if (rollbackError) console.error('[Al-Amin Store] Failed to roll back teacher after portal account provisioning failed:', rollbackError.message);
+      throw provisionError;
+    }
+    if ('error' in provisioned) {
+      const { error: rollbackError } = await client.from('teachers').delete().eq('id', teacher.id);
+      if (rollbackError) console.error('[Al-Amin Store] Failed to roll back teacher after portal account provisioning failed:', rollbackError.message);
+      return provisioned;
+    }
     broadcastChange('teachers', 'created');
     return {
-      ...newTeacher,
-      ...('credentials' in provisioned && provisioned.credentials ? { portalCredentials: provisioned.credentials } : {})
+      ...mapTeacherRow(row),
+      ...(provisioned.credentials ? { portalCredentials: provisioned.credentials } : {})
     };
   },
 
-  updateTeacher(id: string, updates: any) {
-    let target: any = null;
-    db.teachers = db.teachers.map((t) => {
-      if (t.id !== id) return t;
-      target = { ...t, ...updates };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('teachers', {
-      id: target.id,
-      name: target.name,
-      staff_id: target.staffId || '',
-      email: target.email || '',
-      phone: target.phone || '',
-      qualification: target.qualification || '',
-      address: target.address || '',
-      date_of_birth: target.dateOfBirth || '',
-      start_date: target.startDate || '',
-      position: target.position || 'Subject Teacher',
-      department: target.department || 'Academic Faculty',
-      emergency_contact: target.emergencyContact || {},
-      assigned_classes: target.assignedClasses || [],
-      class_teacher_of: target.classTeacherOf || [],
-      avatar_url: target.avatarUrl || '',
-      status: target.status || 'active'
-    });
-    broadcastChange('teachers', 'updated');
-    return target;
-  },
+  async updateTeacherInDatabase(id: string, updates: any) {
+    const client = requireServerSupabase();
+    const existing = await this.getTeacherDirectoryRecord(id);
+    if (!existing) return null;
+    const merged = { ...existing, ...updates };
+    const { data, error } = await client.from('teachers')
+      .update(toTeacherDatabaseRow(merged))
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
 
-  assignTeacherClass(teacherId: string, classSubject: { class: string; subject: string }) {
-    const teacher = this.getTeacherById(teacherId);
-    if (!teacher) return null;
-    const existing = teacher.assignedClasses || [];
-    const already = existing.some(
-      (ac: any) => ac.class === classSubject.class && ac.subject === classSubject.subject
-    );
-    if (already) return teacher;
-    return this.updateTeacher(teacherId, { assignedClasses: [...existing, classSubject] });
-  },
-
-  removeTeacherClass(teacherId: string, classSubject: any) {
-    const teacher = this.getTeacherById(teacherId);
-    if (!teacher) return null;
-    const targetClass =
-      typeof classSubject === 'object' && classSubject
-        ? classSubject.class || classSubject.className || ''
-        : String(classSubject || '');
-    const targetSubject =
-      typeof classSubject === 'object' && classSubject
-        ? classSubject.subject || classSubject.subjectName || ''
-        : '';
-    const next = (teacher.assignedClasses || []).filter(
-      (ac: any) => !(ac.class === targetClass && (!targetSubject || ac.subject === targetSubject))
-    );
-    return this.updateTeacher(teacherId, { assignedClasses: next });
-  },
-
-  deleteTeacher(id: string) {
-    const before = db.teachers.length;
-    const target = this.getTeacherById(id);
-    db.teachers = db.teachers.filter((t) => t.id !== id);
-    if (db.teachers.length === before) return false;
-
-    // Clear class_teacher on any classes this teacher owned
-    (db.classes || []).forEach((c) => {
-      if (c.classTeacherId === id) {
-        c.classTeacherId = '';
-        c.classTeacherName = '';
-        supabaseMirrorUpsert('classes', {
-          id: c.id,
-          name: c.name,
-          category: c.category,
-          class_teacher_id: '',
-          class_teacher_name: ''
-        });
+    const nextEmail = String(merged.email || '').trim().toLowerCase();
+    if (nextEmail && nextEmail !== existing.email) {
+      const emailUpdate = await this.updatePortalAccountEmailInDatabase('teacher', id, nextEmail, merged.name);
+      if (emailUpdate && 'error' in emailUpdate) {
+        const { error: rollbackError } = await client.from('teachers')
+          .update({ email: existing.email })
+          .eq('id', id);
+        if (rollbackError) console.error('[Al-Amin Store] Failed to restore teacher email after portal account update failed:', rollbackError.message);
+        return emailUpdate;
       }
-    });
+    }
+    broadcastChange('teachers', 'updated');
+    return mapTeacherRow(data);
+  },
 
-    const linkedUserIds = db.users.filter((u) => u.teacherId === id).map((u) => u.id);
-    db.users = db.users.filter((u) => u.teacherId !== id);
-    persistDb();
-    supabaseMirrorDelete('teachers', id);
-    linkedUserIds.forEach((uid) => supabaseMirrorDelete('portal_users', uid));
+  async setPortalCredentialsInDatabase(
+    role: 'teacher' | 'student',
+    entityId: string,
+    emailInput?: string,
+    passwordInput?: string
+  ) {
+    const entity = role === 'student'
+      ? await this.getStudentDirectoryRecord(entityId)
+      : await this.getTeacherDirectoryRecord(entityId);
+    if (!entity) return null;
+    const email = String(emailInput || entity.email || '').trim().toLowerCase();
+    if (!email) return { error: 'Email address is required to provision portal credentials.' };
+
+    if (email !== entity.email) {
+      const update = role === 'student'
+        ? await this.updateStudentInDatabase(entityId, { email })
+        : await this.updateTeacherInDatabase(entityId, { email });
+      if (!update) return null;
+      if ('error' in update) return update;
+    }
+    return this.provisionPortalUserInDatabase({
+      email,
+      password: passwordInput,
+      name: entity.name,
+      role,
+      studentId: role === 'student' ? entityId : undefined,
+      teacherId: role === 'teacher' ? entityId : undefined
+    });
+  },
+
+  async assignTeacherClassInDatabase(teacherId: string, classSubject: { class: string; subject: string }) {
+    const teacher = await this.getTeacherDirectoryRecord(teacherId);
+    if (!teacher) return null;
+    const assignedClasses = teacher.assignedClasses || [];
+    if (assignedClasses.some((item: any) => item.class === classSubject.class && item.subject === classSubject.subject)) {
+      return teacher;
+    }
+    return this.updateTeacherInDatabase(teacherId, {
+      assignedClasses: [...assignedClasses, classSubject]
+    });
+  },
+
+  async removeTeacherClassInDatabase(teacherId: string, classSubject: any) {
+    const teacher = await this.getTeacherDirectoryRecord(teacherId);
+    if (!teacher) return null;
+    const targetClass = typeof classSubject === 'object' && classSubject
+      ? classSubject.class || classSubject.className || ''
+      : String(classSubject || '');
+    const targetSubject = typeof classSubject === 'object' && classSubject
+      ? classSubject.subject || classSubject.subjectName || ''
+      : '';
+    const assignedClasses = (teacher.assignedClasses || []).filter(
+      (item: any) => !(item.class === targetClass && (!targetSubject || item.subject === targetSubject))
+    );
+    return this.updateTeacherInDatabase(teacherId, { assignedClasses });
+  },
+
+  async deleteTeacherFromDatabase(id: string) {
+    const client = requireServerSupabase();
+    const teacher = await this.getTeacherDirectoryRecord(id);
+    if (!teacher) return false;
+    const { error: classError } = await client.from('classes')
+      .update({ class_teacher_id: '', class_teacher_name: '' })
+      .eq('class_teacher_id', id);
+    if (classError) throw classError;
+    const { data, error } = await client.from('teachers')
+      .delete()
+      .eq('id', id)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
+    const { error: userError } = await client.from('portal_users').delete().eq('teacher_id', id);
+    if (userError) throw userError;
     broadcastChange('teachers', 'deleted');
     broadcastChange('classes', 'updated');
     return true;
   },
 
-  getTimetableSlots(className?: string) {
-    const sorted = [...db.timetable].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
-    if (!className) return sorted;
-    return sorted.filter((s) => s.class === className || s.class === 'All Classes');
+  async getTimetableSlots(className?: string) {
+    const client = requireServerSupabase();
+    const queries = className
+      ? [
+        client.from('timetable_slots').select('*').eq('class', className),
+        client.from('timetable_slots').select('*').eq('class', 'All Classes')
+      ]
+      : [client.from('timetable_slots').select('*')];
+    const results = await Promise.all(queries);
+    const failed = results.find(({ error }) => error);
+    if (failed?.error) throw failed.error;
+    return results.flatMap(({ data }) => mapDatabaseRows(data))
+      .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   },
 
-  addTimetableSlot(slotData: any) {
-    const defaultCls = (db.classes && db.classes[0]?.name) || 'JSS 1';
+  async addTimetableSlot(slotData: any) {
+    const defaultCls = await this.getDefaultClassName();
     const newSlot = {
       id: slotData.id || `tt_${Date.now()}`,
       type: 'lesson',
@@ -1391,76 +1602,54 @@ export const backendStore = {
       ...slotData,
       updatedAt: new Date().toISOString()
     };
-    db.timetable.push(newSlot);
-    persistDb();
-    supabaseMirrorUpsert('timetable_slots', {
-      id: newSlot.id,
-      class: newSlot.class,
-      day: newSlot.day,
-      start_time: newSlot.startTime,
-      end_time: newSlot.endTime,
-      type: newSlot.type,
-      title: newSlot.title || newSlot.subject || '',
-      subject: newSlot.subject || '',
-      teacher_id: newSlot.teacherId || '',
-      teacher_name: newSlot.teacherName || '',
-      notes: newSlot.notes || '',
-      updated_by: newSlot.updatedBy || '',
-      updated_at: newSlot.updatedAt
-    });
+    const { data, error } = await requireServerSupabase().from('timetable_slots')
+      .insert({
+        ...toDatabaseRow(newSlot),
+        title: newSlot.title || newSlot.subject || ''
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
     broadcastChange('timetable_slots', 'created');
-    return newSlot;
+    return mapDatabaseRow(data);
   },
 
-  updateTimetableSlot(id: string, patch: any) {
-    let target: any = null;
-    db.timetable = db.timetable.map((s) => {
-      if (s.id !== id) return s;
-      target = { ...s, ...patch, updatedAt: new Date().toISOString() };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('timetable_slots', {
-      id: target.id,
-      class: target.class,
-      day: target.day,
-      start_time: target.startTime,
-      end_time: target.endTime,
-      type: target.type,
-      title: target.title || target.subject || '',
-      subject: target.subject || '',
-      teacher_id: target.teacherId || '',
-      teacher_name: target.teacherName || '',
-      notes: target.notes || '',
-      updated_by: target.updatedBy || '',
-      updated_at: target.updatedAt
-    });
+  async updateTimetableSlot(id: string, patch: any) {
+    const { data, error } = await requireServerSupabase().from('timetable_slots')
+      .update({
+        ...toDatabaseRow({ ...patch, updatedAt: new Date().toISOString() }),
+        ...(patch.title === undefined && patch.subject !== undefined ? { title: patch.subject } : {})
+      })
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
     broadcastChange('timetable_slots', 'updated');
-    return target;
+    return mapDatabaseRow(data);
   },
 
-  deleteTimetableSlot(id: string) {
-    const before = db.timetable.length;
-    db.timetable = db.timetable.filter((s) => s.id !== id);
-    if (db.timetable.length === before) return false;
-    persistDb();
-    supabaseMirrorDelete('timetable_slots', id);
+  async deleteTimetableSlot(id: string) {
+    const { data, error } = await requireServerSupabase().from('timetable_slots')
+      .delete().eq('id', id).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
     broadcastChange('timetable_slots', 'deleted');
     return true;
   },
 
-  rescheduleTeacherSlot(
+  async rescheduleTeacherSlot(
     slotId: string,
     targetDay: string,
     targetStartTime: string,
     targetEndTime: string,
     actorTeacherName: string
   ) {
-    const targetSlot = db.timetable.find((s) => s.id === slotId);
+    const allSlots = await this.getTimetableSlots();
+    const targetSlot = allSlots.find((s) => s.id === slotId);
     if (!targetSlot) return { success: false, message: 'Class period not found.' };
 
-    const fixedBlock = db.timetable.find(
+    const fixedBlock = allSlots.find(
       (s) =>
         s.id !== slotId &&
         s.day === targetDay &&
@@ -1480,7 +1669,7 @@ export const backendStore = {
     const oldStart = targetSlot.startTime;
     const oldEnd = targetSlot.endTime;
 
-    const occupiedLesson = db.timetable.find(
+    const occupiedLesson = allSlots.find(
       (s) =>
         s.id !== slotId &&
         s.day === targetDay &&
@@ -1492,7 +1681,7 @@ export const backendStore = {
     const changedSlots: any[] = [];
     const affectedTeacher = occupiedLesson ? occupiedLesson.teacherName : null;
 
-    db.timetable = db.timetable.map((s) => {
+    allSlots.forEach((s) => {
       if (s.id === slotId) {
         const next = {
           ...s,
@@ -1503,7 +1692,7 @@ export const backendStore = {
           updatedAt: new Date().toISOString()
         };
         changedSlots.push(next);
-        return next;
+        return;
       }
       if (occupiedLesson && s.id === occupiedLesson.id) {
         const next = {
@@ -1515,9 +1704,8 @@ export const backendStore = {
           updatedAt: new Date().toISOString()
         };
         changedSlots.push(next);
-        return next;
+        return;
       }
-      return s;
     });
 
     const timestamp = new Date().toISOString();
@@ -1559,39 +1747,29 @@ export const backendStore = {
       });
     }
 
-    db.alerts = [...newAlerts, ...db.alerts];
-    persistDb();
-    supabaseMirrorUpsert(
-      'timetable_slots',
-      changedSlots.map((s) => ({
-        id: s.id,
-        class: s.class,
-        day: s.day,
-        start_time: s.startTime,
-        end_time: s.endTime,
-        type: s.type,
-        title: s.title || s.subject || '',
-        subject: s.subject || '',
-        teacher_id: s.teacherId || '',
-        teacher_name: s.teacherName || '',
-        notes: s.notes || '',
-        updated_by: s.updatedBy || '',
-        updated_at: s.updatedAt
-      }))
-    );
-    supabaseMirrorUpsert(
-      'timetable_alerts',
-      newAlerts.map((a) => ({
-        id: a.id,
-        role: a.role,
-        target_class: a.targetClass || '',
-        target_teacher: a.targetTeacher || '',
-        title: a.title,
-        message: a.message,
-        read: a.read,
-        created_at: a.createdAt
-      }))
-    );
+    const client = requireServerSupabase();
+    const slotUpdates = await Promise.all(changedSlots.map((slot) => client.from('timetable_slots')
+      .update({
+        day: slot.day,
+        start_time: slot.startTime,
+        end_time: slot.endTime,
+        updated_by: slot.updatedBy,
+        updated_at: slot.updatedAt
+      })
+      .eq('id', slot.id)));
+    const failedSlotUpdate = slotUpdates.find(({ error }) => error);
+    if (failedSlotUpdate?.error) throw failedSlotUpdate.error;
+    const { error: alertError } = await client.from('timetable_alerts').insert(newAlerts.map((alert) => ({
+      id: alert.id,
+      role: alert.role,
+      target_class: alert.targetClass || '',
+      target_teacher: alert.targetTeacher || '',
+      title: alert.title,
+      message: alert.message,
+      read: alert.read,
+      created_at: alert.createdAt
+    })));
+    if (alertError) throw alertError;
     broadcastChange('timetable_slots', 'updated');
     broadcastChange('timetable_alerts', 'created');
 
@@ -1604,37 +1782,58 @@ export const backendStore = {
     };
   },
 
-  getAlerts() {
-    return db.alerts;
+  async getAlerts(role?: string) {
+    let query = requireServerSupabase().from('timetable_alerts').select('*').order('created_at', { ascending: false });
+    if (role) query = query.in('role', [role, 'all']);
+    const { data, error } = await query;
+    if (error) throw error;
+    return mapDatabaseRows(data).map((alert) => ({
+      ...alert,
+      targetRole: alert.role,
+      targetClass: alert.targetClass,
+      targetTeacher: alert.targetTeacher
+    }));
   },
 
-  dismissAlert(id: string) {
-    const before = db.alerts.length;
-    db.alerts = db.alerts.filter((a) => a.id !== id);
-    if (db.alerts.length === before) return false;
-    persistDb();
-    supabaseMirrorDelete('timetable_alerts', id);
+  async dismissAlert(id: string) {
+    const { data, error } = await requireServerSupabase().from('timetable_alerts')
+      .delete().eq('id', id).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
     broadcastChange('timetable_alerts', 'deleted');
     return true;
   },
 
-  getAttendance() {
-    return db.attendance;
+  async getAttendance(date?: string, className?: string) {
+    let query = requireServerSupabase().from('attendance_records').select('*');
+    if (date) query = query.eq('date', date);
+    if (className) query = query.eq('class_name', className);
+    const { data, error } = await query.order('date', { ascending: false });
+    if (error) throw error;
+    return Object.fromEntries((data || []).map((row) => [row.record_key, {
+      date: row.date,
+      className: row.class_name,
+      submittedBy: row.submitted_by,
+      timestamp: row.timestamp_label,
+      records: row.records || {}
+    }]));
   },
 
-  saveClassAttendance(date: string, className: string, submittedBy: string, records: Record<string, any>) {
+  async saveClassAttendance(date: string, className: string, submittedBy: string, records: Record<string, any>) {
     const key = `${date}_${className}`;
-    const classStudents = (db.students || []).filter((s) => s.class === className);
+    const client = requireServerSupabase();
+    const { data: classStudents, error: studentsError } = await client.from('students')
+      .select('id')
+      .eq('class', className);
+    if (studentsError) throw studentsError;
     const binaryRecords: Record<string, 'present' | 'absent'> = {};
 
-    // For every student in this class: marked present if checked/present, else absent!
-    classStudents.forEach((student) => {
+    (classStudents || []).forEach((student) => {
       const val = records ? records[student.id] : undefined;
       const isPresent = val === 'present' || val === true || val === 'Present' || val === 1;
       binaryRecords[student.id] = isPresent ? 'present' : 'absent';
     });
 
-    // Also include any other student records passed
     if (records) {
       Object.entries(records).forEach(([id, val]) => {
         if (!(id in binaryRecords)) {
@@ -1651,49 +1850,58 @@ export const backendStore = {
       timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
       records: binaryRecords
     };
-    db.attendance[key] = entry;
-    persistDb();
-    supabaseMirrorUpsert(
-      'attendance_records',
-      {
-        record_key: key,
-        date,
-        class_name: className,
-        submitted_by: submittedBy,
-        timestamp_label: entry.timestamp,
-        records: entry.records,
-        updated_at: new Date().toISOString()
-      },
-      'record_key'
-    );
+    const { error } = await client.from('attendance_records').upsert({
+      record_key: key,
+      date,
+      class_name: className,
+      submitted_by: submittedBy,
+      timestamp_label: entry.timestamp,
+      records: entry.records,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'record_key' });
+    if (error) throw error;
 
-    // Update attendance_rate on students in this class
-    classStudents.forEach((st) => {
-      const history = this.getStudentAttendanceHistory(st.id);
-      st.attendanceRate = history.attendanceRate;
-      supabaseMirrorUpsert('students', {
-        id: st.id,
-        name: st.name,
-        attendance_rate: st.attendanceRate
-      });
+    const { data: attendanceRows, error: attendanceError } = await client.from('attendance_records')
+      .select('records')
+      .eq('class_name', className);
+    if (attendanceError) throw attendanceError;
+    const rates = (classStudents || []).map((student) => {
+      const history = (attendanceRows || []).map((row) => row.records?.[student.id]).filter(Boolean);
+      const present = history.filter((status) => status === 'present' || status === true || status === 'Present').length;
+      return client.from('students').update({
+        attendance_rate: history.length ? Math.round((present / history.length) * 100) : 0
+      }).eq('id', student.id);
     });
+    const rateResults = await Promise.all(rates);
+    const failedRateUpdate = rateResults.find(({ error: updateError }) => updateError);
+    if (failedRateUpdate?.error) throw failedRateUpdate.error;
 
     broadcastChange('attendance_records', 'updated');
     return entry;
   },
 
-  getStudentAttendanceHistory(studentId: string) {
+  async getStudentAttendanceHistory(studentId: string) {
+    const student = await this.getStudentDirectoryRecord(studentId);
+    if (!student) return {
+      student: null, logs: [], totalDays: 0, presentCount: 0, lateCount: 0,
+      absentCount: 0, attendanceRate: 0, punctualityRate: 0
+    };
+    const { data, error } = await requireServerSupabase().from('attendance_records')
+      .select('date,class_name,submitted_by,timestamp_label,records')
+      .eq('class_name', student.class)
+      .order('date', { ascending: false });
+    if (error) throw error;
     const logs: any[] = [];
-    Object.values(db.attendance).forEach((entry: any) => {
+    (data || []).forEach((entry) => {
       if (entry.records && entry.records[studentId]) {
         const rawStatus = entry.records[studentId];
         const status = (rawStatus === 'present' || rawStatus === true || rawStatus === 'Present') ? 'present' : 'absent';
         logs.push({
           date: entry.date,
-          className: entry.className,
+          className: entry.class_name,
           status,
-          submittedBy: entry.submittedBy,
-          timestamp: entry.timestamp
+          submittedBy: entry.submitted_by,
+          timestamp: entry.timestamp_label
         });
       }
     });
@@ -1701,7 +1909,6 @@ export const backendStore = {
     const total = logs.length;
     const presentCount = logs.filter((l) => l.status === 'present').length;
     const absentCount = logs.filter((l) => l.status === 'absent').length;
-    const student = this.getStudentById(studentId);
     const rate = total > 0 ? Math.round((presentCount / total) * 100) : 0;
 
     return {
@@ -1716,11 +1923,31 @@ export const backendStore = {
     };
   },
 
-  getGrades() {
-    return db.grades;
+  async getGrades(studentIds?: string[]) {
+    if (studentIds && studentIds.length === 0) return {};
+    let query = requireServerSupabase().from('grades').select('*');
+    if (studentIds) query = query.in('student_id', studentIds);
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data || []).reduce((result: Record<string, any>, row) => {
+      const key = `${row.student_id}_${row.session}_${row.term}_${row.subject}`;
+      result[row.student_id] ||= {};
+      result[row.student_id][key] = {
+        ca1: Number(row.ca1),
+        ca2: Number(row.ca2),
+        exam: Number(row.exam),
+        total: Number(row.total),
+        grade: row.grade,
+        remark: row.remark,
+        session: row.session,
+        term: row.term,
+        subject: row.subject
+      };
+      return result;
+    }, {});
   },
 
-  saveGrade(studentId: string, term: string, subject: string, gradeEntry: any, session = '2026/2027') {
+  async saveGrade(studentId: string, term: string, subject: string, gradeEntry: any, session = '2026/2027') {
     const key = `${studentId}_${session}_${term}_${subject}`;
     const ca1 = Number(gradeEntry.ca1 || 0);
     const ca2 = Number(gradeEntry.ca2 || 0);
@@ -1737,35 +1964,37 @@ export const backendStore = {
       session,
       term
     };
-    db.grades[key] = entry;
-    persistDb();
-    supabaseMirrorUpsert(
-      'grades',
-      {
-        grade_key: key,
-        student_id: studentId,
-        session,
-        term,
-        subject,
-        ca1,
-        ca2,
-        exam,
-        total,
-        grade: entry.grade,
-        remark: entry.remark,
-        updated_at: new Date().toISOString()
-      },
-      'grade_key'
-    );
+    const { error } = await requireServerSupabase().from('grades').upsert({
+      grade_key: key,
+      student_id: studentId,
+      session,
+      term,
+      subject,
+      ca1,
+      ca2,
+      exam,
+      total,
+      grade: entry.grade,
+      remark: entry.remark,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'grade_key' });
+    if (error) throw error;
     broadcastChange('grades', 'updated');
     return entry;
   },
 
-  getStudentSubjectGrade(studentId: string, term: string, subject: string, session = '2026/2027') {
+  async getStudentSubjectGrade(studentId: string, term: string, subject: string, session = '2026/2027') {
     const sessionKey = `${studentId}_${session}_${term}_${subject}`;
-    if (db.grades[sessionKey]) return { ...db.grades[sessionKey], isRecorded: true };
-    const legacyKey = `${studentId}_${term}_${subject}`;
-    if (session === '2026/2027' && db.grades[legacyKey]) return { ...db.grades[legacyKey], isRecorded: true };
+    const { data, error } = await requireServerSupabase().from('grades')
+      .select('ca1,ca2,exam,total,grade,remark,session,term')
+      .eq('grade_key', sessionKey)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return {
+      ca1: Number(data.ca1), ca2: Number(data.ca2), exam: Number(data.exam),
+      total: Number(data.total), grade: data.grade, remark: data.remark,
+      session: data.session, term: data.term, isRecorded: true
+    };
 
     return {
       ca1: 0,
@@ -1778,26 +2007,46 @@ export const backendStore = {
     };
   },
 
-  getStudentReportCard(studentId: string, term = 'Term1', session = '2026/2027') {
-    const rawStudent = this.getStudentById(studentId);
+  async getStudentReportCard(studentId: string, term = 'Term1', session = '2026/2027') {
+    const rawStudent = await this.getStudentDirectoryRecord(studentId);
     if (!rawStudent) return null;
     const student = {
       ...rawStudent,
       dateOfBirth: rawStudent.dateOfBirth || rawStudent.dob || 'Not Provided'
     };
-    const validClassSubjects = this.getSubjectsForClass(student.class, student.department);
+    const validClassSubjects = await this.getSubjectsForClass(student.class, student.department);
     const subjects = (student.enrolledSubjects && student.enrolledSubjects.length > 0)
       ? student.enrolledSubjects.filter((s: string) => validClassSubjects.includes(s))
       : validClassSubjects.slice(0, 6);
     const effectiveSubjects = subjects.length > 0 ? subjects : validClassSubjects.slice(0, 6);
 
+    const client = requireServerSupabase();
+    const { data: classStudents, error: studentsError } = await client.from('students')
+      .select('id')
+      .eq('class', student.class);
+    if (studentsError) throw studentsError;
+    const classStudentIds = (classStudents || []).map((item) => item.id);
+    const gradeRows = classStudentIds.length
+      ? await client.from('grades').select('student_id,subject,ca1,ca2,exam,total,grade,remark')
+        .in('student_id', classStudentIds)
+        .eq('session', session)
+        .eq('term', term)
+      : { data: [], error: null };
+    if (gradeRows.error) throw gradeRows.error;
+    const scoreMap = new Map<string, any>();
+    (gradeRows.data || []).forEach((row) => scoreMap.set(`${row.student_id}_${row.subject}`, {
+      ca1: Number(row.ca1), ca2: Number(row.ca2), exam: Number(row.exam),
+      total: Number(row.total), grade: row.grade, remark: row.remark, isRecorded: true
+    }));
+    const scoreFor = (id: string, subjectName: string) => scoreMap.get(`${id}_${subjectName}`) || {
+      ca1: 0, ca2: 0, exam: 0, total: 0, grade: '-', remark: 'Not Graded', isRecorded: false
+    };
     const subjectScores = effectiveSubjects.map((sub: string) => {
-      const score = this.getStudentSubjectGrade(studentId, term, sub, session);
-      const classStudents = db.students.filter((s) => s.class === student.class);
+      const score = scoreFor(studentId, sub);
       let position = '-';
-      if (score.total > 0 && classStudents.length > 0) {
-        const totals = classStudents
-          .map((cs) => this.getStudentSubjectGrade(cs.id, term, sub, session).total)
+      if (score.total > 0 && classStudentIds.length > 0) {
+        const totals = classStudentIds
+          .map((id) => scoreFor(id, sub).total)
           .sort((a, b) => b - a);
         const rankNum = Math.max(1, totals.indexOf(score.total) + 1);
         const suffix = rankNum === 1 ? 'st' : rankNum === 2 ? 'nd' : rankNum === 3 ? 'rd' : 'th';
@@ -1810,7 +2059,7 @@ export const backendStore = {
     const totalObtained = subjectScores.reduce((sum: number, r: any) => sum + r.total, 0);
     const maxTotal = subjectScores.length * 100;
     const average = recordedScores.length > 0 ? (totalObtained / recordedScores.length).toFixed(1) : '0.0';
-    const att = this.getStudentAttendanceHistory(studentId);
+    const att = await this.getStudentAttendanceHistory(studentId);
     const avgNum = parseFloat(average);
     const overallRemark =
       recordedScores.length === 0
@@ -1828,20 +2077,19 @@ export const backendStore = {
       Term3: 'Third Term'
     };
 
-    const classStudents = db.students.filter((s) => s.class === student.class);
     let position = '-';
-    if (recordedScores.length > 0 && classStudents.length > 0) {
-      const cohortTotals = classStudents
-        .map((cs) =>
+    if (recordedScores.length > 0 && classStudentIds.length > 0) {
+      const cohortTotals = classStudentIds
+        .map((id) =>
           effectiveSubjects.reduce(
-            (sum: number, sub: string) => sum + this.getStudentSubjectGrade(cs.id, term, sub, session).total,
+            (sum: number, sub: string) => sum + scoreFor(id, sub).total,
             0
           )
         )
         .sort((a, b) => b - a);
       const rankNum = Math.max(1, cohortTotals.indexOf(totalObtained) + 1);
       const suffix = rankNum === 1 ? 'st' : rankNum === 2 ? 'nd' : rankNum === 3 ? 'rd' : 'th';
-      position = `${rankNum}${suffix} out of ${classStudents.length}`;
+      position = `${rankNum}${suffix} out of ${classStudentIds.length}`;
     }
 
     return {
@@ -1873,11 +2121,17 @@ export const backendStore = {
     };
   },
 
-  getResources() {
-    return db.resources;
+  async getResources() {
+    const { data, error } = await requireServerSupabase().from('resources').select('*').order('upload_date', { ascending: false });
+    if (error) throw error;
+    return (data || []).map((row) => ({
+      ...mapDatabaseRow(row),
+      allClasses: (row.classes || []).includes('All Classes'),
+      classes: row.classes || ['All Classes']
+    }));
   },
 
-  addResource(data: any) {
+  async addResource(data: any) {
     const newItem = {
       id: data.id || `res_${Date.now()}`,
       uploadDate: new Date().toISOString().split('T')[0],
@@ -1885,74 +2139,87 @@ export const backendStore = {
       status: 'active',
       ...data
     };
-    db.resources = [newItem, ...db.resources];
-    persistDb();
-    supabaseMirrorUpsert('resources', {
-      id: newItem.id,
-      title: newItem.title,
-      type: newItem.type || 'document',
-      subject: newItem.subject || '',
-      description: newItem.description || '',
-      classes: newItem.classes || ['All Classes'],
-      access_level: newItem.accessLevel || 'students',
-      file_name: newItem.fileName || '',
-      file_size: newItem.fileSize || '',
-      file_path: newItem.filePath || '',
-      file_url: newItem.fileUrl || '',
-      uploaded_by: newItem.uploadedBy || '',
-      upload_date: newItem.uploadDate,
-      downloads: newItem.downloads,
-      status: newItem.status
-    });
+    const { data: row, error } = await requireServerSupabase().from('resources')
+      .insert({
+        id: newItem.id,
+        title: newItem.title,
+        type: newItem.type || 'document',
+        subject: newItem.subject || '',
+        description: newItem.description || '',
+        classes: newItem.classes || ['All Classes'],
+        access_level: newItem.accessLevel || 'students',
+        file_name: newItem.fileName || '',
+        file_size: newItem.fileSize || '',
+        file_path: newItem.filePath || '',
+        file_url: newItem.fileUrl || '',
+        uploaded_by: newItem.uploadedBy || '',
+        upload_date: newItem.uploadDate,
+        downloads: newItem.downloads,
+        status: newItem.status
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
     broadcastChange('resources', 'created');
-    return newItem;
+    return { ...mapDatabaseRow(row), allClasses: (row.classes || []).includes('All Classes') };
   },
 
-  updateResource(id: string, patch: any) {
-    let target: any = null;
-    db.resources = db.resources.map((r) => {
-      if (r.id !== id) return r;
-      target = { ...r, ...patch };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('resources', {
-      id: target.id,
-      title: target.title,
-      type: target.type || 'document',
-      subject: target.subject || '',
-      description: target.description || '',
-      classes: target.classes || ['All Classes'],
-      access_level: target.accessLevel || 'students',
-      file_name: target.fileName || '',
-      file_size: target.fileSize || '',
-      file_path: target.filePath || '',
-      file_url: target.fileUrl || '',
-      uploaded_by: target.uploadedBy || '',
-      upload_date: target.uploadDate || '',
-      downloads: target.downloads ?? 0,
-      status: target.status || 'active'
-    });
+  async updateResource(id: string, patch: any) {
+    const payload = toDatabaseRow(patch);
+    delete payload.all_classes;
+    const { data, error } = await requireServerSupabase().from('resources')
+      .update(payload)
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
     broadcastChange('resources', 'updated');
-    return target;
+    return { ...mapDatabaseRow(data), allClasses: (data.classes || []).includes('All Classes') };
   },
 
-  deleteResource(id: string) {
-    const before = db.resources.length;
-    db.resources = db.resources.filter((r) => r.id !== id);
-    if (db.resources.length === before) return false;
-    persistDb();
-    supabaseMirrorDelete('resources', id);
+  async deleteResource(id: string) {
+    const { data, error } = await requireServerSupabase().from('resources')
+      .delete().eq('id', id).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
     broadcastChange('resources', 'deleted');
     return true;
   },
 
-  getEquipment() {
-    return db.equipment;
+  async getEquipment(search = '', page?: number, limit?: number) {
+    const client = requireServerSupabase();
+    const escapedSearch = search.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const buildQuery = (requestedPage = page) => {
+      let query = client.from('equipment').select('*', { count: 'exact' }).order('name', { ascending: true });
+      if (search) {
+        const pattern = `"%${escapedSearch}%"`;
+        query = query.or(`name.ilike.${pattern},category.ilike.${pattern},location.ilike.${pattern}`);
+      }
+      if (requestedPage !== undefined && limit !== undefined) {
+        query = query.range((requestedPage - 1) * limit, requestedPage * limit - 1);
+      }
+      return query;
+    };
+
+    let { data, error, count } = await buildQuery();
+    if (error) throw error;
+
+    if (page !== undefined && limit !== undefined && count !== null) {
+      const totalPages = Math.ceil(count / limit);
+      const lastPage = Math.max(totalPages, 1);
+      const normalizedPage = Math.min(page, lastPage);
+      if (normalizedPage !== page) {
+        ({ data, error } = await buildQuery(normalizedPage));
+        if (error) throw error;
+        page = normalizedPage;
+      }
+    }
+
+    return { data: (data || []).map(mapEquipmentRow), total: count || 0, page, limit };
   },
 
-  addEquipment(data: any) {
+  async addEquipment(data: any) {
     const newItem = {
       id: data.id || `eq_${Date.now()}`,
       addedDate: new Date().toISOString().split('T')[0],
@@ -1960,9 +2227,7 @@ export const backendStore = {
       quantity: Number(data.quantity ?? 1),
       ...data
     };
-    db.equipment = [newItem, ...db.equipment];
-    persistDb();
-    supabaseMirrorUpsert('equipment', {
+    const { data: row, error } = await requireServerSupabase().from('equipment').insert({
       id: newItem.id,
       name: newItem.name,
       category: newItem.category || 'Laboratory',
@@ -1971,35 +2236,67 @@ export const backendStore = {
       location: newItem.location || '',
       condition: newItem.condition || 'Good',
       added_date: newItem.addedDate
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('equipment', 'created');
-    return newItem;
+    return mapEquipmentRow(row);
   },
 
-  deleteEquipment(id: string) {
-    const before = db.equipment.length;
-    db.equipment = db.equipment.filter((e) => e.id !== id);
-    if (db.equipment.length === before) return false;
-    persistDb();
-    supabaseMirrorDelete('equipment', id);
+  async deleteEquipment(id: string) {
+    const { data, error } = await requireServerSupabase()
+      .from('equipment')
+      .delete()
+      .eq('id', id)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
     broadcastChange('equipment', 'deleted');
     return true;
   },
 
-  getMaintenance() {
-    return db.maintenance;
+  async getMaintenance(search = '', page?: number, limit?: number) {
+    const client = requireServerSupabase();
+    const escapedSearch = search.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    let query = client.from('maintenance_requests').select('*', { count: 'exact' })
+      .order('reported_date', { ascending: false });
+    if (search) {
+      query = query.or(`item_name.ilike."%${escapedSearch}%",issue.ilike."%${escapedSearch}%"`);
+    }
+    if (page !== undefined && limit !== undefined) {
+      query = query.range((page - 1) * limit, page * limit - 1);
+    }
+    let { data, error, count } = await query;
+    if (error) throw error;
+    if (page !== undefined && limit !== undefined && count !== null) {
+      const normalizedPage = Math.min(page, Math.max(Math.ceil(count / limit), 1));
+      if (normalizedPage !== page) {
+        let retry = client.from('maintenance_requests').select('*', { count: 'exact' })
+          .order('reported_date', { ascending: false });
+        if (search) {
+          retry = retry.or(`item_name.ilike."%${escapedSearch}%",issue.ilike."%${escapedSearch}%"`);
+        }
+        ({ data, error } = await retry.range((normalizedPage - 1) * limit, normalizedPage * limit - 1));
+        if (error) throw error;
+        page = normalizedPage;
+      }
+    }
+    const { count: openCount, error: countError } = await client
+      .from('maintenance_requests')
+      .select('id', { count: 'exact', head: true })
+      .neq('status', 'completed');
+    if (countError) throw countError;
+    return { data: (data || []).map(mapMaintenanceRow), total: count || 0, openCount: openCount || 0, page, limit };
   },
 
-  addMaintenance(data: any) {
+  async addMaintenance(data: any) {
     const newItem = {
       id: data.id || `mnt_${Date.now()}`,
       reportedDate: new Date().toISOString().split('T')[0],
       status: 'pending',
       ...data
     };
-    db.maintenance = [newItem, ...db.maintenance];
-    persistDb();
-    supabaseMirrorUpsert('maintenance_requests', {
+    const { data: row, error } = await requireServerSupabase().from('maintenance_requests').insert({
       id: newItem.id,
       item_name: newItem.itemName,
       issue: newItem.issue || '',
@@ -2007,38 +2304,31 @@ export const backendStore = {
       status: newItem.status,
       reported_date: newItem.reportedDate,
       reported_by: newItem.reportedBy || ''
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('maintenance_requests', 'created');
-    return newItem;
+    return mapMaintenanceRow(row);
   },
 
-  updateMaintenanceStatus(id: string, status: string) {
-    let target: any = null;
-    db.maintenance = db.maintenance.map((m) => {
-      if (m.id !== id) return m;
-      target = { ...m, status };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('maintenance_requests', {
-      id: target.id,
-      item_name: target.itemName,
-      issue: target.issue || '',
-      priority: target.priority || 'medium',
-      status: target.status,
-      reported_date: target.reportedDate || '',
-      reported_by: target.reportedBy || ''
-    });
+  async updateMaintenanceStatus(id: string, status: string) {
+    const { data, error } = await requireServerSupabase().from('maintenance_requests')
+      .update({ status })
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
     broadcastChange('maintenance_requests', 'updated');
-    return target;
+    return mapMaintenanceRow(data);
   },
 
-  getDocuments() {
-    return db.documents;
+  async getDocuments() {
+    const { data, error } = await requireServerSupabase().from('documents').select('*').order('upload_date', { ascending: false });
+    if (error) throw error;
+    return mapDatabaseRows(data);
   },
 
-  addDocument(data: any) {
+  async addDocument(data: any) {
     const newDoc = {
       id: data.id || `doc_${Date.now()}`,
       uploadDate: new Date().toISOString().split('T')[0],
@@ -2048,9 +2338,7 @@ export const backendStore = {
       accessLevel: 'all',
       ...data
     };
-    db.documents = [newDoc, ...db.documents];
-    persistDb();
-    supabaseMirrorUpsert('documents', {
+    const { data: row, error } = await requireServerSupabase().from('documents').insert({
       id: newDoc.id,
       name: newDoc.name,
       category: newDoc.category || 'Policy & Handbook',
@@ -2067,57 +2355,46 @@ export const backendStore = {
       upload_date: newDoc.uploadDate,
       downloads: newDoc.downloads,
       status: newDoc.status
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('documents', 'created');
-    return newDoc;
+    return mapDatabaseRow(row);
   },
 
-  updateDocumentAccess(id: string, accessLevel: string, allowedClasses = ['All Classes']) {
-    let target: any = null;
-    db.documents = db.documents.map((d) => {
-      if (d.id !== id) return d;
-      target = { ...d, accessLevel, allowedClasses };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('documents', {
-      id: target.id,
-      name: target.name,
-      category: target.category || 'Policy & Handbook',
-      type: target.type || 'PDF',
-      size: target.size || '',
-      file_name: target.fileName || '',
-      file_path: target.filePath || '',
-      file_url: target.fileUrl || '',
-      folder_id: target.folderId || target.category || '',
-      access_level: target.accessLevel,
-      allowed_classes: target.allowedClasses,
-      description: target.description || '',
-      uploaded_by: target.uploadedBy || '',
-      upload_date: target.uploadDate || '',
-      downloads: target.downloads ?? 0,
-      status: target.status || 'active'
-    });
+  async updateDocumentAccess(id: string, accessLevel: string, allowedClasses = ['All Classes']) {
+    const { data, error } = await requireServerSupabase().from('documents')
+      .update({ access_level: accessLevel, allowed_classes: allowedClasses })
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
     broadcastChange('documents', 'updated');
-    return target;
+    return mapDatabaseRow(data);
   },
 
-  deleteDocument(id: string) {
-    const before = db.documents.length;
-    db.documents = db.documents.filter((d) => d.id !== id);
-    if (db.documents.length === before) return false;
-    persistDb();
-    supabaseMirrorDelete('documents', id);
+  async deleteDocument(id: string) {
+    const { data, error } = await requireServerSupabase().from('documents').delete()
+      .eq('id', id).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
     broadcastChange('documents', 'deleted');
     return true;
   },
 
-  getAnnouncements() {
-    return db.announcements;
+  async getAnnouncements() {
+    const { data, error } = await requireServerSupabase().from('announcements')
+      .select('*')
+      .order('is_pinned', { ascending: false })
+      .order('date', { ascending: false });
+    if (error) throw error;
+    return (data || []).map((row) => ({
+      ...mapDatabaseRow(row),
+      targetAudiences: row.target_audiences || ['Everyone']
+    }));
   },
 
-  addAnnouncement(data: any) {
+  async addAnnouncement(data: any) {
     const newAnn = {
       id: data.id || `ann_${Date.now()}`,
       date: new Date().toISOString().split('T')[0],
@@ -2128,9 +2405,7 @@ export const backendStore = {
       targetAudiences: ['Everyone'],
       ...data
     };
-    db.announcements = [newAnn, ...db.announcements];
-    persistDb();
-    supabaseMirrorUpsert('announcements', {
+    const { data: row, error } = await requireServerSupabase().from('announcements').insert({
       id: newAnn.id,
       title: newAnn.title,
       content: newAnn.content,
@@ -2147,65 +2422,50 @@ export const backendStore = {
       target_audiences: newAnn.targetAudiences,
       attachments: newAnn.attachments,
       views: newAnn.views
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('announcements', 'created');
-    return newAnn;
+    return { ...mapDatabaseRow(row), targetAudiences: row.target_audiences || ['Everyone'] };
   },
 
-  updateAnnouncement(id: string, patch: any) {
-    let target: any = null;
-    db.announcements = db.announcements.map((a) => {
-      if (a.id !== id) return a;
-      target = { ...a, ...patch };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('announcements', {
-      id: target.id,
-      title: target.title,
-      content: target.content,
-      type: target.type || 'general',
-      priority: target.priority || 'medium',
-      author: target.author || '',
-      author_role: target.authorRole || '',
-      date: target.date || '',
-      event_date: target.eventDate || '',
-      event_time: target.eventTime || '',
-      location: target.location || '',
-      is_pinned: Boolean(target.isPinned),
-      status: target.status || 'published',
-      target_audiences: target.targetAudiences || ['Everyone'],
-      attachments: target.attachments || [],
-      views: target.views ?? 0
-    });
+  async updateAnnouncement(id: string, patch: any) {
+    const payload = toDatabaseRow(patch);
+    if (patch.targetAudience !== undefined && patch.targetAudiences === undefined) {
+      payload.target_audiences = patch.targetAudience;
+      delete payload.target_audience;
+    }
+    const { data, error } = await requireServerSupabase().from('announcements')
+      .update(payload).eq('id', id).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
     broadcastChange('announcements', 'updated');
-    return target;
+    return { ...mapDatabaseRow(data), targetAudiences: data.target_audiences || ['Everyone'] };
   },
 
-  deleteAnnouncement(id: string) {
-    const before = db.announcements.length;
-    db.announcements = db.announcements.filter((a) => a.id !== id);
-    if (db.announcements.length === before) return false;
-    persistDb();
-    supabaseMirrorDelete('announcements', id);
+  async deleteAnnouncement(id: string) {
+    const { data, error } = await requireServerSupabase().from('announcements').delete()
+      .eq('id', id).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
     broadcastChange('announcements', 'deleted');
     return true;
   },
 
-  getTeacherAvailability() {
-    return db.availability;
+  async getTeacherAvailability(teacherId?: string) {
+    let query = requireServerSupabase().from('teacher_availability').select('*').order('day').order('start_time');
+    if (teacherId) query = query.eq('teacher_id', teacherId);
+    const { data, error } = await query;
+    if (error) throw error;
+    return mapDatabaseRows(data);
   },
 
-  addTeacherAvailabilitySlot(slot: any) {
+  async addTeacherAvailabilitySlot(slot: any) {
     const newSlot = {
       id: slot.id || `av_${Date.now()}`,
       isAvailable: true,
       ...slot
     };
-    db.availability.push(newSlot);
-    persistDb();
-    supabaseMirrorUpsert('teacher_availability', {
+    const { data, error } = await requireServerSupabase().from('teacher_availability').insert({
       id: newSlot.id,
       teacher_id: newSlot.teacherId || '',
       teacher_name: newSlot.teacherName || '',
@@ -2214,50 +2474,53 @@ export const backendStore = {
       end_time: newSlot.endTime || '15:50',
       is_available: Boolean(newSlot.isAvailable),
       note: newSlot.note || ''
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('teacher_availability', 'created');
-    return newSlot;
+    return mapDatabaseRow(data);
   },
 
-  toggleTeacherAvailabilitySlot(id: string) {
-    let target: any = null;
-    db.availability = db.availability.map((s) => {
-      if (s.id !== id) return s;
-      target = { ...s, isAvailable: !s.isAvailable };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('teacher_availability', {
-      id: target.id,
-      teacher_id: target.teacherId || '',
-      teacher_name: target.teacherName || '',
-      day: target.day || 'Monday',
-      start_time: target.startTime || '14:20',
-      end_time: target.endTime || '15:50',
-      is_available: Boolean(target.isAvailable),
-      note: target.note || ''
-    });
+  async toggleTeacherAvailabilitySlot(id: string, teacherId?: string) {
+    const client = requireServerSupabase();
+    let lookup = client.from('teacher_availability').select('is_available').eq('id', id);
+    if (teacherId) lookup = lookup.eq('teacher_id', teacherId);
+    const { data: existing, error: lookupError } = await lookup.maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!existing) return null;
+    let update = client.from('teacher_availability').update({ is_available: !existing.is_available }).eq('id', id);
+    if (teacherId) update = update.eq('teacher_id', teacherId);
+    const { data, error } = await update.select('*').single();
+    if (error) throw error;
     broadcastChange('teacher_availability', 'updated');
-    return target;
+    return mapDatabaseRow(data);
   },
 
-  deleteTeacherAvailabilitySlot(id: string) {
-    const before = db.availability.length;
-    db.availability = db.availability.filter((s) => s.id !== id);
-    if (db.availability.length === before) return false;
-    persistDb();
-    supabaseMirrorDelete('teacher_availability', id);
+  async deleteTeacherAvailabilitySlot(id: string, teacherId?: string) {
+    let query = requireServerSupabase().from('teacher_availability').delete().eq('id', id);
+    if (teacherId) query = query.eq('teacher_id', teacherId);
+    const { data, error } = await query.select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
     broadcastChange('teacher_availability', 'deleted');
     return true;
   },
 
-  getAssignments() {
-    return db.assignments;
+  async getAssignments() {
+    const { data, error } = await requireServerSupabase().from('assignments')
+      .select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return mapDatabaseRows(data);
   },
 
-  addAssignment(data: any) {
-    const defaultClass = (db.classes && db.classes[0]?.name) || 'JSS 1';
+  async getAssignmentById(id: string) {
+    const { data, error } = await requireServerSupabase().from('assignments')
+      .select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data ? mapDatabaseRow(data) : null;
+  },
+
+  async addAssignment(data: any) {
+    const defaultClass = await this.getDefaultClassName();
     const newItem = {
       id: data.id || `asg_${Date.now()}`,
       status: 'published',
@@ -2267,9 +2530,7 @@ export const backendStore = {
       class: data.class || defaultClass,
       ...data
     };
-    db.assignments = [newItem, ...db.assignments];
-    persistDb();
-    supabaseMirrorUpsert('assignments', {
+    const { data: row, error } = await requireServerSupabase().from('assignments').insert({
       id: newItem.id,
       title: newItem.title,
       subject: newItem.subject || '',
@@ -2289,62 +2550,39 @@ export const backendStore = {
       submitted_students: newItem.submittedStudents,
       total_students: newItem.totalStudents,
       submissions: newItem.submissions
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('assignments', 'created');
-    return newItem;
+    return mapDatabaseRow(row);
   },
 
-  updateAssignment(id: string, patch: any) {
-    let target: any = null;
-    db.assignments = db.assignments.map((a) => {
-      if (a.id !== id) return a;
-      target = { ...a, ...patch };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    const defaultClass = (db.classes && db.classes[0]?.name) || 'JSS 1';
-    supabaseMirrorUpsert('assignments', {
-      id: target.id,
-      title: target.title,
-      subject: target.subject || '',
-      class: target.class || defaultClass,
-      description: target.description || '',
-      due_date: target.dueDate || '',
-      total_marks: Number(target.totalMarks ?? target.maxMarks ?? 20),
-      max_marks: Number(target.maxMarks ?? target.totalMarks ?? 20),
-      type: target.type || 'homework',
-      status: target.status || 'published',
-      teacher_name: target.teacherName || '',
-      attachment_name: target.attachmentName || '',
-      attachment_size: target.attachmentSize || '',
-      attachment_path: target.attachmentPath || '',
-      attachment_url: target.attachmentUrl || '',
-      attachments: target.attachments || [],
-      submitted_students: Number(target.submittedStudents ?? (target.submissions?.length || 0)),
-      total_students: Number(target.totalStudents ?? 35),
-      submissions: target.submissions || []
-    });
+  async updateAssignment(id: string, patch: any) {
+    const payload = toDatabaseRow(patch);
+    if (patch.maxMarks !== undefined && patch.totalMarks === undefined) payload.total_marks = patch.maxMarks;
+    if (patch.totalMarks !== undefined && patch.maxMarks === undefined) payload.max_marks = patch.totalMarks;
+    const { data, error } = await requireServerSupabase().from('assignments')
+      .update(payload).eq('id', id).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
     broadcastChange('assignments', 'updated');
-    return target;
+    return mapDatabaseRow(data);
   },
 
-  deleteAssignment(id: string) {
-    const before = db.assignments.length;
-    db.assignments = db.assignments.filter((a) => a.id !== id);
-    if (db.assignments.length === before) return false;
-    persistDb();
-    supabaseMirrorDelete('assignments', id);
+  async deleteAssignment(id: string) {
+    const { data, error } = await requireServerSupabase().from('assignments')
+      .delete().eq('id', id).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
     broadcastChange('assignments', 'deleted');
     return true;
   },
 
-  submitStudentAssignment(
+  async submitStudentAssignment(
     assignmentId: string,
     student: { id: string; name: string },
     payload: { notes?: string; fileName?: string; fileUrl?: string; filePath?: string }
   ) {
-    const existing = db.assignments.find((a) => a.id === assignmentId);
+    const existing = await this.getAssignmentById(assignmentId);
     if (!existing) return null;
     const existingSubs = existing.submissions || [];
     const already = existingSubs.find((sub: any) => sub.studentId === student.id);
@@ -2372,20 +2610,22 @@ export const backendStore = {
     });
   },
 
-  getRequests() {
-    return db.requests;
+  async getRequests(studentId?: string) {
+    let query = requireServerSupabase().from('student_requests').select('*').order('submitted_date', { ascending: false });
+    if (studentId) query = query.eq('student_id', studentId);
+    const { data, error } = await query;
+    if (error) throw error;
+    return mapDatabaseRows(data);
   },
 
-  addRequest(reqData: any) {
+  async addRequest(reqData: any) {
     const newReq = {
       id: reqData.id || `req_${Date.now()}`,
       status: 'pending',
       submittedDate: new Date().toISOString(),
       ...reqData
     };
-    db.requests = [newReq, ...db.requests];
-    persistDb();
-    supabaseMirrorUpsert('student_requests', {
+    const { data, error } = await requireServerSupabase().from('student_requests').insert({
       id: newReq.id,
       student_id: newReq.studentId || '',
       student_name: newReq.studentName || '',
@@ -2404,54 +2644,35 @@ export const backendStore = {
       message: newReq.message || '',
       staff_response: newReq.staffResponse || '',
       reviewed_at: newReq.reviewedAt || ''
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('student_requests', 'created');
-    return newReq;
+    return mapDatabaseRow(data);
   },
 
-  updateRequestStatus(id: string, status: string, staffResponse = '') {
-    let target: any = null;
-    db.requests = db.requests.map((r) => {
-      if (r.id !== id) return r;
-      target = {
-        ...r,
-        status,
-        staffResponse: staffResponse || r.staffResponse || '',
-        reviewedAt: new Date().toISOString()
-      };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('student_requests', {
-      id: target.id,
-      student_id: target.studentId || '',
-      student_name: target.studentName || '',
-      admission_number: target.admissionNumber || '',
-      class: target.class || '',
-      title: target.title || '',
-      subject: target.subject || '',
-      request_type: target.requestType || 'booking',
-      priority: target.priority || 'medium',
-      status: target.status,
-      submitted_date: target.submittedDate || '',
-      preferred_date: target.preferredDate || '',
-      preferred_time: target.preferredTime || '',
-      duration: target.duration || '',
-      preferred_teacher: target.preferredTeacher || '',
-      message: target.message || '',
-      staff_response: target.staffResponse || '',
-      reviewed_at: target.reviewedAt || ''
-    });
+  async updateRequestStatus(id: string, status: string, staffResponse = '') {
+    const client = requireServerSupabase();
+    const { data: existing, error: lookupError } = await client.from('student_requests')
+      .select('staff_response').eq('id', id).maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!existing) return null;
+    const { data, error } = await client.from('student_requests').update({
+      status,
+      staff_response: staffResponse || existing.staff_response || '',
+      reviewed_at: new Date().toISOString()
+    }).eq('id', id).select('*').single();
+    if (error) throw error;
     broadcastChange('student_requests', 'updated');
-    return target;
+    return mapDatabaseRow(data);
   },
 
-  getEnquiries() {
-    return db.enquiries;
+  async getEnquiries() {
+    const { data, error } = await requireServerSupabase().from('enquiries').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return mapDatabaseRows(data);
   },
 
-  addEnquiry(kind: string, payload: any) {
+  async addEnquiry(kind: string, payload: any) {
     const entry = {
       id: `${kind}_${Date.now()}`,
       kind,
@@ -2467,9 +2688,7 @@ export const backendStore = {
       message: payload.message || '',
       createdAt: new Date().toISOString()
     };
-    db.enquiries = [entry, ...db.enquiries];
-    persistDb();
-    supabaseMirrorUpsert('enquiries', {
+    const { data, error } = await requireServerSupabase().from('enquiries').insert({
       id: entry.id,
       kind: entry.kind,
       parent_name: entry.parentName,
@@ -2483,16 +2702,19 @@ export const backendStore = {
       meeting_type: entry.meetingType,
       message: entry.message,
       created_at: entry.createdAt
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('enquiries', 'created');
-    return entry;
+    return mapDatabaseRow(data);
   },
 
-  getDirectMessages() {
-    return db.messages || [];
+  async getDirectMessages() {
+    const { data, error } = await requireServerSupabase().from('direct_messages').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return mapDatabaseRows(data);
   },
 
-  addDirectMessage(data: any) {
+  async addDirectMessage(data: any) {
     const entry = {
       id: data.id || `m_${Date.now()}`,
       senderId: data.senderId || '',
@@ -2505,9 +2727,7 @@ export const backendStore = {
       status: data.status || 'delivered',
       createdAt: new Date().toISOString()
     };
-    db.messages = [entry, ...(db.messages || [])];
-    persistDb();
-    supabaseMirrorUpsert('direct_messages', {
+    const { data: row, error } = await requireServerSupabase().from('direct_messages').insert({
       id: entry.id,
       sender_id: entry.senderId,
       sender_name: entry.senderName,
@@ -2518,18 +2738,21 @@ export const backendStore = {
       sent_date: entry.sentDate,
       status: entry.status,
       created_at: entry.createdAt
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('direct_messages', 'created');
-    return entry;
+    return mapDatabaseRow(row);
   },
 
-  getStaffLeaves(teacherId?: string) {
-    const list = db.leaves || [];
-    if (!teacherId) return list;
-    return list.filter((l) => l.teacherId === teacherId);
+  async getStaffLeaves(teacherId?: string) {
+    let query = requireServerSupabase().from('staff_leaves').select('*').order('created_at', { ascending: false });
+    if (teacherId) query = query.eq('teacher_id', teacherId);
+    const { data, error } = await query;
+    if (error) throw error;
+    return mapDatabaseRows(data);
   },
 
-  addStaffLeave(data: any) {
+  async addStaffLeave(data: any) {
     const entry = {
       id: data.id || `leave-${Date.now()}`,
       teacherId: data.teacherId || '',
@@ -2544,9 +2767,7 @@ export const backendStore = {
       approvedBy: data.approvedBy || 'Pending Review',
       createdAt: new Date().toISOString()
     };
-    db.leaves = [entry, ...(db.leaves || [])];
-    persistDb();
-    supabaseMirrorUpsert('staff_leaves', {
+    const { data: row, error } = await requireServerSupabase().from('staff_leaves').insert({
       id: entry.id,
       teacher_id: entry.teacherId,
       teacher_name: entry.teacherName,
@@ -2559,44 +2780,32 @@ export const backendStore = {
       submitted_date: entry.submittedDate,
       approved_by: entry.approvedBy,
       created_at: entry.createdAt
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('staff_leaves', 'created');
-    return entry;
+    return mapDatabaseRow(row);
   },
 
-  updateStaffLeaveStatus(id: string, status: string, approvedBy = '') {
-    let target: any = null;
-    db.leaves = (db.leaves || []).map((l) => {
-      if (l.id !== id) return l;
-      target = { ...l, status, approvedBy: approvedBy || l.approvedBy };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('staff_leaves', {
-      id: target.id,
-      teacher_id: target.teacherId,
-      teacher_name: target.teacherName,
-      type: target.type,
-      start_date: target.startDate,
-      end_date: target.endDate,
-      days: target.days,
-      reason: target.reason,
-      status: target.status,
-      submitted_date: target.submittedDate,
-      approved_by: target.approvedBy
-    });
+  async updateStaffLeaveStatus(id: string, status: string, approvedBy = '') {
+    const payload: Record<string, string> = { status };
+    if (approvedBy) payload.approved_by = approvedBy;
+    const { data, error } = await requireServerSupabase().from('staff_leaves')
+      .update(payload).eq('id', id).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
     broadcastChange('staff_leaves', 'updated');
-    return target;
+    return mapDatabaseRow(data);
   },
 
-  getHelpTickets(studentId?: string) {
-    const list = db.tickets || [];
-    if (!studentId) return list;
-    return list.filter((tk) => tk.studentId === studentId);
+  async getHelpTickets(studentId?: string) {
+    let query = requireServerSupabase().from('help_tickets').select('*').order('created_date', { ascending: false });
+    if (studentId) query = query.eq('student_id', studentId);
+    const { data, error } = await query;
+    if (error) throw error;
+    return mapDatabaseRows(data);
   },
 
-  addHelpTicket(data: any) {
+  async addHelpTicket(data: any) {
     const entry = {
       id: data.id || String(Date.now()),
       studentId: data.studentId || '',
@@ -2612,9 +2821,7 @@ export const backendStore = {
       responses: data.responses || [],
       createdAt: new Date().toISOString()
     };
-    db.tickets = [entry, ...(db.tickets || [])];
-    persistDb();
-    supabaseMirrorUpsert('help_tickets', {
+    const { data: row, error } = await requireServerSupabase().from('help_tickets').insert({
       id: entry.id,
       student_id: entry.studentId,
       student_name: entry.studentName,
@@ -2628,157 +2835,146 @@ export const backendStore = {
       last_updated: entry.lastUpdated,
       responses: entry.responses,
       created_at: entry.createdAt
-    });
+    }).select('*').single();
+    if (error) throw error;
     broadcastChange('help_tickets', 'created');
-    return entry;
+    return mapDatabaseRow(row);
   },
 
-  addHelpTicketReply(ticketId: string, reply: any) {
-    let target: any = null;
-    db.tickets = (db.tickets || []).map((tk) => {
-      if (tk.id !== ticketId) return tk;
-      const responses = [...(tk.responses || []), reply];
-      target = { ...tk, responses, lastUpdated: new Date().toISOString().split('T')[0] };
-      return target;
-    });
-    if (!target) return null;
-    persistDb();
-    supabaseMirrorUpsert('help_tickets', {
-      id: target.id,
-      student_id: target.studentId,
-      student_name: target.studentName,
-      subject: target.subject,
-      description: target.description,
-      category: target.category,
-      priority: target.priority,
-      status: target.status,
-      assigned_to: target.assignedTo,
-      created_date: target.createdDate,
-      last_updated: target.lastUpdated,
-      responses: target.responses
-    });
+  async addHelpTicketReply(ticketId: string, reply: any, studentId?: string) {
+    const client = requireServerSupabase();
+    let lookup = client.from('help_tickets').select('responses').eq('id', ticketId);
+    if (studentId) lookup = lookup.eq('student_id', studentId);
+    const { data: existing, error: lookupError } = await lookup.maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!existing) return null;
+    const { data, error } = await client.from('help_tickets').update({
+      responses: [...(existing.responses || []), reply],
+      last_updated: new Date().toISOString().split('T')[0]
+    }).eq('id', ticketId).select('*').single();
+    if (error) throw error;
     broadcastChange('help_tickets', 'updated');
-    return target;
+    return mapDatabaseRow(data);
   },
 
-  generatePasswordResetOtp(identifier: string) {
+  async findPortalUserForIdentifier(identifier: string) {
     const clean = String(identifier || '').trim().toLowerCase();
-    if (!clean) return { error: 'Please enter your email, student admission number, or staff ID.' };
+    if (!clean) return null;
+    const client = requireServerSupabase();
+    const { data: byEmail, error: emailError } = await client.from('portal_users')
+      .select('id,email,student_id,teacher_id')
+      .ilike('email', quotePostgrestSearch(clean))
+      .maybeSingle();
+    if (emailError) throw emailError;
+    if (byEmail) return byEmail;
 
-    let user = db.users.find((u) => u.email.toLowerCase() === clean);
-    if (!user) {
-      const student = db.students.find(
-        (s) => String(s.admissionNumber || '').trim().toLowerCase() === clean
-      );
-      if (student) user = db.users.find((u) => u.studentId === student.id);
-    }
-    if (!user) {
-      const teacher = db.teachers.find(
-        (t) => String(t.staffId || '').trim().toLowerCase() === clean
-      );
-      if (teacher) user = db.users.find((u) => u.teacherId === teacher.id);
-    }
-
-    if (!user) {
-      return { error: 'No portal account found matching this identifier.' };
+    const { data: student, error: studentError } = await client.from('students')
+      .select('id')
+      .ilike('admission_number', quotePostgrestSearch(clean))
+      .maybeSingle();
+    if (studentError) throw studentError;
+    if (student) {
+      const { data, error } = await client.from('portal_users')
+        .select('id,email,student_id,teacher_id')
+        .eq('student_id', student.id)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) return data;
     }
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const { data: teacher, error: teacherError } = await client.from('teachers')
+      .select('id')
+      .ilike('staff_id', quotePostgrestSearch(clean))
+      .maybeSingle();
+    if (teacherError) throw teacherError;
+    if (!teacher) return null;
+    const { data, error } = await client.from('portal_users')
+      .select('id,email,student_id,teacher_id')
+      .eq('teacher_id', teacher.id)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
+  async generatePasswordResetOtp(identifier: string) {
+    const now = Date.now();
+    passwordResetOtps.forEach((entry, email) => {
+      if (now >= entry.expiresAt) passwordResetOtps.delete(email);
+    });
+    const clean = String(identifier || '').trim().toLowerCase();
+    if (!clean) return null;
+
+    const user = await this.findPortalUserForIdentifier(clean);
+    if (!user) return null;
+
+    const otp = String(crypto.randomInt(100000, 1000000));
     passwordResetOtps.set(user.email.toLowerCase(), {
       email: user.email.toLowerCase(),
       code: otp,
-      expiresAt: Date.now() + 15 * 60 * 1000
+      expiresAt: Date.now() + 15 * 60 * 1000,
+      failedAttempts: 0
     });
 
-    console.log(`[Al-Amin Auth] Password reset OTP generated for ${user.email}: ${otp}`);
-
-    return {
-      success: true,
-      email: user.email,
-      maskedEmail: user.email.replace(/^(.)(.*)(.@.*)$/, (_, a, b, c) => `${a}***${c}`),
-      otp
-    };
+    return { email: user.email, otp };
   },
 
-  resetPasswordWithOtp(identifier: string, otp: string, newPassword: string) {
+  discardPasswordResetOtp(email: string) {
+    passwordResetOtps.delete(String(email || '').toLowerCase());
+  },
+
+  async resetPasswordWithOtp(identifier: string, otp: string, newPassword: string) {
     const clean = String(identifier || '').trim().toLowerCase();
     const cleanOtp = String(otp || '').trim();
     const cleanPassword = String(newPassword || '').trim();
 
-    if (!cleanPassword || cleanPassword.length < 6) {
-      return { error: 'New password must be at least 6 characters.' };
+    if (!cleanPassword || cleanPassword.length < 12) {
+      return { error: 'New password must be at least 12 characters.' };
     }
 
-    let user = db.users.find((u) => u.email.toLowerCase() === clean);
-    if (!user) {
-      const student = db.students.find(
-        (s) => String(s.admissionNumber || '').trim().toLowerCase() === clean
-      );
-      if (student) user = db.users.find((u) => u.studentId === student.id);
-    }
-    if (!user) {
-      const teacher = db.teachers.find(
-        (t) => String(t.staffId || '').trim().toLowerCase() === clean
-      );
-      if (teacher) user = db.users.find((u) => u.teacherId === teacher.id);
-    }
-
-    if (!user) return { error: 'User account not found.' };
+    const user = await this.findPortalUserForIdentifier(clean);
+    if (!user) return { error: 'Invalid or expired OTP verification code.' };
 
     const stored = passwordResetOtps.get(user.email.toLowerCase());
-    if (!stored || stored.code !== cleanOtp || Date.now() > stored.expiresAt) {
+    if (!stored || Date.now() > stored.expiresAt) {
+      passwordResetOtps.delete(user.email.toLowerCase());
+      return { error: 'Invalid or expired OTP verification code.' };
+    }
+    const providedCode = Buffer.from(cleanOtp);
+    const expectedCode = Buffer.from(stored.code);
+    if (
+      providedCode.length !== expectedCode.length ||
+      !crypto.timingSafeEqual(providedCode, expectedCode)
+    ) {
+      stored.failedAttempts += 1;
+      if (stored.failedAttempts >= 5) passwordResetOtps.delete(user.email.toLowerCase());
       return { error: 'Invalid or expired OTP verification code.' };
     }
 
-    user.passwordHash = hashPassword(cleanPassword);
+    const { error } = await requireServerSupabase().from('portal_users')
+      .update({ password_hash: hashPassword(cleanPassword), updated_at: new Date().toISOString() })
+      .eq('id', user.id);
+    if (error) throw error;
     passwordResetOtps.delete(user.email.toLowerCase());
-
-    supabaseMirrorUpsert('portal_users', {
-      id: user.id,
-      email: user.email,
-      password_hash: user.passwordHash,
-      updated_at: new Date().toISOString()
-    });
 
     return { success: true, message: 'Password has been reset successfully. You can now log in.' };
   },
 
-  updateUserAvatar(userId: string, avatarUrl: string) {
-    let user = db.users.find((u) => u.id === userId);
-    if (!user) {
-      user = db.users.find((u) => u.teacherId === userId || u.studentId === userId);
-    }
-    if (user) {
-      user.avatarUrl = avatarUrl;
-      supabaseMirrorUpsert('portal_users', { id: user.id, avatar_url: avatarUrl });
-      broadcastChange('users', 'updated');
-    }
-
-    const student = db.students.find((s) => s.id === userId || (user && s.id === user.studentId));
-    if (student) {
-      student.avatarUrl = avatarUrl;
-      supabaseMirrorUpsert('students', { id: student.id, avatar_url: avatarUrl });
-      broadcastChange('students', 'updated');
-    }
-
-    const teacher = db.teachers.find((t) => t.id === userId || (user && t.id === user.teacherId));
-    if (teacher) {
-      teacher.avatarUrl = avatarUrl;
-      supabaseMirrorUpsert('teachers', { id: teacher.id, avatar_url: avatarUrl });
-      broadcastChange('teachers', 'updated');
-    }
-
-    if (user) {
-      const { passwordHash: _ignored, ...safeUser } = user;
-      return safeUser;
-    }
-    return { id: userId, avatarUrl };
-  },
-
-  getPromotionCandidates(currentSession = '2026/2027') {
-    return (db.students || []).map((student) => {
-      const studentGrades = db.grades[student.id] || {};
-      const subjectScores = Object.values(studentGrades).map((g: any) => Number(g.total) || 0);
+  async getPromotionCandidates(currentSession = '2026/2027') {
+    const client = requireServerSupabase();
+    const [{ data: students, error: studentsError }, { data: grades, error: gradesError }] = await Promise.all([
+      client.from('students').select('id,name,admission_number,class,department'),
+      client.from('grades').select('student_id,total').eq('session', currentSession)
+    ]);
+    if (studentsError) throw studentsError;
+    if (gradesError) throw gradesError;
+    const gradesByStudent = new Map<string, number[]>();
+    (grades || []).forEach((grade) => {
+      const studentGrades = gradesByStudent.get(grade.student_id) || [];
+      studentGrades.push(Number(grade.total) || 0);
+      gradesByStudent.set(grade.student_id, studentGrades);
+    });
+    return (students || []).map((student) => {
+      const subjectScores = gradesByStudent.get(student.id) || [];
       const avg = subjectScores.length > 0
         ? Math.round(subjectScores.reduce((a, b) => a + b, 0) / subjectScores.length)
         : 0;
@@ -2803,7 +2999,7 @@ export const backendStore = {
       return {
         id: student.id,
         name: student.name,
-        admissionNumber: student.admissionNumber,
+        admissionNumber: student.admission_number,
         currentClass: student.class,
         department: student.department || '',
         averageScore: avg,
@@ -2813,7 +3009,7 @@ export const backendStore = {
     });
   },
 
-  executeSessionRollover({
+  async executeSessionRollover({
     nextSession,
     promotions
   }: {
@@ -2829,28 +3025,31 @@ export const backendStore = {
     let repeatCount = 0;
     let graduatedCount = 0;
 
-    promotions.forEach((p) => {
-      const student = db.students.find((s) => s.id === p.studentId);
-      if (!student) return;
-
-      if (p.action === 'graduate') {
-        student.status = 'Graduated';
+    const client = requireServerSupabase();
+    for (const promotion of promotions) {
+      const { data: student, error: lookupError } = await client.from('students')
+        .select('id').eq('id', promotion.studentId).maybeSingle();
+      if (lookupError) throw lookupError;
+      if (!student) continue;
+      if (promotion.action === 'graduate') {
+        const { error } = await client.from('students').update({ status: 'Graduated' }).eq('id', student.id);
+        if (error) throw error;
         graduatedCount++;
-      } else if (p.action === 'repeat') {
+      } else if (promotion.action === 'repeat') {
         repeatCount++;
-      } else if (p.action === 'promote') {
-        student.class = p.targetClass || student.class;
-        if (p.department) student.department = p.department;
+      } else if (promotion.action === 'promote') {
+        const update: Record<string, string> = { class: promotion.targetClass || '' };
+        if (promotion.department) update.department = promotion.department;
+        if (!update.class) {
+          const { data: current, error } = await client.from('students').select('class').eq('id', student.id).single();
+          if (error) throw error;
+          update.class = current.class;
+        }
+        const { error } = await client.from('students').update(update).eq('id', student.id);
+        if (error) throw error;
         promotedCount++;
       }
-
-      supabaseMirrorUpsert('students', {
-        id: student.id,
-        class: student.class,
-        department: student.department || '',
-        status: student.status || 'active'
-      });
-    });
+    }
 
     broadcastChange('students', 'updated');
     return {
@@ -2863,51 +3062,36 @@ export const backendStore = {
     };
   },
 
-  getSettings() {
-    return (
-      db.settings || {
-        institutionName: 'Al-Amin Group of Schools',
-        establishedYear: '2010',
-        officialEmail: 'info@alaminschools.edu.ng',
-        phone: '+234 803 456 7890',
-        address: 'Al-Amin Campus, 14 Ahmadu Bello Way, Nassarawa GRA',
-        website: 'www.alaminschools.edu.ng',
-        registrationNumber: 'ASS-2010-008920',
-        timezone: 'wat',
-        currentSession: '2026/2027',
-        currentTerm: 'Term 1'
-      }
-    );
+  async getSettings() {
+    const { data, error } = await requireServerSupabase().from('institution_settings')
+      .select('*').eq('id', 'current').maybeSingle();
+    if (error) throw error;
+    return data ? mapDatabaseRow(data) : {
+      institutionName: 'Al-Amin Group of Schools',
+      establishedYear: '2010',
+      officialEmail: 'info@alaminschools.edu.ng',
+      phone: '+234 803 456 7890',
+      address: 'Al-Amin Campus, 14 Ahmadu Bello Way, Nassarawa GRA',
+      website: 'www.alaminschools.edu.ng',
+      registrationNumber: 'ASS-2010-008920',
+      timezone: 'wat',
+      currentSession: '2026/2027',
+      currentTerm: 'Term 1'
+    };
   },
 
-  updateSettings(data: any) {
-    db.settings = {
-      ...this.getSettings(),
+  async updateSettings(data: any) {
+    const settings = {
+      ...await this.getSettings(),
       ...(data || {}),
       updatedAt: new Date().toISOString()
     };
-    persistDb();
-    supabaseMirrorUpsert('institution_settings', {
+    const { data: row, error } = await requireServerSupabase().from('institution_settings').upsert({
       id: 'current',
-      institution_name: db.settings.institutionName,
-      established_year: db.settings.establishedYear,
-      official_email: db.settings.officialEmail,
-      phone: db.settings.phone,
-      address: db.settings.address,
-      website: db.settings.website,
-      registration_number: db.settings.registrationNumber,
-      timezone: db.settings.timezone,
-      date_format: db.settings.dateFormat || 'dd-mm-yyyy',
-      academic_term: db.settings.academicTerm || 'first-term',
-      current_session: db.settings.currentSession || '2026/2027',
-      current_term: db.settings.currentTerm || 'Term 1',
-      language: db.settings.language || 'en',
-      email_notifications: db.settings.emailNotifications ?? true,
-      sms_alerts: db.settings.smsAlerts ?? false,
-      maintenance_mode: db.settings.maintenanceMode ?? false,
-      updated_at: db.settings.updatedAt
-    });
+      ...toDatabaseRow(settings)
+    }, { onConflict: 'id' }).select('*').single();
+    if (error) throw error;
     broadcastChange('settings');
-    return db.settings;
+    return mapDatabaseRow(row);
   }
 };

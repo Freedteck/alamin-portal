@@ -57,10 +57,10 @@ export async function downloadSchoolFile({
   description = ''
 } = {}) {
   const targetName = fileName || `${String(title).toLowerCase().replace(/\s+/g, '-')}.txt`;
-  const candidateUrl = fileUrl
-    ? apiClient.resolveUrl(fileUrl)
-    : filePath
+  const candidateUrl = filePath
     ? apiClient.resolveUrl(`/files/download/${filePath}`)
+    : fileUrl
+    ? apiClient.resolveUrl(fileUrl)
     : '';
 
   if (candidateUrl) {

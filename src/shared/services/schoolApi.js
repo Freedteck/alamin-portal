@@ -8,11 +8,6 @@ import {
   generateAdmissionNumber
 } from '../constants/academic';
 
-// In-memory runtime state for fast reactive UI renders
-let state = {
-  attendance: {},
-};
-
 const listeners = new Set();
 
 export function subscribeSchoolSync(callback) {
@@ -29,11 +24,6 @@ function notifyChange(resource = 'all') {
       console.error('Error in school sync listener:', e);
     }
   });
-}
-
-export async function refreshCloudData() {
-  // Global /bootstrap eager-loading eliminated in favor of route-level on-demand queries
-  return true;
 }
 
 export function initializeSchoolSync() {
@@ -81,9 +71,6 @@ export function initializeSchoolSync() {
         eventSource.close();
         eventSource = null;
       }
-      state = {
-        attendance: {},
-      };
       notifyChange('logout');
     }
   });
@@ -330,11 +317,7 @@ export const schoolStore = {
     if (params.date) query.set('date', params.date);
     if (params.class) query.set('class', params.class);
     const qs = query.toString();
-    const result = await apiClient.get(`/attendance${qs ? `?${qs}` : ''}`);
-    if (!params.date && !params.class && result && typeof result === 'object') {
-      state.attendance = result;
-    }
-    return result;
+    return await apiClient.get(`/attendance${qs ? `?${qs}` : ''}`);
   },
   async fetchStudentAttendanceHistory(studentId) {
     try {
@@ -342,52 +325,6 @@ export const schoolStore = {
     } catch {
       return null;
     }
-  },
-  getAttendance() {
-    return state.attendance || {};
-  },
-  getAttendanceLogs() {
-    const att = state.attendance || {};
-    return Array.isArray(att) ? att : Object.values(att);
-  },
-  getAttendanceForDateAndClass(date, className) {
-    const att = state.attendance || {};
-    const key = `${date}_${className}`;
-    if (att[key]) return att[key];
-    if (att[date] && att[date][className]) return { records: att[date][className] };
-    return null;
-  },
-  getStudentAttendanceHistory(studentId) {
-    const att = state.attendance || {};
-    const logs = [];
-    const entries = Array.isArray(att) ? att : Object.values(att);
-    entries.forEach((entry) => {
-      if (entry && entry.records && entry.records[studentId]) {
-        logs.push({
-          date: entry.date,
-          className: entry.className || entry.class,
-          status: entry.records[studentId],
-          submittedBy: entry.submittedBy,
-          timestamp: entry.timestamp
-        });
-      }
-    });
-    logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    const total = logs.length || 1;
-    const presentCount = logs.filter((l) => l.status === 'present').length;
-    const lateCount = logs.filter((l) => l.status === 'late').length;
-    const absentCount = logs.filter((l) => l.status === 'absent').length;
-    const rate = logs.length > 0 ? Math.round(((presentCount + lateCount) / total) * 100) : 0;
-    const punctuality = logs.length > 0 ? Math.round((presentCount / total) * 100) : 0;
-    return {
-      logs,
-      totalDays: logs.length,
-      presentCount,
-      lateCount,
-      absentCount,
-      attendanceRate: rate,
-      punctualityRate: punctuality
-    };
   },
   async saveAttendance(arg1, arg2, arg3, arg4) {
     let date, className, submittedBy, records;
@@ -403,16 +340,7 @@ export const schoolStore = {
       records = arg4;
     }
     const res = await apiClient.post('/attendance', { date, className, submittedBy, records });
-    const key = `${date}_${className}`;
-    if (!state.attendance) state.attendance = {};
-    state.attendance[key] = {
-      date,
-      className,
-      class: className,
-      submittedBy: submittedBy || 'Staff',
-      records: records || {}
-    };
-    notifyChange('attendance');
+    if (res && !res.error) notifyChange('attendance');
     return res;
   },
 
@@ -576,8 +504,13 @@ export const schoolStore = {
   },
 
   // Equipment & Maintenance
-  async fetchEquipment() {
-    return await apiClient.get('/equipment');
+  async fetchEquipment(params = {}) {
+    const query = new URLSearchParams();
+    if (params.page != null) query.set('page', String(params.page));
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.search) query.set('search', String(params.search));
+    const qs = query.toString();
+    return await apiClient.get(`/equipment${qs ? `?${qs}` : ''}`);
   },
   async addEquipment(data) {
     const res = await apiClient.post('/equipment', data);
@@ -589,8 +522,13 @@ export const schoolStore = {
     notifyChange('equipment');
     return res;
   },
-  async fetchMaintenance() {
-    return await apiClient.get('/maintenance');
+  async fetchMaintenance(params = {}) {
+    const query = new URLSearchParams();
+    if (params.page != null) query.set('page', String(params.page));
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.search) query.set('search', String(params.search));
+    const qs = query.toString();
+    return await apiClient.get(`/maintenance${qs ? `?${qs}` : ''}`);
   },
   async addMaintenance(data) {
     const res = await apiClient.post('/maintenance', data);
@@ -649,12 +587,6 @@ export const schoolStore = {
   },
 
   // Auth & Profile
-  async requestPasswordResetOtp(identifier) {
-    return await apiClient.post('/auth/forgot-password', { identifier });
-  },
-  async resetPasswordWithOtp(identifier, otp, newPassword) {
-    return await apiClient.post('/auth/reset-password', { identifier, otp, newPassword });
-  },
   async uploadProfileAvatar(file) {
     const formData = new FormData();
     formData.append('avatar', file);

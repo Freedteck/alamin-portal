@@ -41,8 +41,12 @@ export function AdminResources() {
   const [resourceCount, setResourceCount] = useState(0);
   const resourceRequest = useRef(0);
   const [equipment, setEquipment] = useState([]);
+  const [totalEquipment, setTotalEquipment] = useState(0);
   const [maintenance, setMaintenance] = useState([]);
+  const [totalMaintenance, setTotalMaintenance] = useState(0);
+  const [openMaintenanceCount, setOpenMaintenanceCount] = useState(0);
   const [subjectNames, setSubjectNames] = useState([]);
+  const listRequest = useRef(0);
 
   const [isAddResourceOpen, setIsAddResourceOpen] = useState(false);
   const [isAddEquipmentOpen, setIsAddEquipmentOpen] = useState(false);
@@ -79,14 +83,19 @@ export function AdminResources() {
   });
 
   const refreshData = async () => {
+    const requestId = ++listRequest.current;
     try {
       const [eRes, mRes, subRes] = await Promise.all([
-        schoolStore.fetchEquipment(),
-        schoolStore.fetchMaintenance(),
+        schoolStore.fetchEquipment({ page: currentPage, limit: pageSize, search: searchTerm }),
+        schoolStore.fetchMaintenance({ page: currentPage, limit: pageSize, search: searchTerm }),
         schoolStore.fetchSubjects()
       ]);
-      setEquipment(Array.isArray(eRes) ? eRes : []);
-      setMaintenance(Array.isArray(mRes) ? mRes : []);
+      if (requestId !== listRequest.current) return;
+      setEquipment(Array.isArray(eRes?.data) ? eRes.data : []);
+      setTotalEquipment(eRes?.total || 0);
+      setMaintenance(Array.isArray(mRes?.data) ? mRes.data : []);
+      setTotalMaintenance(mRes?.total || 0);
+      setOpenMaintenanceCount(mRes?.openCount || 0);
       const subs = Array.isArray(subRes) ? subRes.map((s) => s.name || s) : [];
       setSubjectNames(subs);
       setResourceForm((prev) => ({
@@ -95,8 +104,12 @@ export function AdminResources() {
       }));
     } catch (error) {
       console.error('Failed to load resource management data:', error);
+      if (requestId !== listRequest.current) return;
       setEquipment([]);
+      setTotalEquipment(0);
       setMaintenance([]);
+      setTotalMaintenance(0);
+      setOpenMaintenanceCount(0);
       setSubjectNames([]);
     }
   };
@@ -126,8 +139,12 @@ export function AdminResources() {
 
   useEffect(() => {
     refreshData();
-    return subscribeSchoolSync(refreshData);
-  }, []);
+    const unsubscribe = subscribeSchoolSync(refreshData);
+    return () => {
+      listRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm]);
 
   useEffect(() => {
     refreshResources();
@@ -291,32 +308,11 @@ export function AdminResources() {
     if (confirmDelete.kind === 'resource') refreshResources();
   };
 
-  const filteredEquipment = equipment.filter(
-    (e) =>
-      e.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      e.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      e.location?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const filteredMaintenance = maintenance.filter((m) => {
-    const label = m.itemName || m.equipmentName || '';
-    return (
-      label.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      m.issue?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  });
-
-  const activeList =
-    activeTab === 'resources'
-      ? resources
-      : activeTab === 'equipment'
-      ? filteredEquipment
-      : filteredMaintenance;
-
-  const paginatedList =
-    activeTab === 'resources'
-      ? activeList
-      : activeList.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const paginatedList = activeTab === 'resources'
+    ? resources
+    : activeTab === 'equipment'
+    ? equipment
+    : maintenance;
 
   const getTypeIcon = (type) => {
     switch (type) {
@@ -414,7 +410,7 @@ export function AdminResources() {
               School Equipment
             </p>
             <p className="text-2xl font-bold text-[#1c1c14] mt-1 tabular-nums">
-              {equipment.length}
+              {totalEquipment}
             </p>
           </div>
           <div className="w-10 h-10 rounded-lg bg-[#faf8f0] border border-[#c9c7b6] flex items-center justify-center text-[#616218]">
@@ -428,7 +424,7 @@ export function AdminResources() {
               Open Maintenance
             </p>
             <p className="text-2xl font-bold text-amber-700 mt-1 tabular-nums">
-              {maintenance.filter((m) => m.status !== 'completed').length}
+              {openMaintenanceCount}
             </p>
           </div>
           <div className="w-10 h-10 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700">
@@ -665,7 +661,7 @@ export function AdminResources() {
           </div>
           <Pagination
             currentPage={currentPage}
-            totalItems={filteredEquipment.length}
+            totalItems={totalEquipment}
             pageSize={pageSize}
             onPageChange={setCurrentPage}
           />
@@ -722,7 +718,7 @@ export function AdminResources() {
           </div>
           <Pagination
             currentPage={currentPage}
-            totalItems={filteredMaintenance.length}
+            totalItems={totalMaintenance}
             pageSize={pageSize}
             onPageChange={setCurrentPage}
           />

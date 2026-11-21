@@ -58,85 +58,25 @@ export const generateAdmissionNumber = (className: string, existingStudents: any
   return `${yearPrefix}/ASS/${classCode}${padded}`;
 };
 
-export const INITIAL_SUBJECT_CATALOG = [
-  { id: 'sub-1', name: 'Mathematics', allClasses: true, classes: [...SCHOOL_CLASSES], allDepartments: true, departments: [...SSS_DEPARTMENTS] },
-  { id: 'sub-2', name: 'English Language', allClasses: true, classes: [...SCHOOL_CLASSES], allDepartments: true, departments: [...SSS_DEPARTMENTS] }
-];
-
-export const INITIAL_CLASSES = SCHOOL_CLASSES.map((name, i) => ({
-  id: `cls-${i + 1}`,
-  name,
-  category: isSeniorClass(name) ? 'Senior' : 'Junior',
-  classTeacherId: '',
-  classTeacherName: ''
-}));
-
-export const INITIAL_STUDENTS: any[] = [];
-
-export const INITIAL_TEACHERS: any[] = [];
-
-export const INITIAL_TIMETABLE_SLOTS: any[] = [];
-
-export const INITIAL_RESOURCES: any[] = [];
-
-export const INITIAL_EQUIPMENT: any[] = [];
-
-export const INITIAL_MAINTENANCE: any[] = [];
-
-export const INITIAL_DOCUMENTS: any[] = [];
-
-export const INITIAL_ANNOUNCEMENTS: any[] = [];
-
-export const INITIAL_TEACHER_AVAILABILITY: any[] = [];
-
-export const INITIAL_ASSIGNMENTS: any[] = [];
-
-export const INITIAL_REQUESTS: any[] = [];
-
-export const INITIAL_ATTENDANCE: Record<string, any> = {};
-
-export const INITIAL_GRADES: Record<string, any> = {};
-
 export function createInitialUsers() {
   const envEmail = (process.env.INITIAL_ADMIN_EMAIL || '').trim().toLowerCase();
   const envPass = process.env.INITIAL_ADMIN_PASSWORD || '';
 
-  const adminEmail = envEmail || 'admin@alaminschools.edu.ng';
-  const adminPassword = envPass || 'admin123';
+  if (!envEmail && !envPass) {
+    console.warn('Initial administrator was not seeded; set INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD to provision one.');
+    return [];
+  }
+  if (!envEmail || envPass.trim().length < 12) {
+    throw new Error('INITIAL_ADMIN_EMAIL and an INITIAL_ADMIN_PASSWORD of at least 12 characters are required to seed the administrator.');
+  }
 
   return [
     {
       id: 'usr-admin-1',
-      email: adminEmail,
+      email: envEmail,
       name: 'Al-Amin Administrator',
       role: 'admin',
-      passwordHash: hashPassword(adminPassword)
+      passwordHash: hashPassword(envPass)
     }
   ];
-}
-
-export function createInitialDbSnapshot() {
-  return {
-    users: createInitialUsers(),
-    classes: structuredClone(INITIAL_CLASSES),
-    subjects: structuredClone(INITIAL_SUBJECT_CATALOG),
-    students: structuredClone(INITIAL_STUDENTS),
-    teachers: structuredClone(INITIAL_TEACHERS),
-    timetable: structuredClone(INITIAL_TIMETABLE_SLOTS),
-    alerts: [] as any[],
-    attendance: structuredClone(INITIAL_ATTENDANCE),
-    grades: structuredClone(INITIAL_GRADES),
-    resources: structuredClone(INITIAL_RESOURCES),
-    equipment: structuredClone(INITIAL_EQUIPMENT),
-    maintenance: structuredClone(INITIAL_MAINTENANCE),
-    documents: structuredClone(INITIAL_DOCUMENTS),
-    announcements: structuredClone(INITIAL_ANNOUNCEMENTS),
-    availability: structuredClone(INITIAL_TEACHER_AVAILABILITY),
-    assignments: structuredClone(INITIAL_ASSIGNMENTS),
-    requests: structuredClone(INITIAL_REQUESTS),
-    enquiries: [] as any[],
-    messages: [] as any[],
-    leaves: [] as any[],
-    tickets: [] as any[]
-  };
 }

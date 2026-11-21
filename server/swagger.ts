@@ -8,10 +8,10 @@ export const openApiSpec = {
     description:
       'Standalone REST API backend for Al-Amin Group of Schools Management System.\n\n' +
       '**How to test protected endpoints in Swagger UI:**\n' +
-      '1. Expand `POST /api/auth/login` below and click **Try it out** -> **Execute** using the prefilled demo admin credentials (`admin@alaminschools.edu` / `admin123`).\n' +
+      '1. Provision an administrator using `INITIAL_ADMIN_EMAIL` and `INITIAL_ADMIN_PASSWORD`, then sign in through `POST /api/auth/login`.\n' +
       '2. Copy the returned `token` from the response body.\n' +
       '3. Click the green **Authorize** button at the top-right and paste the token.\n' +
-      '4. Now every school endpoint is unlocked and ready to execute!'
+      '4. The token grants access according to the administrator account role.'
   },
   servers: [
     {
@@ -89,8 +89,8 @@ export const openApiSpec = {
                 type: 'object',
                 required: ['email', 'password'],
                 properties: {
-                  email: { type: 'string', example: 'admin@alaminschools.edu' },
-                  password: { type: 'string', example: 'admin123' }
+                  email: { type: 'string', example: 'admin@your-school.example' },
+                  password: { type: 'string', example: 'your-configured-admin-password' }
                 }
               }
             }
@@ -554,14 +554,34 @@ export const openApiSpec = {
       delete: { tags: ['Resources & Equipment'], summary: 'Delete a learning resource', security: bearerSecurity, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Deleted' } } }
     },
     '/equipment': {
-      get: { tags: ['Resources & Equipment'], summary: 'List school lab & ICT equipment', security: bearerSecurity, responses: { 200: { description: 'Equipment array' } } },
+      get: {
+        tags: ['Resources & Equipment'],
+        summary: 'List school lab & ICT equipment',
+        security: bearerSecurity,
+        parameters: [
+          { name: 'search', in: 'query', schema: { type: 'string' } },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } }
+        ],
+        responses: { 200: { description: 'Equipment array or paginated search results' } }
+      },
       post: { tags: ['Resources & Equipment'], summary: 'Add equipment item', security: bearerSecurity, requestBody: { content: { 'application/json': { schema: { type: 'object' } } } }, responses: { 201: { description: 'Equipment created' } } }
     },
     '/equipment/{id}': {
       delete: { tags: ['Resources & Equipment'], summary: 'Delete equipment item', security: bearerSecurity, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Deleted' } } }
     },
     '/maintenance': {
-      get: { tags: ['Resources & Equipment'], summary: 'List maintenance requests', security: bearerSecurity, responses: { 200: { description: 'Maintenance array' } } },
+      get: {
+        tags: ['Resources & Equipment'],
+        summary: 'List maintenance requests',
+        security: bearerSecurity,
+        parameters: [
+          { name: 'search', in: 'query', schema: { type: 'string' } },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } }
+        ],
+        responses: { 200: { description: 'Maintenance array or paginated search results; includes openCount' } }
+      },
       post: { tags: ['Resources & Equipment'], summary: 'Log a maintenance issue', security: bearerSecurity, requestBody: { content: { 'application/json': { schema: { type: 'object' } } } }, responses: { 201: { description: 'Maintenance request logged' } } }
     },
     '/maintenance/{id}': {
@@ -743,11 +763,16 @@ export const openApiSpec = {
       get: {
         tags: ['Files'],
         summary: 'Download an uploaded file',
+        security: bearerSecurity,
         parameters: [
           { name: 'folder', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'filename', in: 'path', required: true, schema: { type: 'string' } }
         ],
-        responses: { 200: { description: 'Binary file stream' }, 404: { description: 'File not found' } }
+        responses: {
+          200: { description: 'Authorized binary file stream' },
+          403: { description: 'Insufficient permission for this file' },
+          404: { description: 'File not found' }
+        }
       }
     },
     '/auth/profile/avatar': {
@@ -872,7 +897,11 @@ export const openApiSpec = {
             }
           }
         },
-        responses: { 200: { description: 'OTP dispatched' } }
+        responses: {
+          202: { description: 'Generic response; a code is emailed when an account matches' },
+          429: { description: 'Rate limit exceeded' },
+          503: { description: 'Email delivery is unavailable' }
+        }
       }
     },
     '/auth/reset-password': {
@@ -889,13 +918,17 @@ export const openApiSpec = {
                 properties: {
                   identifier: { type: 'string', example: 'staff@alaminschools.edu' },
                   otp: { type: 'string', example: '123456' },
-                  newPassword: { type: 'string', example: 'newSecret123' }
+                  newPassword: { type: 'string', minLength: 12, example: 'a-longer-secret-passphrase' }
                 }
               }
             }
           }
         },
-        responses: { 200: { description: 'Password reset successful' } }
+        responses: {
+          200: { description: 'Password reset successful' },
+          400: { description: 'Invalid, expired, or exhausted verification code' },
+          429: { description: 'Rate limit exceeded' }
+        }
       }
     },
     '/academic/promotion-candidates': {

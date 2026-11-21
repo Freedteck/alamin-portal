@@ -15,7 +15,6 @@ import { Logo } from '../components/Logo/Logo';
 import { Modal } from '../components/Modal/Modal';
 import { apiClient } from '../lib/apiClient';
 import { submitPublicEnquiry } from '../lib/schoolSync';
-import { schoolStore } from '../data/schoolData';
 
 export function Login({ initialModal = null }) {
   const navigate = useNavigate();
@@ -32,17 +31,6 @@ export function Login({ initialModal = null }) {
   const [enquirySuccess, setEnquirySuccess] = useState(false);
   const [appointmentSuccess, setAppointmentSuccess] = useState(false);
   const [modalError, setModalError] = useState('');
-
-  const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
-  const [forgotStep, setForgotStep] = useState('request');
-  const [forgotIdentifier, setForgotIdentifier] = useState('');
-  const [forgotOtp, setForgotOtp] = useState('');
-  const [forgotNewPassword, setForgotNewPassword] = useState('');
-  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
-  const [forgotLoading, setForgotLoading] = useState(false);
-  const [forgotError, setForgotError] = useState('');
-  const [forgotSuccess, setForgotSuccess] = useState('');
-  const [maskedEmail, setMaskedEmail] = useState('');
 
   const [enquiryForm, setEnquiryForm] = useState({
     parentName: '',
@@ -155,70 +143,6 @@ export function Login({ initialModal = null }) {
       }, 2000);
     } catch (err) {
       setModalError(err?.message || 'Unable to submit appointment request.');
-    }
-  };
-
-  const handleRequestOtp = async (e) => {
-    e.preventDefault();
-    if (!forgotIdentifier.trim()) {
-      setForgotError('Please enter your email, student admission number, or staff ID.');
-      return;
-    }
-    setForgotError('');
-    setForgotSuccess('');
-    setForgotLoading(true);
-    try {
-      const res = await schoolStore.requestPasswordResetOtp(forgotIdentifier.trim());
-      if (res?.error) {
-        setForgotError(res.error);
-      } else {
-        setMaskedEmail(res.maskedEmail || res.email);
-        setForgotStep('verify');
-        setForgotSuccess('Verification code generated. Enter it below along with your new password.');
-      }
-    } catch (err) {
-      setForgotError(err?.message || 'Unable to request verification code.');
-    } finally {
-      setForgotLoading(false);
-    }
-  };
-
-  const handleResetPassword = async (e) => {
-    e.preventDefault();
-    if (!forgotOtp.trim()) {
-      setForgotError('Please enter the 6-digit verification code.');
-      return;
-    }
-    if (forgotNewPassword.length < 6) {
-      setForgotError('Password must be at least 6 characters.');
-      return;
-    }
-    if (forgotNewPassword !== forgotConfirmPassword) {
-      setForgotError('Passwords do not match.');
-      return;
-    }
-    setForgotError('');
-    setForgotLoading(true);
-    try {
-      const res = await schoolStore.resetPasswordWithOtp(
-        forgotIdentifier.trim(),
-        forgotOtp.trim(),
-        forgotNewPassword
-      );
-      if (res?.error) {
-        setForgotError(res.error);
-      } else {
-        setForgotSuccess('Password reset successfully! Redirecting to login...');
-        setTimeout(() => {
-          setIsForgotModalOpen(false);
-          setPassword(forgotNewPassword);
-          setInfoMsg('Password reset successful. Please sign in with your new password.');
-        }, 1500);
-      }
-    } catch (err) {
-      setForgotError(err?.message || 'Unable to reset password.');
-    } finally {
-      setForgotLoading(false);
     }
   };
 
@@ -372,25 +296,6 @@ export function Login({ initialModal = null }) {
               </div>
             </div>
 
-            <div className="flex items-center justify-end -mt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setForgotStep('request');
-                  setForgotIdentifier(email || '');
-                  setForgotError('');
-                  setForgotSuccess('');
-                  setForgotOtp('');
-                  setForgotNewPassword('');
-                  setForgotConfirmPassword('');
-                  setIsForgotModalOpen(true);
-                }}
-                className="text-xs font-semibold text-[#616218] hover:text-[#494900] hover:underline cursor-pointer"
-              >
-                Forgot password?
-              </button>
-            </div>
-
             <div className="pt-2 space-y-2.5">
               <button
                 type="submit"
@@ -402,7 +307,7 @@ export function Login({ initialModal = null }) {
 
               {role !== 'admin' && (
                 <p className="text-[11px] text-center text-[#797869] pt-1 leading-relaxed">
-                  Accounts are created exclusively by the School Administrator. Contact the school office if you need your login details.
+                  Accounts are created exclusively by the School Administrator. Contact the school office for account or password assistance.
                 </p>
               )}
             </div>
@@ -546,141 +451,6 @@ export function Login({ initialModal = null }) {
         )}
       </Modal>
 
-      {/* Forgot Password Modal */}
-      <Modal
-        isOpen={isForgotModalOpen}
-        onClose={() => setIsForgotModalOpen(false)}
-        title="Account Password Recovery"
-      >
-        <div className="space-y-4 font-['Poppins',sans-serif]">
-          {forgotError && (
-            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-              <span>{forgotError}</span>
-            </div>
-          )}
-
-          {forgotSuccess && (
-            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-              <span>{forgotSuccess}</span>
-            </div>
-          )}
-
-          {forgotStep === 'request' ? (
-            <form onSubmit={handleRequestOtp} className="space-y-4">
-              <p className="text-xs text-[#797869] leading-relaxed">
-                Enter your registered portal email, student admission number (e.g. 26/ASS/JA001), or staff ID to receive a verification code.
-              </p>
-              <div>
-                <label className="block text-xs font-semibold text-[#1c1c14] mb-1.5">
-                  Email, Admission Number, or Staff ID *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. amina@alaminschools.edu or 26/ASS/JA001"
-                  value={forgotIdentifier}
-                  onChange={(e) => setForgotIdentifier(e.target.value)}
-                  className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] transition-all shadow-xs"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsForgotModalOpen(false)}
-                  className="px-4 py-2 border border-[#c9c7b6] text-[#48482d] hover:bg-[#ece7d0] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={forgotLoading}
-                  className="px-4 py-2 bg-[#616218] hover:bg-[#494900] disabled:opacity-60 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                >
-                  {forgotLoading ? 'Generating...' : 'Get Verification Code'}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <form onSubmit={handleResetPassword} className="space-y-3.5">
-              <p className="text-xs text-[#797869] leading-relaxed">
-                Verification code generated for <span className="font-semibold text-[#1c1c14]">{maskedEmail}</span>. Enter the 6-digit code and choose a new password.
-              </p>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#1c1c14] mb-1">
-                  6-Digit Verification Code *
-                </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={6}
-                  placeholder="e.g. 123456"
-                  value={forgotOtp}
-                  onChange={(e) => setForgotOtp(e.target.value)}
-                  className="w-full h-10 px-3 font-mono tracking-widest text-center text-base rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] transition-all shadow-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#1c1c14] mb-1">
-                  New Password (min 6 characters) *
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Enter new password"
-                  value={forgotNewPassword}
-                  onChange={(e) => setForgotNewPassword(e.target.value)}
-                  className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] transition-all shadow-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#1c1c14] mb-1">
-                  Confirm New Password *
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Confirm new password"
-                  value={forgotConfirmPassword}
-                  onChange={(e) => setForgotConfirmPassword(e.target.value)}
-                  className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] transition-all shadow-xs"
-                />
-              </div>
-
-              <div className="flex justify-between items-center pt-2">
-                <button
-                  type="button"
-                  onClick={() => setForgotStep('request')}
-                  className="text-xs text-[#616218] hover:underline cursor-pointer"
-                >
-                  ← Back to request code
-                </button>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsForgotModalOpen(false)}
-                    className="px-4 py-2 border border-[#c9c7b6] text-[#48482d] hover:bg-[#ece7d0] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={forgotLoading}
-                    className="px-4 py-2 bg-[#616218] hover:bg-[#494900] disabled:opacity-60 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                  >
-                    {forgotLoading ? 'Updating...' : 'Set New Password'}
-                  </button>
-                </div>
-              </div>
-            </form>
-          )}
-        </div>
-      </Modal>
 
       <Modal
         isOpen={isAppointmentModalOpen}
@@ -783,141 +553,6 @@ export function Login({ initialModal = null }) {
         )}
       </Modal>
 
-      {/* Forgot Password Modal */}
-      <Modal
-        isOpen={isForgotModalOpen}
-        onClose={() => setIsForgotModalOpen(false)}
-        title="Account Password Recovery"
-      >
-        <div className="space-y-4 font-['Poppins',sans-serif]">
-          {forgotError && (
-            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-              <span>{forgotError}</span>
-            </div>
-          )}
-
-          {forgotSuccess && (
-            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-              <span>{forgotSuccess}</span>
-            </div>
-          )}
-
-          {forgotStep === 'request' ? (
-            <form onSubmit={handleRequestOtp} className="space-y-4">
-              <p className="text-xs text-[#797869] leading-relaxed">
-                Enter your registered portal email, student admission number (e.g. 26/ASS/JA001), or staff ID to receive a verification code.
-              </p>
-              <div>
-                <label className="block text-xs font-semibold text-[#1c1c14] mb-1.5">
-                  Email, Admission Number, or Staff ID *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. amina@alaminschools.edu or 26/ASS/JA001"
-                  value={forgotIdentifier}
-                  onChange={(e) => setForgotIdentifier(e.target.value)}
-                  className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] transition-all shadow-xs"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsForgotModalOpen(false)}
-                  className="px-4 py-2 border border-[#c9c7b6] text-[#48482d] hover:bg-[#ece7d0] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={forgotLoading}
-                  className="px-4 py-2 bg-[#616218] hover:bg-[#494900] disabled:opacity-60 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                >
-                  {forgotLoading ? 'Generating...' : 'Get Verification Code'}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <form onSubmit={handleResetPassword} className="space-y-3.5">
-              <p className="text-xs text-[#797869] leading-relaxed">
-                Verification code generated for <span className="font-semibold text-[#1c1c14]">{maskedEmail}</span>. Enter the 6-digit code and choose a new password.
-              </p>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#1c1c14] mb-1">
-                  6-Digit Verification Code *
-                </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={6}
-                  placeholder="e.g. 123456"
-                  value={forgotOtp}
-                  onChange={(e) => setForgotOtp(e.target.value)}
-                  className="w-full h-10 px-3 font-mono tracking-widest text-center text-base rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] transition-all shadow-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#1c1c14] mb-1">
-                  New Password (min 6 characters) *
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Enter new password"
-                  value={forgotNewPassword}
-                  onChange={(e) => setForgotNewPassword(e.target.value)}
-                  className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] transition-all shadow-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#1c1c14] mb-1">
-                  Confirm New Password *
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Confirm new password"
-                  value={forgotConfirmPassword}
-                  onChange={(e) => setForgotConfirmPassword(e.target.value)}
-                  className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] transition-all shadow-xs"
-                />
-              </div>
-
-              <div className="flex justify-between items-center pt-2">
-                <button
-                  type="button"
-                  onClick={() => setForgotStep('request')}
-                  className="text-xs text-[#616218] hover:underline cursor-pointer"
-                >
-                  ← Back to request code
-                </button>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsForgotModalOpen(false)}
-                    className="px-4 py-2 border border-[#c9c7b6] text-[#48482d] hover:bg-[#ece7d0] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={forgotLoading}
-                    className="px-4 py-2 bg-[#616218] hover:bg-[#494900] disabled:opacity-60 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                  >
-                    {forgotLoading ? 'Updating...' : 'Set New Password'}
-                  </button>
-                </div>
-              </div>
-            </form>
-          )}
-        </div>
-      </Modal>
     </div>
   );
 }

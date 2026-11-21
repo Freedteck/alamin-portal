@@ -6,7 +6,7 @@ import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import apiRouter from './server/routes.ts';
 import { openApiSpec } from './server/swagger.ts';
-import { backendStore } from './server/store.ts';
+import { backendStore, isServerSupabaseConfigured } from './server/store.ts';
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -52,6 +52,11 @@ app.use('/api', (_req: Request, res: Response) => {
 });
 
 async function startServer() {
+  if (!isServerSupabaseConfigured) {
+    throw new Error('SUPABASE_URL and SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_ROLE_KEY) are required.');
+  }
+  await backendStore.ensureInitialAdmin();
+
   if (!isProduction && process.env.API_ONLY !== 'true') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
