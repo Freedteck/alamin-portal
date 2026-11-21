@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { SearchInput } from '../../../shared/components/SearchInput/SearchInput';
 import { Modal } from '../../../shared/components/Modal/Modal';
@@ -19,9 +19,12 @@ import {
 
 export function StaffStudents() {
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedClass, setSelectedClass] = useState('all');
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [students, setStudents] = useState([]);
+  const [totalStudents, setTotalStudents] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
   const [currentTeacher, setCurrentTeacher] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -35,7 +38,18 @@ export function StaffStudents() {
   });
   const [toast, setToast] = useState(null);
 
-  const loadData = () => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearch, selectedClass, selectedSubject, pageSize]);
+
+  const loadData = useCallback(async () => {
     const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
     const allTeachers = schoolStore.getTeachers();
 
@@ -48,20 +62,47 @@ export function StaffStudents() {
       allTeachers[0] ||
       null;
     setCurrentTeacher(teacher);
-    const teacherStudents = schoolStore.getStudentsForTeacher(teacher);
-    setStudents(teacherStudents);
-  };
+
+    setIsLoading(true);
+    try {
+      const res = await schoolStore.fetchStudents({
+        page: currentPage,
+        limit: pageSize,
+        search: debouncedSearch,
+        class: selectedClass,
+        subject: selectedSubject
+      });
+      if (res && res.data) {
+        setStudents(res.data);
+        setTotalStudents(res.total || 0);
+      } else if (Array.isArray(res)) {
+        setStudents(res);
+        setTotalStudents(res.length);
+      }
+    } catch (err) {
+      console.error('Failed to load staff students:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentPage, pageSize, debouncedSearch, selectedClass, selectedSubject]);
 
   useEffect(() => {
     loadData();
-    return subscribeSchoolSync(loadData);
-  }, []);
+  }, [loadData]);
 
-  const handleEnrollStudent = (e) => {
+  useEffect(() => {
+    return subscribeSchoolSync((topic) => {
+      if (topic === 'students' || !topic) {
+        loadData();
+      }
+    });
+  }, [loadData]);
+
+  const handleEnrollStudent = async (e) => {
     e.preventDefault();
     if (!enrollForm.studentId || !enrollForm.subject) return;
 
-    schoolStore.addStudentToClassSubject(enrollForm.studentId, enrollForm.subject);
+    await schoolStore.addStudentToClassSubject(enrollForm.studentId, enrollForm.subject);
     loadData();
     setIsEnrollModalOpen(false);
     setToast('Student successfully added to your subject class roster!');
@@ -70,32 +111,6 @@ export function StaffStudents() {
 
   const teacherClasses = schoolStore.getClassesForTeacher(currentTeacher);
   const teacherSubjects = schoolStore.getSubjectsForTeacher(currentTeacher);
-
-  const filteredStudents = students.filter((student) => {
-    const matchesSearch =
-      student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      student.admissionNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      student.parentName?.toLowerCase().includes(searchTerm.toLowerCase());
-
-    const matchesClass = selectedClass === 'all' || student.class === selectedClass;
-    const matchesSubject =
-      selectedSubject === 'all' ||
-      (student.enrolledSubjects || []).includes(selectedSubject) ||
-      (currentTeacher?.assignedClasses || []).some(
-        (ac) => ac.class === student.class && ac.subject === selectedSubject
-      );
-
-    return matchesSearch && matchesClass && matchesSubject;
-  });
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, selectedClass, selectedSubject]);
-
-  const paginatedStudents = filteredStudents.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-16">
@@ -247,14 +262,20 @@ export function StaffStudents() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c9c7b6]/40">
-              {paginatedStudents.length === 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-[#797869] text-xs">
+                    Loading students...
+                  </td>
+                </tr>
+              ) : students.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-[#797869] text-xs">
                     No students match the selected class or subject filter.
                   </td>
                 </tr>
               ) : (
-                paginatedStudents.map((student) => (
+                students.map((student) => (
                   <tr key={student.id} className="hover:bg-[#fbf9f1] transition-colors">
                     <td className="py-3 px-4 font-mono font-bold text-xs text-[#616218]">
                       {student.admissionNumber}
@@ -304,7 +325,7 @@ export function StaffStudents() {
           </table>
           <Pagination
             currentPage={currentPage}
-            totalItems={filteredStudents.length}
+            totalItems={totalStudents}
             pageSize={pageSize}
             onPageChange={setCurrentPage}
             onPageSizeChange={(size) => {

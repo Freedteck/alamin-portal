@@ -296,14 +296,30 @@ router.get('/students', requireAuth, (req: AuthenticatedRequest, res: Response) 
     const student = backendStore.getStudentById(req.user.studentId || '');
     return res.json(student ? [student] : []);
   }
+
+  const { search, class: className, department, subject, status, page, limit } = req.query as Record<string, string>;
+  let allowedClasses: string[] | undefined = undefined;
+
   if (req.user?.role === 'teacher') {
     const teacher = backendStore.getTeacherById(req.user.teacherId || '');
     const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
     if (teacherClasses.length > 0) {
-      return res.json(backendStore.getStudents().filter((s: any) => teacherClasses.includes(s.class)));
+      allowedClasses = teacherClasses;
     }
   }
-  res.json(backendStore.getStudents());
+
+  const result = backendStore.getStudents({
+    search,
+    class: className,
+    department,
+    subject,
+    status,
+    page: page ? Number(page) : undefined,
+    limit: limit ? Number(limit) : undefined,
+    allowedClasses
+  });
+
+  res.json(result);
 });
 
 router.get('/students/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
@@ -364,8 +380,17 @@ router.delete('/students/:id', requireAuth, requireRole('admin'), (req: Request,
 
 /* ── Teachers ────────────────────────────────────────────────────────────── */
 
-router.get('/teachers', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getTeachers());
+router.get('/teachers', requireAuth, (req: Request, res: Response) => {
+  const { search, class: className, subject, status, page, limit } = req.query as Record<string, string>;
+  const result = backendStore.getTeachers({
+    search,
+    class: className,
+    subject,
+    status,
+    page: page ? Number(page) : undefined,
+    limit: limit ? Number(limit) : undefined
+  });
+  res.json(result);
 });
 
 router.get('/teachers/:id', requireAuth, (req: Request, res: Response) => {

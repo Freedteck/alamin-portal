@@ -228,6 +228,18 @@ export const schoolStore = {
   getStudentById(id) {
     return (state.students || []).find((s) => s.id === id) || null;
   },
+  async fetchStudents(params = {}) {
+    const query = new URLSearchParams();
+    if (params.page) query.set('page', String(params.page));
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.search) query.set('search', String(params.search));
+    if (params.class && params.class !== 'all') query.set('class', String(params.class));
+    if (params.subject && params.subject !== 'all') query.set('subject', String(params.subject));
+    if (params.department && params.department !== 'all') query.set('department', String(params.department));
+    if (params.status && params.status !== 'all') query.set('status', String(params.status));
+    const qs = query.toString();
+    return await apiClient.get(`/students${qs ? `?${qs}` : ''}`);
+  },
   async createStudentAsync(studentData) {
     const res = await apiClient.post('/students', studentData);
     if (res?.student) {
@@ -284,6 +296,17 @@ export const schoolStore = {
   },
   getTeacherById(id) {
     return (state.teachers || []).find((t) => t.id === id) || null;
+  },
+  async fetchTeachers(params = {}) {
+    const query = new URLSearchParams();
+    if (params.page) query.set('page', String(params.page));
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.search) query.set('search', String(params.search));
+    if (params.class && params.class !== 'all') query.set('class', String(params.class));
+    if (params.subject && params.subject !== 'all') query.set('subject', String(params.subject));
+    if (params.status && params.status !== 'all') query.set('status', String(params.status));
+    const qs = query.toString();
+    return await apiClient.get(`/teachers${qs ? `?${qs}` : ''}`);
   },
   async createTeacherAsync(teacherData) {
     const res = await apiClient.post('/teachers', teacherData);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { SearchInput } from '../../../shared/components/SearchInput/SearchInput';
 import { Modal } from '../../../shared/components/Modal/Modal';
@@ -20,10 +20,14 @@ import { schoolStore, SCHOOL_CLASSES, subscribeSchoolSync } from '../../../share
 
 export function StudentManagement() {
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedClass, setSelectedClass] = useState('all');
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentToDelete, setStudentToDelete] = useState(null);
   const [studentsList, setStudentsList] = useState([]);
+  const [totalStudents, setTotalStudents] = useState(0);
+  const [classCounts, setClassCounts] = useState({});
+  const [isLoading, setIsLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
   const [resetPasswordInput, setResetPasswordInput] = useState('');
@@ -33,23 +37,62 @@ export function StudentManagement() {
   const [copiedField, setCopiedField] = useState('');
 
   useEffect(() => {
-    const sync = () => setStudentsList(schoolStore.getStudents());
-    sync();
-    return subscribeSchoolSync(sync);
-  }, []);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, selectedClass, pageSize]);
+  }, [debouncedSearch, selectedClass, pageSize]);
 
-  const confirmDeleteStudent = () => {
+  const loadStudents = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await schoolStore.fetchStudents({
+        page: currentPage,
+        limit: pageSize,
+        search: debouncedSearch,
+        class: selectedClass
+      });
+      if (res && res.data) {
+        setStudentsList(res.data);
+        setTotalStudents(res.total || 0);
+        if (res.classCounts) {
+          setClassCounts(res.classCounts);
+        }
+      } else if (Array.isArray(res)) {
+        setStudentsList(res);
+        setTotalStudents(res.length);
+      }
+    } catch (err) {
+      console.error('Failed to load students:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentPage, pageSize, debouncedSearch, selectedClass]);
+
+  useEffect(() => {
+    loadStudents();
+  }, [loadStudents]);
+
+  useEffect(() => {
+    return subscribeSchoolSync((topic) => {
+      if (topic === 'students' || !topic) {
+        loadStudents();
+      }
+    });
+  }, [loadStudents]);
+
+  const confirmDeleteStudent = async () => {
     if (!studentToDelete) return;
-    const updated = schoolStore.deleteStudent(studentToDelete.id);
-    setStudentsList(updated);
+    await schoolStore.deleteStudent(studentToDelete.id);
     if (selectedStudent?.id === studentToDelete.id) {
       setSelectedStudent(null);
     }
     setStudentToDelete(null);
+    loadStudents();
   };
 
   const handleCopy = (value, label) => {
@@ -82,32 +125,6 @@ export function StudentManagement() {
     }
   };
 
-  const filteredStudents = (studentsList || []).filter((student) => {
-    if (!student) return false;
-    const name = student.name || '';
-    const adm = student.admissionNumber || '';
-    const state = student.stateOfOrigin || '';
-    const lga = student.lga || '';
-    const parent = student.parentName || '';
-    const term = (searchTerm || '').toLowerCase();
-
-    const matchesSearch =
-      name.toLowerCase().includes(term) ||
-      adm.toLowerCase().includes(term) ||
-      state.toLowerCase().includes(term) ||
-      lga.toLowerCase().includes(term) ||
-      parent.toLowerCase().includes(term);
-
-    const matchesClass = selectedClass === 'all' || student.class === selectedClass;
-
-    return matchesSearch && matchesClass;
-  });
-
-  const paginatedStudents = filteredStudents.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
-
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-12">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-[#c9c7b6]/50">
@@ -133,7 +150,7 @@ export function StudentManagement() {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {SCHOOL_CLASSES.map((cls) => {
-          const count = studentsList.filter((s) => s.class === cls).length;
+          const count = classCounts[cls] || 0;
           const isSelected = selectedClass === cls;
           return (
             <button
@@ -205,14 +222,20 @@ export function StudentManagement() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c9c7b6]/40">
-              {paginatedStudents.length === 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={6} className="py-10 text-center text-[#797869]">
+                    Loading students...
+                  </td>
+                </tr>
+              ) : studentsList.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-10 text-center text-[#797869]">
                     No students match the selected class or search query.
                   </td>
                 </tr>
               ) : (
-                paginatedStudents.map((student) => (
+                studentsList.map((student) => (
                   <tr key={student.id} className="hover:bg-[#fbf9f1] transition-colors">
                     <td className="py-3.5 px-5 font-mono font-bold text-xs text-[#616218]">
                       {student.admissionNumber}
@@ -271,7 +294,7 @@ export function StudentManagement() {
 
         <Pagination
           currentPage={currentPage}
-          totalItems={filteredStudents.length}
+          totalItems={totalStudents}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
           onPageSizeChange={setPageSize}

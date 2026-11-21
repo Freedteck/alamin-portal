@@ -933,8 +933,82 @@ export const backendStore = {
     return true;
   },
 
-  getStudents() {
-    return db.students;
+  getStudents(options?: {
+    search?: string;
+    class?: string;
+    department?: string;
+    subject?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+    allowedClasses?: string[];
+  }) {
+    let list = db.students || [];
+
+    if (options?.allowedClasses && options.allowedClasses.length > 0) {
+      list = list.filter((s) => options.allowedClasses!.includes(s.class));
+    }
+
+    if (options?.class && options.class !== 'all') {
+      const cls = options.class.toLowerCase().trim();
+      list = list.filter((s) => (s.class || '').toLowerCase().trim() === cls);
+    }
+
+    if (options?.department && options.department !== 'all') {
+      const dept = options.department.toLowerCase().trim();
+      list = list.filter((s) => (s.department || '').toLowerCase().trim() === dept);
+    }
+
+    if (options?.subject && options.subject !== 'all') {
+      const sub = options.subject.toLowerCase().trim();
+      list = list.filter((s) =>
+        (s.enrolledSubjects || []).some((es: string) => es.toLowerCase().trim() === sub)
+      );
+    }
+
+    if (options?.status && options.status !== 'all') {
+      const st = options.status.toLowerCase().trim();
+      list = list.filter((s) => (s.status || '').toLowerCase().trim() === st);
+    }
+
+    if (options?.search) {
+      const term = options.search.toLowerCase().trim();
+      list = list.filter((s) =>
+        (s.name || '').toLowerCase().includes(term) ||
+        (s.admissionNumber || '').toLowerCase().includes(term) ||
+        (s.email || '').toLowerCase().includes(term) ||
+        (s.parentName || '').toLowerCase().includes(term) ||
+        (s.parentPhone || '').toLowerCase().includes(term) ||
+        (s.class || '').toLowerCase().includes(term)
+      );
+    }
+
+    const total = list.length;
+
+    if (options?.page || options?.limit) {
+      const page = Math.max(1, Number(options.page || 1));
+      const limit = Math.max(1, Math.min(100, Number(options.limit || 10)));
+      const offset = (page - 1) * limit;
+      const data = list.slice(offset, offset + limit);
+
+      const classCounts: Record<string, number> = {};
+      for (const s of (db.students || [])) {
+        if (s.class) {
+          classCounts[s.class] = (classCounts[s.class] || 0) + 1;
+        }
+      }
+
+      return {
+        data,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        classCounts
+      };
+    }
+
+    return list;
   },
 
   getStudentById(id: string) {
@@ -1065,8 +1139,76 @@ export const backendStore = {
     return true;
   },
 
-  getTeachers() {
-    return db.teachers;
+  getTeachers(options?: {
+    search?: string;
+    class?: string;
+    subject?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    let list = db.teachers || [];
+
+    if (options?.status && options.status !== 'all') {
+      const st = options.status.toLowerCase().trim();
+      list = list.filter((t) => (t.status || '').toLowerCase().trim() === st);
+    }
+
+    if (options?.class && options.class !== 'all') {
+      const cls = options.class.toLowerCase().trim();
+      list = list.filter((t) =>
+        (t.assignedClasses || []).some((ac: any) => (ac.class || '').toLowerCase().trim() === cls) ||
+        (t.classTeacherOf || []).some((c: string) => c.toLowerCase().trim() === cls)
+      );
+    }
+
+    if (options?.subject && options.subject !== 'all') {
+      const sub = options.subject.toLowerCase().trim();
+      list = list.filter((t) =>
+        (t.assignedClasses || []).some((ac: any) => (ac.subject || '').toLowerCase().trim() === sub)
+      );
+    }
+
+    if (options?.search) {
+      const term = options.search.toLowerCase().trim();
+      list = list.filter((t) =>
+        (t.name || '').toLowerCase().includes(term) ||
+        (t.staffId || '').toLowerCase().includes(term) ||
+        (t.email || '').toLowerCase().includes(term) ||
+        (t.qualification || '').toLowerCase().includes(term)
+      );
+    }
+
+    const total = list.length;
+
+    if (options?.page || options?.limit) {
+      const page = Math.max(1, Number(options.page || 1));
+      const limit = Math.max(1, Math.min(100, Number(options.limit || 10)));
+      const offset = (page - 1) * limit;
+      const data = list.slice(offset, offset + limit);
+
+      const totalTeachers = (db.teachers || []).length;
+      const activeTeachers = (db.teachers || []).filter((t) => t.status === 'active').length;
+      const totalAllocations = (db.teachers || []).reduce(
+        (acc, t) => acc + (t.assignedClasses ? t.assignedClasses.length : 0),
+        0
+      );
+
+      return {
+        data,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        stats: {
+          totalTeachers,
+          activeTeachers,
+          totalAllocations
+        }
+      };
+    }
+
+    return list;
   },
 
   getTeacherById(id: string) {

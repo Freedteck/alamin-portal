@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../../../shared/components/Button/Button';
 import { Modal } from '../../../shared/components/Modal/Modal';
@@ -23,7 +23,15 @@ import { schoolData, schoolStore, SCHOOL_CLASSES, subscribeSchoolSync } from '..
 
 export function TeacherManagement() {
   const [teachers, setTeachers] = useState([]);
+  const [totalTeachers, setTotalTeachers] = useState(0);
+  const [teacherStats, setTeacherStats] = useState({
+    totalTeachers: 0,
+    activeTeachers: 0,
+    totalAllocations: 0
+  });
+  const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [selectedClass, setSelectedClass] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -58,48 +66,56 @@ export function TeacherManagement() {
 
   const [subjectNames, setSubjectNames] = useState([]);
 
-  const loadTeachers = () => {
-    const list = schoolData.getTeachers();
-    setTeachers(list);
-    setSubjectNames(schoolStore.getSubjectNames());
-  };
-
   useEffect(() => {
-    loadTeachers();
-    return subscribeSchoolSync(loadTeachers);
-  }, []);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, selectedSubject, selectedClass, pageSize]);
+  }, [debouncedSearch, selectedSubject, selectedClass, pageSize]);
 
-  const filteredTeachers = (teachers || []).filter((teacher) => {
-    if (!teacher) return false;
-    const teacherName = teacher.name || '';
-    const teacherEmail = teacher.email || '';
-    const teacherStaffId = teacher.staffId || '';
-    const teacherQual = teacher.qualification || '';
+  const loadTeachers = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await schoolStore.fetchTeachers({
+        page: currentPage,
+        limit: pageSize,
+        search: debouncedSearch,
+        class: selectedClass,
+        subject: selectedSubject
+      });
+      if (res && res.data) {
+        setTeachers(res.data);
+        setTotalTeachers(res.total || 0);
+        if (res.stats) {
+          setTeacherStats(res.stats);
+        }
+      } else if (Array.isArray(res)) {
+        setTeachers(res);
+        setTotalTeachers(res.length);
+      }
+      setSubjectNames(schoolStore.getSubjectNames());
+    } catch (err) {
+      console.error('Failed to load teachers:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentPage, pageSize, debouncedSearch, selectedClass, selectedSubject]);
 
-    const matchesSearch =
-      teacherName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      teacherEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      teacherStaffId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      teacherQual.toLowerCase().includes(searchTerm.toLowerCase());
+  useEffect(() => {
+    loadTeachers();
+  }, [loadTeachers]);
 
-    const assigned = teacher.assignedClasses || [];
-    const matchesSubject =
-      selectedSubject === 'all' || assigned.some((a) => a && a.subject === selectedSubject);
-
-    const matchesClass =
-      selectedClass === 'all' || assigned.some((a) => a && a.class === selectedClass);
-
-    return matchesSearch && matchesSubject && matchesClass;
-  });
-
-  const paginatedTeachers = filteredTeachers.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
+  useEffect(() => {
+    return subscribeSchoolSync((topic) => {
+      if (topic === 'teachers' || !topic) {
+        loadTeachers();
+      }
+    });
+  }, [loadTeachers]);
 
   const handleCopy = (value, label) => {
     if (!value || !navigator?.clipboard) return;
@@ -240,11 +256,6 @@ export function TeacherManagement() {
     }
   };
 
-  const totalAllocations = teachers.reduce(
-    (acc, t) => acc + (t.assignedClasses ? t.assignedClasses.length : 0),
-    0
-  );
-
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-12">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-[#c9c7b6]/50">
@@ -278,27 +289,27 @@ export function TeacherManagement() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="rounded-lg border border-[#c9c7b6] bg-white p-4 shadow-xs">
           <span className="text-xs text-[#797869] font-medium uppercase tracking-wider">Total Teachers</span>
-          <div className="text-2xl font-bold text-[#1c1c14] tabular-nums mt-1">{teachers.length}</div>
+          <div className="text-2xl font-bold text-[#1c1c14] tabular-nums mt-1">{teacherStats.totalTeachers}</div>
           <span className="text-[11px] text-[#616218] font-medium">Secondary School Teachers</span>
         </div>
         <div className="rounded-lg border border-[#c9c7b6] bg-white p-4 shadow-xs">
           <span className="text-xs text-[#797869] font-medium uppercase tracking-wider">Active Staff</span>
           <div className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">
-            {teachers.filter((t) => t.status === 'active').length}
+            {teacherStats.activeTeachers}
           </div>
           <span className="text-[11px] text-emerald-600 font-medium">Currently teaching</span>
         </div>
         <div className="rounded-lg border border-[#c9c7b6] bg-white p-4 shadow-xs">
           <span className="text-xs text-[#797869] font-medium uppercase tracking-wider">Class Allocations</span>
           <div className="text-2xl font-bold text-[#494900] tabular-nums mt-1">
-            {totalAllocations}
+            {teacherStats.totalAllocations}
           </div>
           <span className="text-[11px] text-[#797869]">Subject-class pairings</span>
         </div>
         <div className="rounded-lg border border-[#c9c7b6] bg-white p-4 shadow-xs">
           <span className="text-xs text-[#797869] font-medium uppercase tracking-wider">Classes per Teacher</span>
           <div className="text-2xl font-bold text-[#1c1c14] tabular-nums mt-1">
-            {teachers.length > 0 ? (totalAllocations / teachers.length).toFixed(1) : 0}
+            {teacherStats.totalTeachers > 0 ? (teacherStats.totalAllocations / teacherStats.totalTeachers).toFixed(1) : 0}
           </div>
           <span className="text-[11px] text-[#797869]">Average teaching load</span>
         </div>
@@ -374,14 +385,20 @@ export function TeacherManagement() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c9c7b6]/40">
-              {paginatedTeachers.length === 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="p-10 text-center text-[#797869]">
+                    Loading teachers...
+                  </td>
+                </tr>
+              ) : teachers.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="p-10 text-center text-[#797869]">
                     No teachers found matching your filter criteria.
                   </td>
                 </tr>
               ) : (
-                paginatedTeachers.map((teacher) => {
+                teachers.map((teacher) => {
                   const assigned = teacher.assignedClasses || [];
                   const classTeacherList = teacher.classTeacherOf || [];
                   return (
@@ -447,7 +464,7 @@ export function TeacherManagement() {
 
         <Pagination
           currentPage={currentPage}
-          totalItems={filteredTeachers.length}
+          totalItems={totalTeachers}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
           onPageSizeChange={setPageSize}
