@@ -7,14 +7,13 @@ import {
   SSS_DEPARTMENTS,
   computeGrade,
   createInitialDbSnapshot,
+  createInitialUsers,
   generateAdmissionNumber,
   hashPassword,
   isSeniorClass,
   verifyPassword
 } from './seed.ts';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'school-db.json');
 export const UPLOADS_DIR = path.resolve(process.cwd(), 'uploads');
 const SUPABASE_BUCKET = 'school-files';
 
@@ -89,37 +88,106 @@ export function broadcastChange(resource: string, action = 'updated') {
 }
 
 function ensureDirectories() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-function loadDbFromDisk(): SchoolDatabase {
-  ensureDirectories();
-  if (!fs.existsSync(DB_FILE)) {
-    const initial = createInitialDbSnapshot();
-    fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2), 'utf8');
-    return initial;
-  }
+let db: SchoolDatabase = createInitialDbSnapshot();
+
+async function hydrateFromSupabaseIfAvailable() {
+  if (!serverSupabase) return;
   try {
-    const raw = fs.readFileSync(DB_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    const seed = createInitialDbSnapshot();
-    return {
-      ...seed,
-      ...parsed
-    };
-  } catch {
-    const initial = createInitialDbSnapshot();
-    fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2), 'utf8');
-    return initial;
+    const { data: users, error: errUsers } = await serverSupabase.from('portal_users').select('*');
+    if (!errUsers && users && users.length > 0) {
+      db.users = users.map((u: any) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        studentId: u.student_id,
+        teacherId: u.teacher_id,
+        avatarUrl: u.avatar_url || '',
+        passwordHash: u.password_hash,
+        createdAt: u.created_at
+      }));
+    } else if (!errUsers) {
+      const initialUsers = createInitialUsers();
+      await serverSupabase.from('portal_users').upsert(
+        initialUsers.map((u) => ({
+          id: u.id,
+          email: u.email,
+          name: u.name,
+          role: u.role,
+          password_hash: u.passwordHash,
+          avatar_url: ''
+        }))
+      );
+      console.log('[Al-Amin Store] Provisioned initial admin user to Supabase portal_users.');
+    }
+
+    const { data: students } = await serverSupabase.from('students').select('*');
+    if (students && students.length > 0) {
+      db.students = students.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        admissionNumber: s.admission_number,
+        class: s.class,
+        department: s.department,
+        gender: s.gender,
+        dob: s.dob,
+        stateOfOrigin: s.state_of_origin,
+        lga: s.lga,
+        address: s.address,
+        email: s.email,
+        parentName: s.parent_name,
+        parentPhone: s.parent_phone,
+        parentEmail: s.parent_email,
+        enrolledSubjects: s.enrolled_subjects || [],
+        attendanceRate: s.attendance_rate || 0,
+        gpa: s.gpa || '0.00',
+        avatarUrl: s.avatar_url || '',
+        status: s.status || 'active'
+      }));
+    }
+
+    const { data: teachers } = await serverSupabase.from('teachers').select('*');
+    if (teachers && teachers.length > 0) {
+      db.teachers = teachers.map((t: any) => ({
+        id: t.id,
+        name: t.name,
+        staffId: t.staff_id,
+        email: t.email,
+        phone: t.phone,
+        qualification: t.qualification,
+        assignedClasses: t.assigned_classes || [],
+        formTeacherOf: t.form_teacher_of || '',
+        avatarUrl: t.avatar_url || '',
+        status: t.status || 'active'
+      }));
+    }
+
+    const { data: subjects } = await serverSupabase.from('subjects').select('*');
+    if (subjects && subjects.length > 0) {
+      db.subjects = subjects.map((sub: any) => ({
+        id: sub.id,
+        name: sub.name,
+        allClasses: sub.all_classes,
+        classes: sub.classes || [],
+        allDepartments: sub.all_departments,
+        departments: sub.departments || []
+      }));
+    }
+
+    console.log(`[Al-Amin Store] Successfully hydrated state from Supabase PostgreSQL tables.`);
+  } catch (err: any) {
+    console.log(`[Al-Amin Store] Supabase tables not yet created or ready (${err?.message}). Running in-memory mode.`);
   }
 }
 
-let db: SchoolDatabase = loadDbFromDisk();
+hydrateFromSupabaseIfAvailable();
 
 function persistDb() {
-  ensureDirectories();
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
+  // Pure in-memory cache, synchronized directly with Supabase PostgreSQL.
+  // No local JSON files are stored.
 }
 
 function supabaseMirrorUpsert(table: string, rowOrRows: any, onConflict = 'id') {
@@ -212,12 +280,97 @@ export function resolveLocalUploadPath(folder: string, filename: string): string
   return fs.existsSync(fullPath) ? fullPath : null;
 }
 
+interface PasswordResetOtp {
+  email: string;
+  code: string;
+  expiresAt: number;
+}
+const passwordResetOtps = new Map<string, PasswordResetOtp>();
+
 export const backendStore = {
   getStorageMode() {
     return isServerSupabaseConfigured ? 'supabase-postgres' : 'server-json-store';
   },
 
-  getBootstrapPayload() {
+  getBootstrapPayload(user?: any) {
+    if (!user) {
+      return {
+        subjects: db.subjects,
+        students: [],
+        teachers: [],
+        timetable: [],
+        alerts: [],
+        attendance: {},
+        grades: {},
+        resources: [],
+        equipment: [],
+        maintenance: [],
+        documents: [],
+        announcements: [],
+        availability: [],
+        assignments: [],
+        requests: []
+      };
+    }
+
+    if (user.role === 'student') {
+      const studentObj = db.students.find((s) => s.id === user.studentId) || null;
+      const studentClass = studentObj?.class || '';
+      const studentGrades = user.studentId ? (db.grades[user.studentId] || {}) : {};
+
+      const scopedAttendance: Record<string, any> = {};
+      Object.keys(db.attendance || {}).forEach((date) => {
+        const classRecords = db.attendance[date]?.[studentClass] || [];
+        const studentRecord = classRecords.filter((r: any) => r.studentId === user.studentId);
+        if (studentRecord.length > 0) {
+          if (!scopedAttendance[date]) scopedAttendance[date] = {};
+          scopedAttendance[date][studentClass] = studentRecord;
+        }
+      });
+
+      return {
+        subjects: db.subjects.filter((s) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass))),
+        students: studentObj ? [studentObj] : [],
+        teachers: db.teachers.map(({ phone, email, qualification, staffId, ...safe }) => safe),
+        timetable: db.timetable.filter((t) => t.class === studentClass),
+        alerts: db.alerts.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'student'),
+        attendance: scopedAttendance,
+        grades: { [user.studentId]: studentGrades },
+        resources: db.resources.filter((r) => !r.class || r.class === studentClass),
+        equipment: [],
+        maintenance: [],
+        documents: db.documents.filter((d) => d.access === 'all' || d.access === 'student'),
+        announcements: db.announcements.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'student'),
+        availability: db.availability,
+        assignments: db.assignments.filter((a) => !a.class || a.class === studentClass),
+        requests: db.requests.filter((r) => r.studentId === user.studentId)
+      };
+    }
+
+    if (user.role === 'teacher') {
+      const teacherObj = db.teachers.find((t) => t.id === user.teacherId) || null;
+      const assigned = teacherObj?.assignedClasses || [];
+      const assignedClassNames = assigned.map((a: any) => a.class);
+      return {
+        subjects: db.subjects,
+        students: db.students.filter((s) => assignedClassNames.includes(s.class)),
+        teachers: db.teachers,
+        timetable: db.timetable.filter((t) => t.teacherId === user.teacherId || assignedClassNames.includes(t.class)),
+        alerts: db.alerts.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'teacher'),
+        attendance: db.attendance,
+        grades: db.grades,
+        resources: db.resources,
+        equipment: db.equipment,
+        maintenance: db.maintenance,
+        documents: db.documents.filter((d) => d.access !== 'admin'),
+        announcements: db.announcements.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'teacher'),
+        availability: db.availability.filter((a) => a.teacherId === user.teacherId),
+        assignments: db.assignments.filter((a) => a.teacherId === user.teacherId || assignedClassNames.includes(a.class)),
+        requests: db.requests.filter((r) => r.teacherId === user.teacherId)
+      };
+    }
+
+    // Admin role receives complete data
     return {
       subjects: db.subjects,
       students: db.students,
@@ -1791,5 +1944,201 @@ export const backendStore = {
     });
     broadcastChange('enquiries', 'created');
     return entry;
+  },
+
+  generatePasswordResetOtp(identifier: string) {
+    const clean = String(identifier || '').trim().toLowerCase();
+    if (!clean) return { error: 'Please enter your email, student admission number, or staff ID.' };
+
+    let user = db.users.find((u) => u.email.toLowerCase() === clean);
+    if (!user) {
+      const student = db.students.find(
+        (s) => String(s.admissionNumber || '').trim().toLowerCase() === clean
+      );
+      if (student) user = db.users.find((u) => u.studentId === student.id);
+    }
+    if (!user) {
+      const teacher = db.teachers.find(
+        (t) => String(t.staffId || '').trim().toLowerCase() === clean
+      );
+      if (teacher) user = db.users.find((u) => u.teacherId === teacher.id);
+    }
+
+    if (!user) {
+      return { error: 'No portal account found matching this identifier.' };
+    }
+
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    passwordResetOtps.set(user.email.toLowerCase(), {
+      email: user.email.toLowerCase(),
+      code: otp,
+      expiresAt: Date.now() + 15 * 60 * 1000
+    });
+
+    console.log(`[Al-Amin Auth] Password reset OTP generated for ${user.email}: ${otp}`);
+
+    return {
+      success: true,
+      email: user.email,
+      maskedEmail: user.email.replace(/^(.)(.*)(.@.*)$/, (_, a, b, c) => `${a}***${c}`),
+      otp
+    };
+  },
+
+  resetPasswordWithOtp(identifier: string, otp: string, newPassword: string) {
+    const clean = String(identifier || '').trim().toLowerCase();
+    const cleanOtp = String(otp || '').trim();
+    const cleanPassword = String(newPassword || '').trim();
+
+    if (!cleanPassword || cleanPassword.length < 6) {
+      return { error: 'New password must be at least 6 characters.' };
+    }
+
+    let user = db.users.find((u) => u.email.toLowerCase() === clean);
+    if (!user) {
+      const student = db.students.find(
+        (s) => String(s.admissionNumber || '').trim().toLowerCase() === clean
+      );
+      if (student) user = db.users.find((u) => u.studentId === student.id);
+    }
+    if (!user) {
+      const teacher = db.teachers.find(
+        (t) => String(t.staffId || '').trim().toLowerCase() === clean
+      );
+      if (teacher) user = db.users.find((u) => u.teacherId === teacher.id);
+    }
+
+    if (!user) return { error: 'User account not found.' };
+
+    const stored = passwordResetOtps.get(user.email.toLowerCase());
+    if (!stored || stored.code !== cleanOtp || Date.now() > stored.expiresAt) {
+      return { error: 'Invalid or expired OTP verification code.' };
+    }
+
+    user.passwordHash = hashPassword(cleanPassword);
+    passwordResetOtps.delete(user.email.toLowerCase());
+
+    supabaseMirrorUpsert('portal_users', {
+      id: user.id,
+      email: user.email,
+      password_hash: user.passwordHash,
+      updated_at: new Date().toISOString()
+    });
+
+    return { success: true, message: 'Password has been reset successfully. You can now log in.' };
+  },
+
+  updateUserAvatar(userId: string, avatarUrl: string) {
+    const user = db.users.find((u) => u.id === userId);
+    if (!user) return null;
+    user.avatarUrl = avatarUrl;
+
+    if (user.studentId) {
+      const student = db.students.find((s) => s.id === user.studentId);
+      if (student) {
+        student.avatarUrl = avatarUrl;
+        supabaseMirrorUpsert('students', { id: student.id, avatar_url: avatarUrl });
+      }
+    }
+    if (user.teacherId) {
+      const teacher = db.teachers.find((t) => t.id === user.teacherId);
+      if (teacher) {
+        teacher.avatarUrl = avatarUrl;
+        supabaseMirrorUpsert('teachers', { id: teacher.id, avatar_url: avatarUrl });
+      }
+    }
+
+    supabaseMirrorUpsert('portal_users', { id: user.id, avatar_url: avatarUrl });
+    broadcastChange('users', 'updated');
+    const { passwordHash: _ignored, ...safeUser } = user;
+    return safeUser;
+  },
+
+  getPromotionCandidates(currentSession = '2026/2027') {
+    return (db.students || []).map((student) => {
+      const studentGrades = db.grades[student.id] || {};
+      const subjectScores = Object.values(studentGrades).map((g: any) => Number(g.total) || 0);
+      const avg = subjectScores.length > 0
+        ? Math.round(subjectScores.reduce((a, b) => a + b, 0) / subjectScores.length)
+        : 0;
+
+      let nextClass = student.class;
+      let defaultAction: 'promote' | 'repeat' | 'graduate' = 'promote';
+
+      if (student.class === 'JSS 1') nextClass = 'JSS 2';
+      else if (student.class === 'JSS 2') nextClass = 'JSS 3';
+      else if (student.class === 'JSS 3') nextClass = 'SSS 1';
+      else if (student.class === 'SSS 1') nextClass = 'SSS 2';
+      else if (student.class === 'SSS 2') nextClass = 'SSS 3';
+      else if (student.class === 'SSS 3') {
+        nextClass = 'Graduated';
+        defaultAction = 'graduate';
+      }
+
+      if (defaultAction !== 'graduate' && avg < 45 && subjectScores.length > 0) {
+        defaultAction = 'repeat';
+      }
+
+      return {
+        id: student.id,
+        name: student.name,
+        admissionNumber: student.admissionNumber,
+        currentClass: student.class,
+        department: student.department || '',
+        averageScore: avg,
+        suggestedClass: nextClass,
+        suggestedAction: defaultAction
+      };
+    });
+  },
+
+  executeSessionRollover({
+    nextSession,
+    promotions
+  }: {
+    nextSession: string;
+    promotions: Array<{
+      studentId: string;
+      action: 'promote' | 'repeat' | 'graduate';
+      targetClass?: string;
+      department?: string;
+    }>;
+  }) {
+    let promotedCount = 0;
+    let repeatCount = 0;
+    let graduatedCount = 0;
+
+    promotions.forEach((p) => {
+      const student = db.students.find((s) => s.id === p.studentId);
+      if (!student) return;
+
+      if (p.action === 'graduate') {
+        student.status = 'Graduated';
+        graduatedCount++;
+      } else if (p.action === 'repeat') {
+        repeatCount++;
+      } else if (p.action === 'promote') {
+        student.class = p.targetClass || student.class;
+        if (p.department) student.department = p.department;
+        promotedCount++;
+      }
+
+      supabaseMirrorUpsert('students', {
+        id: student.id,
+        class: student.class,
+        department: student.department || '',
+        status: student.status || 'active'
+      });
+    });
+
+    broadcastChange('students', 'updated');
+    return {
+      success: true,
+      nextSession,
+      promotedCount,
+      repeatCount,
+      graduatedCount,
+      totalProcessed: promotions.length
+    };
   }
 };

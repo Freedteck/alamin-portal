@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS public.portal_users (
   student_id TEXT NOT NULL DEFAULT '',
   teacher_id TEXT NOT NULL DEFAULT '',
   password_hash TEXT NOT NULL,
+  avatar_url TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -58,6 +59,7 @@ CREATE TABLE IF NOT EXISTS public.students (
   enrolled_subjects JSONB NOT NULL DEFAULT '[]'::jsonb,
   attendance_rate NUMERIC NOT NULL DEFAULT 0,
   gpa TEXT NOT NULL DEFAULT '0.00',
+  avatar_url TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -71,6 +73,7 @@ CREATE TABLE IF NOT EXISTS public.teachers (
   qualification TEXT NOT NULL DEFAULT '',
   assigned_classes JSONB NOT NULL DEFAULT '[]'::jsonb,
   form_teacher_of TEXT NOT NULL DEFAULT '',
+  avatar_url TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

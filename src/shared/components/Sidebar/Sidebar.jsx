@@ -1,11 +1,38 @@
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LogOut } from 'lucide-react';
+import { LogOut, Camera } from 'lucide-react';
 import { Logo } from '../Logo/Logo';
+import { ProfileAvatar } from '../ProfileAvatar/ProfileAvatar';
 import { apiClient } from '../../lib/apiClient';
+import { schoolStore } from '../../data/schoolData';
 
 export function Sidebar({ items = [], onLogout }) {
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('alamin_user') || '{}');
+    } catch {
+      return {};
+    }
+  });
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingPhoto(true);
+    try {
+      const res = await schoolStore.uploadProfileAvatar(file);
+      if (res?.avatarUrl) {
+        setCurrentUser((prev) => ({ ...prev, avatarUrl: res.avatarUrl }));
+      }
+    } catch (err) {
+      alert(err?.message || 'Failed to update profile photo.');
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  };
 
   const handleLogoutClick = async () => {
     if (onLogout) {
@@ -62,7 +89,34 @@ export function Sidebar({ items = [], onLogout }) {
         })}
       </nav>
 
-      <div className="pt-3 mt-auto border-t border-[#c9c7b6]/60 space-y-1">
+      <div className="pt-3 mt-auto border-t border-[#c9c7b6]/60 space-y-2">
+        <div className="flex items-center gap-2.5 px-2 py-2 bg-white/70 rounded-xl border border-[#c9c7b6]/40">
+          <div className="relative group shrink-0">
+            <ProfileAvatar src={currentUser?.avatarUrl} name={currentUser?.name || 'User'} size="sm" shape="circle" />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploadingPhoto}
+              title="Change profile photo"
+              className="absolute -bottom-1 -right-1 w-5 h-5 bg-[#616218] hover:bg-[#494900] text-white rounded-full flex items-center justify-center shadow-xs cursor-pointer"
+            >
+              <Camera className="w-2.5 h-2.5" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleAvatarChange}
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-[#1c1c14] truncate">{currentUser?.name || 'Portal User'}</p>
+            <p className="text-[10px] text-[#797869] capitalize truncate">
+              {currentUser?.role === 'teacher' ? 'Staff' : currentUser?.role || 'User'}
+            </p>
+          </div>
+        </div>
 
         <button
           type="button"

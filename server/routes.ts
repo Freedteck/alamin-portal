@@ -33,8 +33,8 @@ router.get('/health', (_req: Request, res: Response) => {
   });
 });
 
-router.get('/bootstrap', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
-  res.json(backendStore.getBootstrapPayload());
+router.get('/bootstrap', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  res.json(backendStore.getBootstrapPayload(req.user));
 });
 
 router.get('/events', requireAuth, (req: AuthenticatedRequest, res: Response) => {
@@ -89,6 +89,43 @@ router.post('/auth/logout', (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+router.post('/auth/forgot-password', (req: Request, res: Response) => {
+  const { identifier } = req.body || {};
+  const result = backendStore.generatePasswordResetOtp(identifier);
+  if (result.error) {
+    return res.status(404).json(result);
+  }
+  res.json(result);
+});
+
+router.post('/auth/reset-password', (req: Request, res: Response) => {
+  const { identifier, otp, newPassword } = req.body || {};
+  const result = backendStore.resetPasswordWithOtp(identifier, otp, newPassword);
+  if (result.error) {
+    return res.status(400).json(result);
+  }
+  res.json(result);
+});
+
+router.post(
+  '/auth/profile/avatar',
+  requireAuth,
+  upload.single('avatar'),
+  async (req: AuthenticatedRequest, res: Response) => {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded.' });
+    }
+    try {
+      const uploaded = await uploadFileToBackendStorage('avatars', req.file);
+      const avatarUrl = uploaded.fileUrl || `/files/download/${uploaded.filePath}`;
+      const updatedUser = backendStore.updateUserAvatar(req.user!.id, avatarUrl);
+      res.json({ success: true, avatarUrl, user: updatedUser });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to update avatar photo.' });
+    }
+  }
+);
+
 /* ── Subjects ────────────────────────────────────────────────────────────── */
 
 router.get('/subjects', requireAuth, (_req: Request, res: Response) => {
@@ -118,12 +155,20 @@ router.delete('/subjects/:id', requireAuth, requireRole('admin'), (req: Request,
 
 /* ── Students ────────────────────────────────────────────────────────────── */
 
-router.get('/students', requireAuth, (_req: Request, res: Response) => {
+router.get('/students', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  if (req.user?.role === 'student') {
+    const student = backendStore.getStudentById(req.user.studentId || '');
+    return res.json(student ? [student] : []);
+  }
   res.json(backendStore.getStudents());
 });
 
-router.get('/students/:id', requireAuth, (req: Request, res: Response) => {
-  const student = backendStore.getStudentById(paramStr(req.params.id));
+router.get('/students/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const targetId = paramStr(req.params.id);
+  if (req.user?.role === 'student' && req.user.studentId !== targetId) {
+    return res.status(403).json({ error: 'Access denied. You can only view your own student record.' });
+  }
+  const student = backendStore.getStudentById(targetId);
   if (!student) return res.status(404).json({ error: 'Student not found.' });
   res.json(student);
 });
@@ -337,10 +382,14 @@ router.post('/grades', requireAuth, requireRole('admin', 'teacher'), (req: Reque
   res.status(201).json(saved);
 });
 
-router.get('/reports/:studentId', requireAuth, (req: Request, res: Response) => {
+router.get('/reports/:studentId', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const targetId = paramStr(req.params.studentId);
+  if (req.user?.role === 'student' && req.user.studentId !== targetId) {
+    return res.status(403).json({ error: 'Access denied. You can only view your own report card.' });
+  }
   const term = typeof req.query.term === 'string' ? req.query.term : 'Term1';
   const session = typeof req.query.session === 'string' ? req.query.session : '2026/2027';
-  const report = backendStore.getStudentReportCard(paramStr(req.params.studentId), term, session);
+  const report = backendStore.getStudentReportCard(targetId, term, session);
   if (!report) return res.status(404).json({ error: 'Student report not found.' });
   res.json(report);
 });
@@ -591,6 +640,22 @@ router.get('/files/download/:folder/:filename', (req: Request, res: Response) =>
     return res.status(404).json({ error: 'File not found on server.' });
   }
   res.download(filePath);
+});
+
+/* ── Academic Session Rollover & Promotion ───────────────────────────────── */
+
+router.get('/academic/promotion-candidates', requireAuth, requireRole('admin'), (_req: Request, res: Response) => {
+  const candidates = backendStore.getPromotionCandidates();
+  res.json({ candidates });
+});
+
+router.post('/academic/rollover-session', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+  const { nextSession, promotions } = req.body || {};
+  if (!nextSession || !Array.isArray(promotions)) {
+    return res.status(400).json({ error: 'nextSession and promotions array are required.' });
+  }
+  const result = backendStore.executeSessionRollover({ nextSession, promotions });
+  res.json(result);
 });
 
 export default router;
