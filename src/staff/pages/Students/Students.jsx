@@ -26,6 +26,8 @@ export function StaffStudents() {
   const [totalStudents, setTotalStudents] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [currentTeacher, setCurrentTeacher] = useState(null);
+  const [schoolClasses, setSchoolClasses] = useState(SCHOOL_CLASSES);
+  const [subjectCatalog, setSubjectCatalog] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
@@ -50,28 +52,23 @@ export function StaffStudents() {
   }, [debouncedSearch, selectedClass, selectedSubject, pageSize]);
 
   const loadData = useCallback(async () => {
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const allTeachers = schoolStore.getTeachers();
-
-    const teacher =
-      allTeachers.find(
-        (t) =>
-          (saved.email && t.email?.toLowerCase() === saved.email.toLowerCase()) ||
-          (saved.name && t.name?.toLowerCase() === saved.name.toLowerCase())
-      ) ||
-      allTeachers[0] ||
-      null;
-    setCurrentTeacher(teacher);
-
     setIsLoading(true);
     try {
-      const res = await schoolStore.fetchStudents({
-        page: currentPage,
-        limit: pageSize,
-        search: debouncedSearch,
-        class: selectedClass,
-        subject: selectedSubject
-      });
+      const [teacher, res, classes, subjects] = await Promise.all([
+        schoolStore.fetchCurrentTeacher(),
+        schoolStore.fetchStudents({
+          page: currentPage,
+          limit: pageSize,
+          search: debouncedSearch,
+          class: selectedClass,
+          subject: selectedSubject
+        }),
+        schoolStore.fetchClasses(),
+        schoolStore.fetchSubjects()
+      ]);
+      setCurrentTeacher(teacher);
+      if (Array.isArray(classes)) setSchoolClasses(classes.map((item) => item.name || item));
+      setSubjectCatalog(Array.isArray(subjects) ? subjects : []);
       if (res && res.data) {
         setStudents(res.data);
         setTotalStudents(res.total || 0);
@@ -81,6 +78,9 @@ export function StaffStudents() {
       }
     } catch (err) {
       console.error('Failed to load staff students:', err);
+      setCurrentTeacher(null);
+      setStudents([]);
+      setTotalStudents(0);
     } finally {
       setIsLoading(false);
     }
@@ -92,7 +92,7 @@ export function StaffStudents() {
 
   useEffect(() => {
     return subscribeSchoolSync((topic) => {
-      if (topic === 'students' || !topic) {
+      if (topic === 'students' || topic === 'subjects' || topic === 'classes' || !topic) {
         loadData();
       }
     });
@@ -109,8 +109,22 @@ export function StaffStudents() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const teacherClasses = schoolStore.getClassesForTeacher(currentTeacher);
-  const teacherSubjects = schoolStore.getSubjectsForTeacher(currentTeacher);
+  const teacherClasses = Array.from(new Set((currentTeacher?.assignedClasses || []).map((item) => item.class).filter(Boolean)));
+  const teacherSubjects = Array.from(new Set((currentTeacher?.assignedClasses || []).map((item) => item.subject).filter(Boolean)));
+  const getSubjectsForClass = (className, department = '') =>
+    subjectCatalog
+      .filter((subject) =>
+        subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(className))
+      )
+      .filter((subject) =>
+        !department || subject.allDepartments || !Array.isArray(subject.departments) ||
+        subject.departments.includes(department)
+      )
+      .map((subject) => subject.name);
+  const availableTeacherClasses = teacherClasses.length > 0 ? teacherClasses : schoolClasses;
+  const availableTeacherSubjects = teacherSubjects.length > 0
+    ? teacherSubjects
+    : subjectCatalog.map((subject) => subject.name);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-16">
@@ -206,7 +220,7 @@ export function StaffStudents() {
               className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
             >
               <option value="all">All Assigned Classes</option>
-              {teacherClasses.map((cls) => (
+              {availableTeacherClasses.map((cls) => (
                 <option key={cls} value={cls}>
                   {cls}
                 </option>
@@ -221,7 +235,7 @@ export function StaffStudents() {
               className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
             >
               <option value="all">All Assigned Subjects</option>
-              {teacherSubjects.map((sub) => (
+              {availableTeacherSubjects.map((sub) => (
                 <option key={sub} value={sub}>
                   {sub}
                 </option>
@@ -379,7 +393,7 @@ export function StaffStudents() {
               className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
             >
               <option value="all">All Classes</option>
-              {SCHOOL_CLASSES.map((cls) => (
+              {schoolClasses.map((cls) => (
                 <option key={cls} value={cls}>
                   {cls}
                 </option>
@@ -429,9 +443,9 @@ export function StaffStudents() {
               {(() => {
                 const selectedObj = students.find((s) => s.id === enrollForm.studentId);
                 const validSubjects = selectedObj
-                  ? schoolStore.getSubjectsForClass(selectedObj.class, selectedObj.department)
-                  : schoolStore.getSubjectNames();
-                return (validSubjects.length > 0 ? validSubjects : schoolStore.getSubjectNames()).map((sub) => (
+                  ? getSubjectsForClass(selectedObj.class, selectedObj.department)
+                  : availableTeacherSubjects;
+                return (validSubjects.length > 0 ? validSubjects : availableTeacherSubjects).map((sub) => (
                   <option key={sub} value={sub}>
                     {sub}
                   </option>

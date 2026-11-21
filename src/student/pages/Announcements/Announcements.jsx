@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Bell,
   Pin,
@@ -11,59 +11,50 @@ import { schoolStore, subscribeSchoolSync } from '../../../shared/data/schoolDat
 
 export function StudentAnnouncements() {
   const [announcements, setAnnouncements] = useState([]);
+  const [totalAnnouncements, setTotalAnnouncements] = useState(0);
   const [activeStudent, setActiveStudent] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 6;
+  const loadRequest = useRef(0);
 
   useEffect(() => {
     const loadNotices = async () => {
+      const requestId = ++loadRequest.current;
       try {
-        const [sRes, aRes] = await Promise.all([
-          schoolStore.fetchStudents(),
-          schoolStore.fetchAnnouncements()
+        const [student, aRes] = await Promise.all([
+          schoolStore.fetchCurrentStudent(),
+          schoolStore.fetchAnnouncements({
+            page: currentPage,
+            limit: pageSize,
+            search: searchTerm,
+            type: filterType
+          })
         ]);
-        const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-        const students = Array.isArray(sRes) ? sRes : (sRes?.data || []);
-        const matched =
-          students.find(
-            (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
-          ) || students[0];
-        setActiveStudent(matched);
-        setAnnouncements(Array.isArray(aRes) ? aRes.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'student') : []);
-      } catch {
-        const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-        const students = schoolStore.getStudents();
-        const matched =
-          students.find(
-            (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
-          ) || students[0];
-        setActiveStudent(matched);
-        setAnnouncements(schoolStore.getAnnouncementsForUser('student', matched?.class || ''));
+        if (requestId !== loadRequest.current) return;
+        setActiveStudent(student);
+        setAnnouncements(Array.isArray(aRes?.data) ? aRes.data : []);
+        setTotalAnnouncements(aRes?.total || 0);
+      } catch (error) {
+        if (requestId !== loadRequest.current) return;
+        console.error('Failed to load student announcements:', error);
+        setActiveStudent(null);
+        setAnnouncements([]);
+        setTotalAnnouncements(0);
       }
     };
     loadNotices();
-    return subscribeSchoolSync(loadNotices);
-  }, []);
+    const unsubscribe = subscribeSchoolSync(loadNotices);
+    return () => {
+      loadRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm, filterType]);
 
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, filterType]);
-
-  const filtered = announcements.filter((a) => {
-    const matchSearch =
-      a.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      a.content?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchType = filterType === 'all' || a.type === filterType;
-    return matchSearch && matchType;
-  });
-
-  const sorted = [...filtered].sort(
-    (a, b) => Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned))
-  );
-
-  const paginated = sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const getPriorityBadge = (priority) => {
     switch (priority) {
@@ -114,8 +105,8 @@ export function StudentAnnouncements() {
 
       {/* Announcements List */}
       <div className="space-y-3">
-        {paginated.length > 0 ? (
-          paginated.map((ann) => {
+        {announcements.length > 0 ? (
+          announcements.map((ann) => {
             const targets = ann.targetAudiences || ann.targetAudience || ['Everyone'];
             return (
               <div
@@ -171,7 +162,7 @@ export function StudentAnnouncements() {
 
       <Pagination
         currentPage={currentPage}
-        totalItems={sorted.length}
+        totalItems={totalAnnouncements}
         pageSize={pageSize}
         onPageChange={setCurrentPage}
       />

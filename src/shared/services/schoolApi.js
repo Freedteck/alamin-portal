@@ -1,33 +1,16 @@
 import { apiClient } from '../lib/apiClient';
 import {
-  SCHOOL_CLASSES,
   SSS_DEPARTMENTS,
   ACADEMIC_SESSIONS,
   TIMETABLE_DAYS,
   computeGrade,
   getClassCode,
-  generateAdmissionNumber,
-  isSeniorClass
+  generateAdmissionNumber
 } from '../constants/academic';
 
 // In-memory runtime state for fast reactive UI renders
 let state = {
-  classes: [],
-  subjects: [],
-  students: [],
-  teachers: [],
-  timetable: [],
-  alerts: [],
   attendance: {},
-  grades: {},
-  resources: [],
-  equipment: [],
-  maintenance: [],
-  documents: [],
-  announcements: [],
-  availability: [],
-  assignments: [],
-  requests: []
 };
 
 const listeners = new Set();
@@ -99,22 +82,7 @@ export function initializeSchoolSync() {
         eventSource = null;
       }
       state = {
-        classes: [],
-        subjects: [],
-        students: [],
-        teachers: [],
-        timetable: [],
-        alerts: [],
         attendance: {},
-        grades: {},
-        resources: [],
-        equipment: [],
-        maintenance: [],
-        documents: [],
-        announcements: [],
-        availability: [],
-        assignments: [],
-        requests: []
       };
       notifyChange('logout');
     }
@@ -132,144 +100,60 @@ export function initializeSchoolSync() {
 export const schoolStore = {
   // Classes
   async fetchClasses() {
-    try {
-      const res = await apiClient.get('/classes');
-      if (Array.isArray(res)) {
-        state.classes = res;
-        notifyChange('classes');
-        return res;
-      }
-    } catch {}
-    return state.classes || [];
-  },
-  getClasses() {
-    if (state.classes && state.classes.length > 0) {
-      return state.classes.map((c) => c.name || c);
-    }
-    return SCHOOL_CLASSES;
-  },
-  getClassObjects() {
-    if (state.classes && state.classes.length > 0) {
-      return state.classes;
-    }
-    return SCHOOL_CLASSES.map((name, i) => ({
-      id: `cls-${i + 1}`,
-      name,
-      category: isSeniorClass(name) ? 'Senior' : 'Junior',
-      classTeacherId: '',
-      classTeacherName: ''
-    }));
+    return await apiClient.get('/classes');
   },
   async addClass(classData) {
     const res = await apiClient.post('/classes', classData);
-    if (res && !res.error) {
-      state.classes = [...(state.classes || []), res];
-      notifyChange('classes');
-    }
+    if (res && !res.error) notifyChange('classes');
     return res;
   },
   async deleteClass(id) {
-    await apiClient.delete(`/classes/${id}`).catch(() => {});
-    state.classes = (state.classes || []).filter((c) => c.id !== id);
+    const res = await apiClient.delete(`/classes/${id}`);
     notifyChange('classes');
-    return state.classes;
+    return res;
   },
   async assignClassTeacher(className, teacherId) {
     const res = await apiClient.post(`/classes/${encodeURIComponent(className)}/class-teacher`, { teacherId });
     if (res && !res.error) {
-      await Promise.all([this.fetchClasses(), this.fetchTeachers()]);
+      notifyChange('classes');
+      notifyChange('teachers');
     }
     return res;
   },
   async setTeacherClassTeacherOf(teacherId, classes) {
     const res = await apiClient.post(`/teachers/${teacherId}/class-teacher-of`, { classes });
     if (res && !res.error) {
-      await Promise.all([this.fetchTeachers(), this.fetchClasses()]);
+      notifyChange('teachers');
+      notifyChange('classes');
     }
     return res;
   },
 
   // Subjects
-  async fetchSubjects() {
-    try {
-      const res = await apiClient.get('/subjects');
-      if (Array.isArray(res)) {
-        state.subjects = res;
-        notifyChange('subjects');
-        return res;
-      }
-    } catch {}
-    return state.subjects || [];
-  },
-  getSubjects() {
-    return state.subjects || [];
-  },
-  getSubjectNames() {
-    return (state.subjects || []).map((s) => s.name);
-  },
-  getSubjectsForClass(className) {
-    const list = state.subjects || [];
-    if (!className) return list.map((s) => s.name);
-    return list
-      .filter((s) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(className)))
-      .map((s) => s.name);
-  },
-  getClassesForTeacher(teacher) {
-    const assigned = teacher?.assignedClasses || [];
-    const classes = Array.from(new Set(assigned.map((a) => a.class).filter(Boolean)));
-    return classes.length > 0 ? classes : this.getClasses();
-  },
-  getSubjectsForTeacher(teacher) {
-    const assigned = teacher?.assignedClasses || [];
-    const subjects = Array.from(new Set(assigned.map((a) => a.subject).filter(Boolean)));
-    if (subjects.length > 0) return subjects;
-    if (teacher?.primarySubject) return [teacher.primarySubject];
-    return this.getSubjectNames();
-  },
-  getSubjectsForClassForTeacher(className, teacher) {
-    const assigned = (teacher?.assignedClasses || []).filter((a) => !className || a.class === className);
-    const subjects = Array.from(new Set(assigned.map((a) => a.subject).filter(Boolean)));
-    if (subjects.length > 0) return subjects;
-    return this.getSubjectsForClass(className);
-  },
-  getStudentsForTeacher(teacher) {
-    const assignedClasses = this.getClassesForTeacher(teacher);
-    const allStudents = this.getStudents();
-    if (!teacher?.assignedClasses || teacher.assignedClasses.length === 0) {
-      return allStudents;
-    }
-    return allStudents.filter((s) => assignedClasses.includes(s.class));
+  async fetchSubjects(params = {}) {
+    const query = new URLSearchParams();
+    if (params.class) query.set('class', String(params.class));
+    if (params.department) query.set('department', String(params.department));
+    const qs = query.toString();
+    return await apiClient.get(`/subjects${qs ? `?${qs}` : ''}`);
   },
   async addSubject(subject) {
     const res = await apiClient.post('/subjects', subject);
-    if (res && !res.error) {
-      state.subjects = [...(state.subjects || []), res];
-      notifyChange('subjects');
-    }
+    if (res && !res.error) notifyChange('subjects');
     return res;
   },
   async updateSubject(id, data) {
     const res = await apiClient.put(`/subjects/${id}`, data);
-    if (res && !res.error) {
-      state.subjects = (state.subjects || []).map((s) => (s.id === id ? res : s));
-      notifyChange('subjects');
-    }
+    if (res && !res.error) notifyChange('subjects');
     return res;
   },
   async deleteSubject(id) {
     const res = await apiClient.delete(`/subjects/${id}`);
-    state.subjects = (state.subjects || []).filter((s) => s.id !== id);
     notifyChange('subjects');
-    return state.subjects;
+    return res;
   },
 
   // Students
-  getStudents() {
-    return state.students || [];
-  },
-  getStudentById(id) {
-    return (state.students || []).find((s) => s.id === id) || null;
-  },
   async fetchStudents(params = {}) {
     const query = new URLSearchParams();
     if (params.page) query.set('page', String(params.page));
@@ -282,50 +166,34 @@ export const schoolStore = {
     const qs = query.toString();
     return await apiClient.get(`/students${qs ? `?${qs}` : ''}`);
   },
+  async fetchCurrentStudent() {
+    const students = await apiClient.get('/students');
+    if (!Array.isArray(students)) {
+      throw new Error('Unexpected response while loading the current student.');
+    }
+    return students[0] || null;
+  },
   async createStudentAsync(studentData) {
     const res = await apiClient.post('/students', studentData);
-    if (res?.student) {
-      state.students = [...(state.students || []), res.student];
-      notifyChange('students');
-      return res;
-    }
-    if (res && !res.error) {
-      state.students = [...(state.students || []), res];
-      notifyChange('students');
-    }
+    if (res && !res.error) notifyChange('students');
     return res;
   },
   async updateStudent(id, data) {
     const res = await apiClient.put(`/students/${id}`, data);
-    if (res && !res.error) {
-      state.students = (state.students || []).map((s) => (s.id === id ? { ...s, ...res } : s));
-      notifyChange('students');
-    }
+    if (res && !res.error) notifyChange('students');
     return res;
   },
   async deleteStudent(id) {
-    await apiClient.delete(`/students/${id}`).catch(() => {});
-    state.students = (state.students || []).filter((s) => s.id !== id);
+    const res = await apiClient.delete(`/students/${id}`);
     notifyChange('students');
-    return state.students;
+    return res;
   },
   async resetStudentCredentials(studentId, payload) {
     return await apiClient.post(`/students/${studentId}/credentials`, payload);
   },
   async addStudentToClassSubject(studentId, subject) {
-    const student = (state.students || []).find((s) => s.id === studentId);
-    if (student) {
-      const existing = student.enrolledSubjects || [];
-      if (!existing.includes(subject)) {
-        student.enrolledSubjects = [...existing, subject];
-        notifyChange('students');
-      }
-    }
     const res = await apiClient.post(`/students/${studentId}/enroll-subject`, { subject });
-    if (res && !res.error) {
-      state.students = (state.students || []).map((s) => (s.id === studentId ? { ...s, ...res } : s));
-      notifyChange('students');
-    }
+    if (res && !res.error) notifyChange('students');
     return res;
   },
   async enrollStudentSubject(studentId, subject) {
@@ -333,12 +201,6 @@ export const schoolStore = {
   },
 
   // Teachers
-  getTeachers() {
-    return state.teachers || [];
-  },
-  getTeacherById(id) {
-    return (state.teachers || []).find((t) => t.id === id) || null;
-  },
   async fetchTeachers(params = {}) {
     const query = new URLSearchParams();
     if (params.page) query.set('page', String(params.page));
@@ -350,32 +212,26 @@ export const schoolStore = {
     const qs = query.toString();
     return await apiClient.get(`/teachers${qs ? `?${qs}` : ''}`);
   },
+  async fetchCurrentTeacher() {
+    return await apiClient.get('/teachers/me');
+  },
+  async fetchTeacherById(id) {
+    return await apiClient.get(`/teachers/${encodeURIComponent(id)}`);
+  },
   async createTeacherAsync(teacherData) {
     const res = await apiClient.post('/teachers', teacherData);
-    if (res?.teacher) {
-      state.teachers = [...(state.teachers || []), res.teacher];
-      notifyChange('teachers');
-      return res;
-    }
-    if (res && !res.error) {
-      state.teachers = [...(state.teachers || []), res];
-      notifyChange('teachers');
-    }
+    if (res && !res.error) notifyChange('teachers');
     return res;
   },
   async updateTeacher(id, data) {
     const res = await apiClient.put(`/teachers/${id}`, data);
-    if (res && !res.error) {
-      state.teachers = (state.teachers || []).map((t) => (t.id === id ? { ...t, ...res } : t));
-      notifyChange('teachers');
-    }
+    if (res && !res.error) notifyChange('teachers');
     return res;
   },
   async deleteTeacher(id) {
-    await apiClient.delete(`/teachers/${id}`).catch(() => {});
-    state.teachers = (state.teachers || []).filter((t) => t.id !== id);
+    const res = await apiClient.delete(`/teachers/${id}`);
     notifyChange('teachers');
-    return state.teachers;
+    return res;
   },
   async resetTeacherCredentials(teacherId, payload) {
     return await apiClient.post(`/teachers/${teacherId}/credentials`, payload);
@@ -398,10 +254,7 @@ export const schoolStore = {
       }
     }
     const res = await apiClient.post(`/teachers/${teacherId}/assign-class`, payload);
-    if (res?.teacher) {
-      state.teachers = (state.teachers || []).map((t) => (t.id === teacherId ? res.teacher : t));
-      notifyChange('teachers');
-    }
+    if (res && !res.error) notifyChange('teachers');
     return res;
   },
   async removeTeacherClass(teacherId, classSubject, subjectArg) {
@@ -424,68 +277,34 @@ export const schoolStore = {
       }
     }
 
-    // Optimistically update local teacher record
-    const teacher = (state.teachers || []).find((t) => t.id === teacherId);
-    if (teacher && teacher.assignedClasses) {
-      teacher.assignedClasses = teacher.assignedClasses.filter(
-        (a) => !(a.class === cls && a.subject === sub)
-      );
-      state.teachers = [...state.teachers];
-      notifyChange('teachers');
-    }
-
     const query = `class=${encodeURIComponent(cls)}&subject=${encodeURIComponent(sub)}`;
     const res = await apiClient.delete(`/teachers/${teacherId}/assign-class?${query}`, {
       class: cls,
       subject: sub
     });
-    if (res?.teacher) {
-      state.teachers = (state.teachers || []).map((t) => (t.id === teacherId ? res.teacher : t));
-      notifyChange('teachers');
-    }
+    if (res && !res.error) notifyChange('teachers');
     return res;
   },
 
   // Timetable
   async fetchTimetable(className) {
-    try {
-      const qs = className ? `?class=${encodeURIComponent(className)}` : '';
-      const res = await apiClient.get(`/timetable${qs}`);
-      if (Array.isArray(res)) {
-        state.timetable = res;
-        notifyChange('timetable');
-        return res;
-      }
-    } catch {}
-    return state.timetable || [];
-  },
-  getTimetableSlots() {
-    return state.timetable || [];
-  },
-  getTimetableForClass(className) {
-    return (state.timetable || []).filter((slot) => slot.class === className);
+    const qs = className ? `?class=${encodeURIComponent(className)}` : '';
+    return await apiClient.get(`/timetable${qs}`);
   },
   async addTimetableSlot(slot) {
     const res = await apiClient.post('/timetable', slot);
-    if (res && !res.error) {
-      state.timetable = [...(state.timetable || []), res];
-      notifyChange('timetable');
-    }
+    if (res && !res.error) notifyChange('timetable');
     return res;
   },
   async updateTimetableSlot(id, slot) {
     const res = await apiClient.put(`/timetable/${id}`, slot);
-    if (res && !res.error) {
-      state.timetable = (state.timetable || []).map((s) => (s.id === id ? res : s));
-      notifyChange('timetable');
-    }
+    if (res && !res.error) notifyChange('timetable');
     return res;
   },
   async deleteTimetableSlot(id) {
-    await apiClient.delete(`/timetable/${id}`).catch(() => {});
-    state.timetable = (state.timetable || []).filter((s) => s.id !== id);
-    notifyChange('timetable');
-    return state.timetable;
+    const res = await apiClient.delete(`/timetable/${id}`);
+    if (res && !res.error) notifyChange('timetable');
+    return res;
   },
   async rescheduleTeacherSlot(arg1, targetDay, targetStartTime, targetEndTime, actorTeacherName) {
     let payload;
@@ -501,25 +320,21 @@ export const schoolStore = {
       };
     }
     const res = await apiClient.post('/timetable/reschedule', payload);
-    await this.fetchTimetable();
-    return res || { success: true };
+    if (res && !res.error) notifyChange('timetable');
+    return res;
   },
 
   // Attendance
   async fetchAttendance(params = {}) {
-    try {
-      const query = new URLSearchParams();
-      if (params.date) query.set('date', params.date);
-      if (params.class) query.set('class', params.class);
-      const qs = query.toString();
-      const res = await apiClient.get(`/attendance${qs ? `?${qs}` : ''}`);
-      if (res && typeof res === 'object') {
-        state.attendance = res;
-        notifyChange('attendance');
-        return res;
-      }
-    } catch {}
-    return state.attendance || {};
+    const query = new URLSearchParams();
+    if (params.date) query.set('date', params.date);
+    if (params.class) query.set('class', params.class);
+    const qs = query.toString();
+    const result = await apiClient.get(`/attendance${qs ? `?${qs}` : ''}`);
+    if (!params.date && !params.class && result && typeof result === 'object') {
+      state.attendance = result;
+    }
+    return result;
   },
   async fetchStudentAttendanceHistory(studentId) {
     try {
@@ -562,11 +377,9 @@ export const schoolStore = {
     const presentCount = logs.filter((l) => l.status === 'present').length;
     const lateCount = logs.filter((l) => l.status === 'late').length;
     const absentCount = logs.filter((l) => l.status === 'absent').length;
-    const student = this.getStudentById ? this.getStudentById(studentId) : null;
     const rate = logs.length > 0 ? Math.round(((presentCount + lateCount) / total) * 100) : 0;
     const punctuality = logs.length > 0 ? Math.round((presentCount / total) * 100) : 0;
     return {
-      student,
       logs,
       totalDays: logs.length,
       presentCount,
@@ -605,50 +418,7 @@ export const schoolStore = {
 
   // Grades & Reports
   async fetchGrades() {
-    try {
-      const res = await apiClient.get('/grades');
-      if (res && typeof res === 'object') {
-        state.grades = res;
-        notifyChange('grades');
-        return res;
-      }
-    } catch {}
-    return state.grades || {};
-  },
-  getGrades() {
-    return state.grades || {};
-  },
-  getStudentSubjectGrade(studentId, term, subject, session = '2026/2027') {
-    if (!studentId) {
-      return { ca1: 0, ca2: 0, exam: 0, total: 0, grade: '-', remark: 'Not Graded', isRecorded: false };
-    }
-    // Handle 2-arg call: getStudentSubjectGrade(studentId, subjectId)
-    if (subject === undefined) {
-      const direct = state.grades && state.grades[studentId] && state.grades[studentId][term];
-      if (direct) return { ...direct, isRecorded: true };
-    }
-
-    const sessionKey = `${studentId}_${session}_${term}_${subject}`;
-    if (state.grades && state.grades[sessionKey]) {
-      return { ...state.grades[sessionKey], isRecorded: true };
-    }
-    const legacyKey = `${studentId}_${term}_${subject}`;
-    if (state.grades && state.grades[legacyKey]) {
-      return { ...state.grades[legacyKey], isRecorded: true };
-    }
-    if (state.grades && state.grades[studentId] && state.grades[studentId][subject]) {
-      return { ...state.grades[studentId][subject], isRecorded: true };
-    }
-
-    return {
-      ca1: 0,
-      ca2: 0,
-      exam: 0,
-      total: 0,
-      grade: '-',
-      remark: 'Not Graded',
-      isRecorded: false
-    };
+    return await apiClient.get('/grades');
   },
   async getStudentReportCard(studentId, term = 'Term1', session = '2026/2027') {
     try {
@@ -690,368 +460,192 @@ export const schoolStore = {
       };
     }
 
-    const key = `${studentId}_${session}_${term}_${subject}`;
-    if (!state.grades) state.grades = {};
-    state.grades[key] = {
-      ...gradeData,
-      session,
-      term,
-      isRecorded: true
-    };
-    if (!state.grades[studentId]) state.grades[studentId] = {};
-    state.grades[studentId][subject] = {
-      ...gradeData,
-      session,
-      term,
-      isRecorded: true
-    };
-    notifyChange('grades');
-
     const res = await apiClient.post('/grades', payload);
+    if (res && !res.error) notifyChange('grades');
     return res;
   },
 
   // Announcements
-  async fetchAnnouncements() {
-    try {
-      const res = await apiClient.get('/announcements');
-      if (Array.isArray(res)) {
-        state.announcements = res;
-        notifyChange('announcements');
-        return res;
-      }
-    } catch {}
-    return state.announcements || [];
-  },
-  getAnnouncements() {
-    return state.announcements || [];
-  },
-  getAnnouncementsForUser(user) {
-    const role = user?.role || 'student';
-    return (state.announcements || []).filter(
-      (a) => a.targetRole === 'all' || a.targetRole === role
-    );
+  async fetchAnnouncements(params = {}) {
+    const query = new URLSearchParams();
+    if (params.page != null) query.set('page', String(params.page));
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.search) query.set('search', String(params.search));
+    if (params.type && params.type !== 'all') query.set('type', String(params.type));
+    if (params.audience && params.audience !== 'all') query.set('audience', String(params.audience));
+    if (params.scope && params.scope !== 'all') query.set('scope', String(params.scope));
+    const qs = query.toString();
+    return await apiClient.get(`/announcements${qs ? `?${qs}` : ''}`);
   },
   async addAnnouncement(data) {
     const res = await apiClient.post('/announcements', data);
-    if (res && !res.error) {
-      state.announcements = [res, ...(state.announcements || [])];
-      notifyChange('announcements');
-    }
+    if (res && !res.error) notifyChange('announcements');
     return res;
   },
   async updateAnnouncement(id, data) {
     const res = await apiClient.put(`/announcements/${id}`, data);
-    if (res && !res.error) {
-      state.announcements = (state.announcements || []).map((a) => (a.id === id ? res : a));
-      notifyChange('announcements');
-    }
+    if (res && !res.error) notifyChange('announcements');
     return res;
   },
   async deleteAnnouncement(id) {
-    await apiClient.delete(`/announcements/${id}`).catch(() => {});
-    state.announcements = (state.announcements || []).filter((a) => a.id !== id);
+    const res = await apiClient.delete(`/announcements/${id}`);
     notifyChange('announcements');
-    return state.announcements;
+    return res;
   },
 
   // Assignments
-  async fetchAssignments() {
-    try {
-      const res = await apiClient.get('/assignments');
-      if (Array.isArray(res)) {
-        state.assignments = res;
-        notifyChange('assignments');
-        return res;
-      }
-    } catch {}
-    return state.assignments || [];
-  },
-  getAssignments() {
-    return state.assignments || [];
+  async fetchAssignments(params = {}) {
+    const query = new URLSearchParams();
+    if (params.page != null) query.set('page', String(params.page));
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.search) query.set('search', String(params.search));
+    if (params.class && params.class !== 'all') query.set('class', String(params.class));
+    if (params.subject && params.subject !== 'all') query.set('subject', String(params.subject));
+    const qs = query.toString();
+    return await apiClient.get(`/assignments${qs ? `?${qs}` : ''}`);
   },
   async addAssignment(data) {
     const res = await apiClient.post('/assignments', data);
-    if (res && !res.error) {
-      state.assignments = [res, ...(state.assignments || [])];
-      notifyChange('assignments');
-    }
+    if (res && !res.error) notifyChange('assignments');
     return res;
   },
   async updateAssignment(id, data) {
     const res = await apiClient.put(`/assignments/${id}`, data);
-    if (res && !res.error) {
-      state.assignments = (state.assignments || []).map((a) => (a.id === id ? res : a));
-      notifyChange('assignments');
-    }
+    if (res && !res.error) notifyChange('assignments');
     return res;
   },
   async deleteAssignment(id) {
-    await apiClient.delete(`/assignments/${id}`).catch(() => {});
-    state.assignments = (state.assignments || []).filter((a) => a.id !== id);
+    const res = await apiClient.delete(`/assignments/${id}`);
     notifyChange('assignments');
-    return state.assignments;
+    return res;
   },
   async submitStudentAssignment(assignmentId, submission) {
     const res = await apiClient.post(`/assignments/${assignmentId}/submit`, submission);
-    await this.fetchAssignments();
+    notifyChange('assignments');
     return res;
   },
 
   // Resources
-  async fetchResources() {
-    try {
-      const res = await apiClient.get('/resources');
-      if (Array.isArray(res)) {
-        state.resources = res;
-        notifyChange('resources');
-        return res;
-      }
-    } catch {}
-    return state.resources || [];
-  },
-  getResources() {
-    return state.resources || [];
-  },
-  getResourcesForUser(role, studentClass, studentSubjects, teacherObj) {
-    const all = state.resources || [];
-    if (role === 'student') {
-      const subjects = studentSubjects || [];
-      return all.filter(
-        (r) =>
-          r.accessLevel === 'students' &&
-          (r.allClasses || (r.classes && r.classes.includes(studentClass))) &&
-          (!r.subject || r.subject === 'General' || subjects.length === 0 || subjects.includes(r.subject))
-      );
-    }
-    if (role === 'teacher') {
-      const teacherSubjects = this.getSubjectsForTeacher(teacherObj);
-      const teacherClasses = this.getClassesForTeacher(teacherObj);
-      if (teacherObj?.assignedClasses && teacherObj.assignedClasses.length > 0) {
-        return all.filter(
-          (r) =>
-            r.uploadedBy === teacherObj?.name ||
-            teacherSubjects.includes(r.subject) ||
-            r.allClasses ||
-            (r.classes && r.classes.some((c) => teacherClasses.includes(c)))
-        );
-      }
-    }
-    return all;
+  async fetchResources(params = {}) {
+    const query = new URLSearchParams();
+    if (params.page != null) query.set('page', String(params.page));
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.search) query.set('search', String(params.search));
+    if (params.subject && params.subject !== 'all') query.set('subject', String(params.subject));
+    if (params.type && params.type !== 'all') query.set('type', String(params.type));
+    if (params.class && params.class !== 'all') query.set('class', String(params.class));
+    const qs = query.toString();
+    return await apiClient.get(`/resources${qs ? `?${qs}` : ''}`);
   },
   async addResource(data) {
     const res = await apiClient.post('/resources', data);
-    if (res && !res.error) {
-      state.resources = [res, ...(state.resources || [])];
-      notifyChange('resources');
-    }
+    if (res && !res.error) notifyChange('resources');
     return res;
   },
   async deleteResource(id) {
-    await apiClient.delete(`/resources/${id}`).catch(() => {});
-    state.resources = (state.resources || []).filter((r) => r.id !== id);
+    const res = await apiClient.delete(`/resources/${id}`);
     notifyChange('resources');
-    return state.resources;
+    return res;
   },
 
   // Documents
-  async fetchDocuments() {
-    try {
-      const res = await apiClient.get('/documents');
-      if (Array.isArray(res)) {
-        state.documents = res;
-        notifyChange('documents');
-        return res;
-      }
-    } catch {}
-    return state.documents || [];
-  },
-  getDocuments() {
-    return state.documents || [];
-  },
-  getDocumentsForUser(user) {
-    return state.documents || [];
+  async fetchDocuments(params = {}) {
+    const query = new URLSearchParams();
+    if (params.page != null) query.set('page', String(params.page));
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.search) query.set('search', String(params.search));
+    if (params.category && params.category !== 'all') query.set('category', String(params.category));
+    if (params.access && params.access !== 'all') query.set('access', String(params.access));
+    const qs = query.toString();
+    return await apiClient.get(`/documents${qs ? `?${qs}` : ''}`);
   },
   async addDocument(data) {
     const res = await apiClient.post('/documents', data);
-    if (res && !res.error) {
-      state.documents = [res, ...(state.documents || [])];
-      notifyChange('documents');
-    }
+    if (res && !res.error) notifyChange('documents');
     return res;
   },
   async updateDocumentAccess(id, access) {
     const res = await apiClient.patch(`/documents/${id}/access`, { access });
-    if (res && !res.error) {
-      state.documents = (state.documents || []).map((d) => (d.id === id ? res : d));
-      notifyChange('documents');
-    }
+    if (res && !res.error) notifyChange('documents');
     return res;
   },
   async deleteDocument(id) {
-    await apiClient.delete(`/documents/${id}`).catch(() => {});
-    state.documents = (state.documents || []).filter((d) => d.id !== id);
+    const res = await apiClient.delete(`/documents/${id}`);
     notifyChange('documents');
-    return state.documents;
+    return res;
   },
 
   // Equipment & Maintenance
   async fetchEquipment() {
-    try {
-      const res = await apiClient.get('/equipment');
-      if (Array.isArray(res)) {
-        state.equipment = res;
-        notifyChange('equipment');
-        return res;
-      }
-    } catch {}
-    return state.equipment || [];
-  },
-  getEquipment() {
-    return state.equipment || [];
+    return await apiClient.get('/equipment');
   },
   async addEquipment(data) {
     const res = await apiClient.post('/equipment', data);
-    if (res && !res.error) {
-      state.equipment = [...(state.equipment || []), res];
-      notifyChange('equipment');
-    }
+    if (res && !res.error) notifyChange('equipment');
     return res;
   },
   async deleteEquipment(id) {
-    await apiClient.delete(`/equipment/${id}`).catch(() => {});
-    state.equipment = (state.equipment || []).filter((e) => e.id !== id);
+    const res = await apiClient.delete(`/equipment/${id}`);
     notifyChange('equipment');
-    return state.equipment;
+    return res;
   },
   async fetchMaintenance() {
-    try {
-      const res = await apiClient.get('/maintenance');
-      if (Array.isArray(res)) {
-        state.maintenance = res;
-        notifyChange('maintenance');
-        return res;
-      }
-    } catch {}
-    return state.maintenance || [];
-  },
-  getMaintenance() {
-    return state.maintenance || [];
+    return await apiClient.get('/maintenance');
   },
   async addMaintenance(data) {
     const res = await apiClient.post('/maintenance', data);
-    if (res && !res.error) {
-      state.maintenance = [...(state.maintenance || []), res];
-      notifyChange('maintenance');
-    }
+    if (res && !res.error) notifyChange('maintenance');
     return res;
   },
   async updateMaintenanceStatus(id, status) {
     const res = await apiClient.patch(`/maintenance/${id}`, { status });
-    if (res && !res.error) {
-      state.maintenance = (state.maintenance || []).map((m) => (m.id === id ? res : m));
-      notifyChange('maintenance');
-    }
+    if (res && !res.error) notifyChange('maintenance');
     return res;
   },
 
   // Requests
   async fetchRequests() {
-    try {
-      const res = await apiClient.get('/requests');
-      if (Array.isArray(res)) {
-        state.requests = res;
-        notifyChange('requests');
-        return res;
-      }
-    } catch {}
-    return state.requests || [];
-  },
-  getRequests() {
-    return state.requests || [];
+    return await apiClient.get('/requests');
   },
   async addRequest(data) {
     const res = await apiClient.post('/requests', data);
-    if (res && !res.error) {
-      state.requests = [res, ...(state.requests || [])];
-      notifyChange('requests');
-    }
+    if (res && !res.error) notifyChange('requests');
     return res;
   },
   async updateRequestStatus(id, status) {
     const res = await apiClient.patch(`/requests/${id}/status`, { status });
-    if (res && !res.error) {
-      state.requests = (state.requests || []).map((r) => (r.id === id ? res : r));
-      notifyChange('requests');
-    }
+    if (res && !res.error) notifyChange('requests');
     return res;
   },
 
   // Teacher Availability
   async fetchAvailability() {
-    try {
-      const res = await apiClient.get('/availability');
-      if (Array.isArray(res)) {
-        state.availability = res;
-        notifyChange('availability');
-        return res;
-      }
-    } catch {}
-    return state.availability || [];
-  },
-  getTeacherAvailability() {
-    return state.availability || [];
-  },
-  getTeacherAvailabilityByDay(arg1, arg2) {
-    const list = state.availability || [];
-    if (arg2 !== undefined) {
-      return list.filter((a) => a.teacherId === arg1 && a.day === arg2);
-    }
-    return list.filter((a) => a.day === arg1);
+    return await apiClient.get('/availability');
   },
   async addTeacherAvailabilitySlot(slot) {
     const res = await apiClient.post('/availability', slot);
-    if (res && !res.error) {
-      state.availability = [...(state.availability || []), res];
-      notifyChange('availability');
-    }
+    if (res && !res.error) notifyChange('availability');
     return res;
   },
   async toggleTeacherAvailabilitySlot(id) {
     const res = await apiClient.patch(`/availability/${id}/toggle`, {});
-    if (res && !res.error) {
-      state.availability = (state.availability || []).map((a) => (a.id === id ? res : a));
-      notifyChange('availability');
-    }
+    if (res && !res.error) notifyChange('availability');
     return res;
   },
   async deleteTeacherAvailabilitySlot(id) {
-    await apiClient.delete(`/availability/${id}`).catch(() => {});
-    state.availability = (state.availability || []).filter((a) => a.id !== id);
-    notifyChange('availability');
-    return state.availability;
+    const res = await apiClient.delete(`/availability/${id}`);
+    if (res && !res.error) notifyChange('availability');
+    return res;
   },
 
   // Alerts
   async fetchAlerts() {
-    try {
-      const res = await apiClient.get('/alerts');
-      if (Array.isArray(res)) {
-        state.alerts = res;
-        notifyChange('alerts');
-        return res;
-      }
-    } catch {}
-    return state.alerts || [];
-  },
-  getAlertsForUser(user) {
-    return state.alerts || [];
+    return await apiClient.get('/alerts');
   },
   async dismissAlert(id) {
-    await apiClient.delete(`/alerts/${id}`).catch(() => {});
-    state.alerts = (state.alerts || []).filter((a) => a.id !== id);
-    notifyChange('alerts');
-    return state.alerts;
+    const res = await apiClient.delete(`/alerts/${id}`);
+    if (res && !res.error) notifyChange('alerts');
+    return res;
   },
 
   // Auth & Profile
@@ -1086,7 +680,11 @@ export const schoolStore = {
 
   // Academic Promotion & Rollover
   async getPromotionCandidates() {
-    return await apiClient.get('/academic/promotion-candidates');
+    const response = await apiClient.get('/academic/promotion-candidates');
+    if (!Array.isArray(response?.candidates)) {
+      throw new Error('Unexpected response while loading promotion candidates.');
+    }
+    return response.candidates;
   },
   async executeSessionRollover(payload) {
     const res = await apiClient.post('/academic/rollover-session', payload);
@@ -1133,8 +731,6 @@ export const schoolStore = {
 };
 
 export const schoolData = {
-  getTeachers: () => schoolStore.getTeachers(),
-  getTeacherById: (id) => schoolStore.getTeacherById(id),
   assignTeacherClass: (id, payload) => schoolStore.assignTeacherClass(id, payload),
   removeTeacherClass: (id, payload) => schoolStore.removeTeacherClass(id, payload),
   assignClassTeacher: (className, teacherId) => schoolStore.assignClassTeacher(className, teacherId),

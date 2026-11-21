@@ -92,12 +92,13 @@ export function ClassScheduling() {
         setClassesList(cls.map((c) => c.name || c));
         setClassObjects(cls);
       }
-    } catch {
-      setTeachersList(schoolStore.getTeachers());
-      setStudentsList(schoolStore.getStudents());
-      setSubjectsList(schoolStore.getSubjects());
-      setClassesList(schoolStore.getClasses());
-      setClassObjects(schoolStore.getClassObjects());
+    } catch (error) {
+      console.error('Failed to load class management data:', error);
+      setTeachersList([]);
+      setStudentsList([]);
+      setSubjectsList([]);
+      setClassesList([]);
+      setClassObjects([]);
     }
   };
 
@@ -178,9 +179,19 @@ export function ClassScheduling() {
     setTimeout(() => setNotification(null), 3000);
   };
 
-  const teacherAvailableSubjects = schoolStore.getSubjectsForClass(assignForm.class);
+  const getSubjectsForClass = (className, department = '') =>
+    subjectsList
+      .filter((subject) =>
+        subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(className))
+      )
+      .filter((subject) =>
+        !department || subject.allDepartments || !Array.isArray(subject.departments) ||
+        subject.departments.includes(department)
+      )
+      .map((subject) => subject.name);
+  const teacherAvailableSubjects = getSubjectsForClass(assignForm.class);
   const selectedEnrollStudent = studentsList.find((s) => s.id === enrollForm.studentId);
-  const studentAvailableSubjects = schoolStore.getSubjectsForClass(
+  const studentAvailableSubjects = getSubjectsForClass(
     selectedEnrollStudent?.class || enrollClassFilter,
     selectedEnrollStudent?.department || ''
   );
@@ -424,9 +435,9 @@ export function ClassScheduling() {
           <button
             type="button"
             onClick={() => {
-              const clsSubjects = schoolStore.getSubjectsForClass(selectedClass);
+              const clsSubjects = getSubjectsForClass(selectedClass);
               const firstInClass = studentsList.find((s) => s.class === selectedClass);
-              const stuSubjects = schoolStore.getSubjectsForClass(
+              const stuSubjects = getSubjectsForClass(
                 firstInClass?.class || selectedClass,
                 firstInClass?.department || ''
               );
@@ -1196,7 +1207,7 @@ export function ClassScheduling() {
                     value={assignForm.class}
                     onChange={(e) => {
                       const nextCls = e.target.value;
-                      const validSubs = schoolStore.getSubjectsForClass(nextCls);
+                      const validSubs = getSubjectsForClass(nextCls);
                       setAssignForm({
                         ...assignForm,
                         class: nextCls,
@@ -1205,7 +1216,7 @@ export function ClassScheduling() {
                     }}
                     className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                   >
-                    {SCHOOL_CLASSES.map((cls) => (
+                    {availableClasses.map((cls) => (
                       <option key={cls} value={cls}>
                         {cls}
                       </option>
@@ -1240,7 +1251,7 @@ export function ClassScheduling() {
                     const nextCls = e.target.value;
                     setEnrollClassFilter(nextCls);
                     const firstStudent = studentsList.find((s) => s.class === nextCls);
-                    const subs = schoolStore.getSubjectsForClass(
+                    const subs = getSubjectsForClass(
                       nextCls,
                       firstStudent?.department || ''
                     );
@@ -1251,7 +1262,7 @@ export function ClassScheduling() {
                   }}
                   className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                 >
-                  {SCHOOL_CLASSES.map((cls) => (
+                  {availableClasses.map((cls) => (
                     <option key={cls} value={cls}>
                       {cls}
                     </option>
@@ -1267,7 +1278,7 @@ export function ClassScheduling() {
                   onChange={(e) => {
                     const stuId = e.target.value;
                     const stu = studentsList.find((s) => s.id === stuId);
-                    const subs = schoolStore.getSubjectsForClass(
+                    const subs = getSubjectsForClass(
                       stu?.class || enrollClassFilter,
                       stu?.department || ''
                     );

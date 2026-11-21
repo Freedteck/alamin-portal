@@ -65,6 +65,8 @@ export function TeacherManagement() {
   const [copiedField, setCopiedField] = useState('');
 
   const [subjectNames, setSubjectNames] = useState([]);
+  const [subjectCatalog, setSubjectCatalog] = useState([]);
+  const [classNames, setClassNames] = useState(SCHOOL_CLASSES);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -80,13 +82,17 @@ export function TeacherManagement() {
   const loadTeachers = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await schoolStore.fetchTeachers({
-        page: currentPage,
-        limit: pageSize,
-        search: debouncedSearch,
-        class: selectedClass,
-        subject: selectedSubject
-      });
+      const [res, subjectResult, classResult] = await Promise.all([
+        schoolStore.fetchTeachers({
+          page: currentPage,
+          limit: pageSize,
+          search: debouncedSearch,
+          class: selectedClass,
+          subject: selectedSubject
+        }),
+        schoolStore.fetchSubjects(),
+        schoolStore.fetchClasses()
+      ]);
       if (res && res.data) {
         setTeachers(res.data);
         setTotalTeachers(res.total || 0);
@@ -97,7 +103,12 @@ export function TeacherManagement() {
         setTeachers(res);
         setTotalTeachers(res.length);
       }
-      setSubjectNames(schoolStore.getSubjectNames());
+      const availableSubjects = Array.isArray(subjectResult) ? subjectResult : [];
+      setSubjectCatalog(availableSubjects);
+      setSubjectNames(availableSubjects.map((subject) => subject.name));
+      if (Array.isArray(classResult)) {
+        setClassNames(classResult.map((item) => item.name || item));
+      }
     } catch (err) {
       console.error('Failed to load teachers:', err);
     } finally {
@@ -105,13 +116,20 @@ export function TeacherManagement() {
     }
   }, [currentPage, pageSize, debouncedSearch, selectedClass, selectedSubject]);
 
+  const getSubjectsForClass = (className) =>
+    subjectCatalog
+      .filter((subject) =>
+        subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(className))
+      )
+      .map((subject) => subject.name);
+
   useEffect(() => {
     loadTeachers();
   }, [loadTeachers]);
 
   useEffect(() => {
     return subscribeSchoolSync((topic) => {
-      if (topic === 'teachers' || !topic) {
+      if (topic === 'teachers' || topic === 'subjects' || topic === 'classes' || !topic) {
         loadTeachers();
       }
     });
@@ -210,15 +228,15 @@ export function TeacherManagement() {
     }
   };
 
-  const handleAssignClassSubject = (e) => {
+  const handleAssignClassSubject = async (e) => {
     e.preventDefault();
     if (!allocationTeacher) return;
-    schoolData.assignTeacherClass(allocationTeacher.id, {
+    await schoolData.assignTeacherClass(allocationTeacher.id, {
       class: allocClass,
       subject: allocSubject
     });
-    loadTeachers();
-    const updated = schoolData.getTeacherById(allocationTeacher.id);
+    await loadTeachers();
+    const updated = await schoolStore.fetchTeacherById(allocationTeacher.id);
     setAllocationTeacher(updated);
     if (selectedTeacher && selectedTeacher.id === allocationTeacher.id) {
       setSelectedTeacher(updated);
@@ -228,12 +246,13 @@ export function TeacherManagement() {
   const handleRemoveAllocation = async (teacherId, classSubject) => {
     try {
       await schoolData.removeTeacherClass(teacherId, classSubject);
-      loadTeachers();
+      await loadTeachers();
+      const updated = await schoolStore.fetchTeacherById(teacherId);
       if (allocationTeacher && allocationTeacher.id === teacherId) {
-        setAllocationTeacher(schoolData.getTeacherById(teacherId));
+        setAllocationTeacher(updated);
       }
       if (selectedTeacher && selectedTeacher.id === teacherId) {
-        setSelectedTeacher(schoolData.getTeacherById(teacherId));
+        setSelectedTeacher(updated);
       }
     } catch {
       // Error handled by optimistic state and notification
@@ -246,8 +265,8 @@ export function TeacherManagement() {
     const isAlready = current.includes(className);
     try {
       await schoolStore.assignClassTeacher(className, isAlready ? null : teacherId);
-      loadTeachers();
-      const updated = schoolStore.getTeacherById(teacherId);
+      await loadTeachers();
+      const updated = await schoolStore.fetchTeacherById(teacherId);
       if (selectedTeacher && selectedTeacher.id === teacherId) {
         setSelectedTeacher(updated);
       }
@@ -332,7 +351,7 @@ export function TeacherManagement() {
               onChange={(e) => setSelectedClass(e.target.value)}
             >
               <option value="all">All Classes</option>
-              {SCHOOL_CLASSES.map((cls) => (
+              {classNames.map((cls) => (
                 <option key={cls} value={cls}>
                   {cls}
                 </option>
@@ -595,7 +614,7 @@ export function TeacherManagement() {
                   value={newTeacher.primaryClass}
                   onChange={(e) => {
                     const cls = e.target.value;
-                    const classSubs = schoolStore.getSubjectsForClass(cls);
+                    const classSubs = getSubjectsForClass(cls);
                     setNewTeacher({
                       ...newTeacher,
                       primaryClass: cls,
@@ -605,7 +624,7 @@ export function TeacherManagement() {
                     });
                   }}
                 >
-                  {SCHOOL_CLASSES.map((cls) => (
+                  {classNames.map((cls) => (
                     <option key={cls} value={cls}>
                       {cls}
                     </option>
@@ -622,7 +641,7 @@ export function TeacherManagement() {
                   value={newTeacher.primarySubject}
                   onChange={(e) => setNewTeacher({ ...newTeacher, primarySubject: e.target.value })}
                 >
-                  {schoolStore.getSubjectsForClass(newTeacher.primaryClass).map((sub) => (
+                  {getSubjectsForClass(newTeacher.primaryClass).map((sub) => (
                     <option key={sub} value={sub}>
                       {sub}
                     </option>
@@ -694,14 +713,14 @@ export function TeacherManagement() {
                     onChange={(e) => {
                       const cls = e.target.value;
                       setAllocClass(cls);
-                      const subs = schoolStore.getSubjectsForClass(cls);
+                      const subs = getSubjectsForClass(cls);
                       if (!subs.includes(allocSubject)) {
                         setAllocSubject(subs[0] || '');
                       }
                     }}
                     className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                   >
-                    {SCHOOL_CLASSES.map((cls) => (
+                    {classNames.map((cls) => (
                       <option key={cls} value={cls}>{cls}</option>
                     ))}
                   </select>
@@ -713,7 +732,7 @@ export function TeacherManagement() {
                     onChange={(e) => setAllocSubject(e.target.value)}
                     className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                   >
-                    {schoolStore.getSubjectsForClass(allocClass).map((sub) => (
+                    {getSubjectsForClass(allocClass).map((sub) => (
                       <option key={sub} value={sub}>{sub}</option>
                     ))}
                   </select>
@@ -862,7 +881,7 @@ export function TeacherManagement() {
                   Appoint this teacher as the Class Teacher for specific classrooms:
                 </p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
-                  {SCHOOL_CLASSES.map((cls) => {
+                  {classNames.map((cls) => {
                     const isAssigned = (selectedTeacher.classTeacherOf || []).includes(cls);
                     return (
                       <button

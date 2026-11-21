@@ -9,24 +9,25 @@ export function StudentProgressReports() {
   const [reportCard, setReportCard] = useState(null);
 
   useEffect(() => {
-    const loadReportCard = () => {
-      const storedUser = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-      const students = schoolStore.getStudents();
-      if (students.length > 0) {
-        const matched =
-          students.find(
-            (s) =>
-              (storedUser.email && s.email?.toLowerCase() === storedUser.email.toLowerCase()) ||
-              (storedUser.name && s.name?.toLowerCase() === storedUser.name.toLowerCase())
-          ) || students[0];
-        const generated = schoolStore.getStudentReportCard(matched.id, selectedTerm, selectedSession);
-        setReportCard(generated);
-      } else {
-        setReportCard(null);
+    let active = true;
+    const loadReportCard = async () => {
+      try {
+        const student = await schoolStore.fetchCurrentStudent();
+        const report = student
+          ? await schoolStore.getStudentReportCard(student.id, selectedTerm, selectedSession)
+          : null;
+        if (active) setReportCard(report);
+      } catch (error) {
+        console.error('Failed to load student progress report:', error);
+        if (active) setReportCard(null);
       }
     };
     loadReportCard();
-    return subscribeSchoolSync(loadReportCard);
+    const unsubscribe = subscribeSchoolSync(loadReportCard);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [selectedTerm, selectedSession]);
 
   return (

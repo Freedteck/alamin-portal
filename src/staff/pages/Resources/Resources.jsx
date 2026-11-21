@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   BookOpen,
   FileText,
@@ -19,12 +19,14 @@ import { uploadSchoolFile, downloadSchoolFile } from '../../../shared/lib/storag
 
 export function TeacherResources() {
   const [resources, setResources] = useState([]);
+  const [totalResources, setTotalResources] = useState(0);
   const [subjectNames, setSubjectNames] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [selectedClass, setSelectedClass] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 8;
+  const loadRequest = useRef(0);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [viewModal, setViewModal] = useState(null);
@@ -44,22 +46,64 @@ export function TeacherResources() {
     fileObj: null
   });
 
-  const refreshData = () => {
-    const teachers = schoolStore.getTeachers();
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const teacher =
-      teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
-      teachers[0] || { name: 'Teaching Staff' };
-    setCurrentTeacher(teacher);
-    setResources(schoolStore.getResourcesForUser('teacher', '', [], teacher));
-    const subs = schoolStore.getSubjectsForTeacher(teacher);
-    setSubjectNames(subs);
-    setForm((prev) => ({ ...prev, subject: prev.subject || subs[0] || 'Mathematics' }));
+  const refreshResources = async () => {
+    const requestId = ++loadRequest.current;
+    try {
+      const result = await schoolStore.fetchResources({
+        page: currentPage,
+        limit: pageSize,
+        search: searchTerm,
+        subject: selectedSubject,
+        class: selectedClass
+      });
+      if (requestId !== loadRequest.current) return;
+      setResources(Array.isArray(result?.data) ? result.data : []);
+      setTotalResources(result?.total || 0);
+    } catch (error) {
+      if (requestId !== loadRequest.current) return;
+      console.error('Failed to load staff resources:', error);
+      setResources([]);
+      setTotalResources(0);
+    }
+  };
+
+  const loadTeacher = async () => {
+    try {
+      const [teacher, subjectResult] = await Promise.all([
+        schoolStore.fetchCurrentTeacher(),
+        schoolStore.fetchSubjects()
+      ]);
+      setCurrentTeacher(teacher);
+      const availableSubjects = Array.isArray(subjectResult) ? subjectResult : [];
+      const assignedSubjects = (teacher?.assignedClasses || []).map((assignment) => assignment.subject);
+      const subs = assignedSubjects.length > 0
+        ? Array.from(new Set(assignedSubjects))
+        : availableSubjects.map((subject) => subject.name);
+      setSubjectNames(subs);
+      setForm((prev) => ({ ...prev, subject: prev.subject || subs[0] || 'Mathematics' }));
+    } catch (error) {
+      console.error('Failed to load current teacher:', error);
+      setCurrentTeacher(null);
+      setSubjectNames([]);
+    }
   };
 
   useEffect(() => {
-    refreshData();
-    return subscribeSchoolSync(refreshData);
+    refreshResources();
+    const unsubscribe = subscribeSchoolSync(refreshResources);
+    return () => {
+      loadRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm, selectedSubject, selectedClass]);
+
+  useEffect(() => {
+    loadTeacher();
+    return subscribeSchoolSync((topic) => {
+      if (topic === 'teachers' || topic === 'subjects' || topic === 'classes' || !topic) {
+        loadTeacher();
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -139,25 +183,9 @@ export function TeacherResources() {
       fileObj: null
     });
     setIsAddOpen(false);
-    refreshData();
+    refreshResources();
     showToast('Learning resource uploaded.');
   };
-
-  const filtered = resources.filter((r) => {
-    const matchesSearch =
-      r.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.subject?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.fileName?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesSubject = selectedSubject === 'all' || r.subject === selectedSubject;
-    const classes = r.classes || ['All Classes'];
-    const matchesClass =
-      selectedClass === 'all' ||
-      classes.includes('All Classes') ||
-      classes.includes(selectedClass);
-    return matchesSearch && matchesSubject && matchesClass;
-  });
-
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const getTypeIcon = (type) => {
     switch (type) {
@@ -223,7 +251,7 @@ export function TeacherResources() {
             className="h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-xs text-[#1c1c14]"
           >
             <option value="all">All Assigned Classes</option>
-            {schoolStore.getClassesForTeacher(currentTeacher).map((cls) => (
+            {(currentTeacher?.assignedClasses || []).map((assignment) => assignment.class).filter((cls, index, classes) => classes.indexOf(cls) === index).map((cls) => (
               <option key={cls} value={cls}>
                 {cls}
               </option>
@@ -246,8 +274,8 @@ export function TeacherResources() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c9c7b6]/50">
-              {paginated.length > 0 ? (
-                paginated.map((res) => (
+              {resources.length > 0 ? (
+                resources.map((res) => (
                   <tr key={res.id} className="hover:bg-[#faf8f0]/60 transition-colors">
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-2.5">
@@ -305,7 +333,7 @@ export function TeacherResources() {
         </div>
         <Pagination
           currentPage={currentPage}
-          totalItems={filtered.length}
+          totalItems={totalResources}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
         />

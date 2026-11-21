@@ -21,6 +21,9 @@ export function StudentBookings() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
   const [activeStudent, setActiveStudent] = useState(null);
+  const [teachers, setTeachers] = useState([]);
+  const [availabilitySlots, setAvailabilitySlots] = useState([]);
+  const [studentSubjects, setStudentSubjects] = useState([]);
   const [, setSyncTick] = useState(0);
 
   const [newBooking, setNewBooking] = useState({
@@ -35,17 +38,29 @@ export function StudentBookings() {
     priority: 'medium'
   });
 
-  const loadRequests = () => {
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const students = schoolStore.getStudents();
-    const matched =
-      students.find(
-        (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
-      ) || students[0];
-    setActiveStudent(matched);
-    const list = schoolStore.getRequests();
-    setRequestsList(list);
-    setSyncTick((t) => t + 1);
+  const loadRequests = async () => {
+    try {
+      const [student, list, teacherList, availability, subjects] = await Promise.all([
+        schoolStore.fetchCurrentStudent(),
+        schoolStore.fetchRequests(),
+        schoolStore.fetchTeachers(),
+        schoolStore.fetchAvailability(),
+        schoolStore.fetchSubjects()
+      ]);
+      setActiveStudent(student);
+      setRequestsList(Array.isArray(list) ? list : []);
+      setTeachers(Array.isArray(teacherList) ? teacherList : teacherList?.data || []);
+      setAvailabilitySlots(Array.isArray(availability) ? availability : []);
+      setStudentSubjects(Array.isArray(subjects) ? subjects.map((subject) => subject.name || subject) : []);
+      setSyncTick((t) => t + 1);
+    } catch (error) {
+      console.error('Failed to load student bookings:', error);
+      setActiveStudent(null);
+      setRequestsList([]);
+      setTeachers([]);
+      setAvailabilitySlots([]);
+      setStudentSubjects([]);
+    }
   };
 
   useEffect(() => {
@@ -57,9 +72,6 @@ export function StudentBookings() {
     setToast(msg);
     setTimeout(() => setToast(null), 3500);
   };
-
-  // Teachers mapped by subject
-  const teachers = schoolStore.getTeachers();
 
   const handleCreateBooking = (e) => {
     e?.preventDefault();
@@ -184,10 +196,8 @@ export function StudentBookings() {
   };
 
   const selectedWeekday = getSelectedWeekday(selectedDate);
-  const availableSlotsForDay = schoolStore.getTeacherAvailabilityByDay(selectedWeekday);
-  const studentSubjectOptions = activeStudent
-    ? schoolStore.getSubjectsForClass(activeStudent.class, activeStudent.department)
-    : schoolStore.getSubjectNames();
+  const availableSlotsForDay = availabilitySlots.filter((slot) => slot.day === selectedWeekday);
+  const studentSubjectOptions = studentSubjects;
 
   const handleRequestOpenSlot = (slot) => {
     setNewBooking((prev) => ({
@@ -390,7 +400,7 @@ export function StudentBookings() {
                     value={newBooking.subject}
                     onChange={(e) => setNewBooking({ ...newBooking, subject: e.target.value })}
                   >
-                    {(studentSubjectOptions.length > 0 ? studentSubjectOptions : schoolStore.getSubjectNames()).map((sub) => (
+                    {studentSubjectOptions.map((sub) => (
                       <option key={sub} value={sub}>
                         {sub}
                       </option>

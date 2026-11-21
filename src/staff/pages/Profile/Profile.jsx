@@ -28,6 +28,7 @@ export function StaffProfile() {
   const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
   const [availabilitySlots, setAvailabilitySlots] = useState([]);
   const [sharedResources, setSharedResources] = useState([]);
+  const [subjectNames, setSubjectNames] = useState([]);
   const [toast, setToast] = useState(null);
 
   const [staffData, setStaffData] = useState({
@@ -85,67 +86,73 @@ export function StaffProfile() {
     note: ''
   });
 
-  const refreshProfileStores = () => {
+  const refreshProfileStores = async () => {
     const savedUser = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const allTeachers = schoolStore.getTeachers();
-    const allStudents = schoolStore.getStudents();
-    const matchedTeacher =
-      allTeachers.find(
-        (t) =>
-          (savedUser.email && t.email?.toLowerCase() === savedUser.email.toLowerCase()) ||
-          (savedUser.name && t.name?.toLowerCase() === savedUser.name.toLowerCase()) ||
-          (savedUser.teacherId && t.id === savedUser.teacherId)
-      ) || allTeachers[0] || null;
+    try {
+      const teacher = await schoolStore.fetchCurrentTeacher();
+      const [availability, resources, allocationStudents, subjects] = await Promise.all([
+        schoolStore.fetchAvailability(),
+        schoolStore.fetchResources(),
+        Promise.all((teacher.assignedClasses || []).map(async (assignment) => {
+          const result = await schoolStore.fetchStudents({
+            class: assignment.class,
+            ...(assignment.subject ? { subject: assignment.subject } : {})
+          });
+          return Array.isArray(result) ? result : result?.data || [];
+        })),
+        schoolStore.fetchSubjects()
+      ]);
+      const resolvedName = teacher.name || savedUser.name || 'Teaching Staff';
+      const resolvedId = teacher.id || savedUser.teacherId || savedUser.id || '';
 
-    const resolvedName = matchedTeacher?.name || savedUser.name || 'Teaching Staff';
-    const resolvedId = matchedTeacher?.id || savedUser.teacherId || savedUser.id || '';
+      setStaffData({
+        id: resolvedId,
+        staffId: teacher.staffId || teacher.employeeId || savedUser.employeeId || 'Pending Assignment',
+        name: resolvedName,
+        email: teacher.email || savedUser.email || '',
+        phone: teacher.phone || '',
+        address: teacher.address || '',
+        dateOfBirth: teacher.dateOfBirth || '',
+        startDate: teacher.startDate || '',
+        position: teacher.position || teacher.qualification || 'Subject Teacher',
+        avatarUrl: teacher.avatarUrl || savedUser?.avatarUrl || '',
+        qualifications: Array.isArray(teacher.qualifications)
+          ? teacher.qualifications
+          : teacher.qualification
+          ? [teacher.qualification]
+          : [],
+        emergencyContact: teacher.emergencyContact || {
+          name: '',
+          relationship: '',
+          phone: ''
+        },
+        department: teacher.department || 'Academic Faculty'
+      });
 
-    setStaffData({
-      id: resolvedId,
-      staffId: matchedTeacher?.staffId || matchedTeacher?.employeeId || savedUser.employeeId || 'Pending Assignment',
-      name: resolvedName,
-      email: matchedTeacher?.email || savedUser.email || '',
-      phone: matchedTeacher?.phone || '',
-      address: matchedTeacher?.address || '',
-      dateOfBirth: matchedTeacher?.dateOfBirth || '',
-      startDate: matchedTeacher?.startDate || '',
-      position: matchedTeacher?.position || matchedTeacher?.qualification || 'Subject Teacher',
-      avatarUrl: matchedTeacher?.avatarUrl || savedUser?.avatarUrl || '',
-      qualifications: Array.isArray(matchedTeacher?.qualifications)
-        ? matchedTeacher.qualifications
-        : matchedTeacher?.qualification
-        ? [matchedTeacher.qualification]
-        : [],
-      emergencyContact: matchedTeacher?.emergencyContact || {
-        name: '',
-        relationship: '',
-        phone: ''
-      },
-      department: matchedTeacher?.department || 'Academic Faculty'
-    });
+      setAssignedClasses((teacher.assignedClasses || []).map((assignment, index) => ({
+        class: assignment.class,
+        subject: assignment.subject,
+        sessions: 'Weekly Schedule',
+        students: allocationStudents[index].length
+      })));
 
-    const mappedAllocations = (matchedTeacher?.assignedClasses || []).map((ac) => ({
-      class: ac.class,
-      subject: ac.subject,
-      sessions: 'Weekly Schedule',
-      students: allStudents.filter(
-        (st) => st.class === ac.class && (!ac.subject || (st.enrolledSubjects || []).includes(ac.subject))
-      ).length
-    }));
-    setAssignedClasses(mappedAllocations);
-
-    setAvailabilitySlots(
-      schoolStore
-        .getTeacherAvailability()
-        .filter(
-          (s) =>
-            s.teacherName === resolvedName ||
-            (resolvedId && s.teacherId === resolvedId)
+      setAvailabilitySlots(
+        (Array.isArray(availability) ? availability : []).filter(
+          (slot) => slot.teacherName === resolvedName || (resolvedId && slot.teacherId === resolvedId)
         )
-    );
-    setSharedResources(schoolStore.getResourcesForUser('teacher'));
-    if (resolvedId) {
-      loadLeaves(resolvedId);
+      );
+      setSharedResources(Array.isArray(resources) ? resources : []);
+      setSubjectNames(Array.isArray(subjects) ? subjects.map((subject) => subject.name) : []);
+      if (resolvedId) {
+        loadLeaves(resolvedId);
+      }
+    } catch (error) {
+      console.error('Failed to load staff profile:', error);
+      setStaffData((current) => ({ ...current, id: '', name: savedUser.name || 'Teaching Staff' }));
+      setAssignedClasses([]);
+      setAvailabilitySlots([]);
+      setSharedResources([]);
+      setSubjectNames([]);
     }
   };
 
@@ -281,10 +288,15 @@ export function StaffProfile() {
     refreshProfileStores();
   };
 
-  const handleDeleteAvailability = (id) => {
-    schoolStore.deleteTeacherAvailabilitySlot(id);
-    refreshProfileStores();
-    showToast('Availability slot removed.');
+  const handleDeleteAvailability = async (id) => {
+    try {
+      await schoolStore.deleteTeacherAvailabilitySlot(id);
+      await refreshProfileStores();
+      showToast('Availability slot removed.');
+    } catch (error) {
+      console.error('Failed to delete availability slot:', error);
+      showToast('Unable to remove availability slot.');
+    }
   };
 
   return (
@@ -879,7 +891,7 @@ export function StaffProfile() {
                 onChange={(e) => setNewResource({ ...newResource, subject: e.target.value })}
                 className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm"
               >
-                {schoolStore.getSubjectNames().map((sub) => (
+                {subjectNames.map((sub) => (
                   <option key={sub} value={sub}>{sub}</option>
                 ))}
               </select>

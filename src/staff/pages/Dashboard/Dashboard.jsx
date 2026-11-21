@@ -29,9 +29,8 @@ export function StaffDashboard() {
     let active = true;
     const sync = async () => {
       try {
-        const saved = JSON.parse(localStorage.getItem("alamin_user") || "{}");
-        const [teachersRes, stuRes, reqRes, rawAtt, grRes, allAsg] = await Promise.all([
-          schoolStore.fetchTeachers(),
+        const [teacher, stuRes, reqRes, rawAtt, grRes, allAsg] = await Promise.all([
+          schoolStore.fetchCurrentTeacher(),
           schoolStore.fetchStudents(),
           schoolStore.fetchRequests(),
           schoolStore.fetchAttendance(),
@@ -40,19 +39,7 @@ export function StaffDashboard() {
         ]);
         if (!active) return;
 
-        const allTeachers = Array.isArray(teachersRes) ? teachersRes : (teachersRes?.data || []);
-        const matched =
-          allTeachers.find(
-            (t) =>
-              (saved.email &&
-                t.email?.toLowerCase() === saved.email.toLowerCase()) ||
-              (saved.name && t.name?.toLowerCase() === saved.name.toLowerCase()),
-          ) ||
-          allTeachers[0] ||
-          (saved.name
-            ? { name: saved.name, email: saved.email, assignedClasses: [] }
-            : null);
-        setCurrentTeacher(matched);
+        setCurrentTeacher(teacher);
 
         const allStudentsList = Array.isArray(stuRes) ? stuRes : (stuRes?.data || []);
         setStudents(allStudentsList);
@@ -61,14 +48,14 @@ export function StaffDashboard() {
         setAttendanceLogs(logs);
         setGradesMap(grRes || {});
 
-        const teacherClasses = schoolStore.getClassesForTeacher(matched);
-        const teacherSubjects = schoolStore.getSubjectsForTeacher(matched);
+        const teacherClasses = (teacher?.assignedClasses || []).map((a) => a.class);
+        const teacherSubjects = (teacher?.assignedClasses || []).map((a) => a.subject);
         const assignmentsList = Array.isArray(allAsg) ? allAsg : [];
-        if (matched?.assignedClasses && matched.assignedClasses.length > 0) {
+        if (teacher?.assignedClasses && teacher.assignedClasses.length > 0) {
           setAssignments(
             assignmentsList.filter(
               (a) =>
-                a.author === matched.name ||
+                a.author === teacher.name ||
                 teacherClasses.includes(a.class) ||
                 teacherSubjects.includes(a.subject)
             )
@@ -76,19 +63,15 @@ export function StaffDashboard() {
         } else {
           setAssignments(assignmentsList);
         }
-      } catch {
-        const saved = JSON.parse(localStorage.getItem("alamin_user") || "{}");
-        const allTeachers = schoolStore.getTeachers();
-        const matched =
-          allTeachers.find(
-            (t) =>
-              (saved.email &&
-                t.email?.toLowerCase() === saved.email.toLowerCase()) ||
-              (saved.name && t.name?.toLowerCase() === saved.name.toLowerCase()),
-          ) ||
-          allTeachers[0] ||
-          null;
-        setCurrentTeacher(matched);
+      } catch (error) {
+        console.error('Failed to load staff dashboard:', error);
+        if (!active) return;
+        setCurrentTeacher(null);
+        setStudents([]);
+        setRequests([]);
+        setAttendanceLogs([]);
+        setGradesMap({});
+        setAssignments([]);
       }
     };
     sync();

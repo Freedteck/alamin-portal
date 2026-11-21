@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FileText,
   Download,
@@ -16,22 +16,47 @@ import { downloadSchoolFile } from '../../../shared/lib/storageService';
 
 export function TeacherDocuments() {
   const [documents, setDocuments] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [totalDocuments, setTotalDocuments] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 8;
+  const loadRequest = useRef(0);
 
   const [viewDoc, setViewDoc] = useState(null);
   const [toast, setToast] = useState(null);
 
-  const loadDocuments = () => {
-    setDocuments(schoolStore.getDocumentsForUser('teacher'));
+  const loadDocuments = async () => {
+    const requestId = ++loadRequest.current;
+    try {
+      const result = await schoolStore.fetchDocuments({
+        page: currentPage,
+        limit: pageSize,
+        search: searchTerm,
+        category: selectedCategory
+      });
+      if (requestId !== loadRequest.current) return;
+      setDocuments(Array.isArray(result?.data) ? result.data : []);
+      setCategories(Array.isArray(result?.categories) ? result.categories : []);
+      setTotalDocuments(result?.total || 0);
+    } catch (error) {
+      if (requestId !== loadRequest.current) return;
+      console.error('Failed to load staff documents:', error);
+      setDocuments([]);
+      setCategories([]);
+      setTotalDocuments(0);
+    }
   };
 
   useEffect(() => {
     loadDocuments();
-    return subscribeSchoolSync(loadDocuments);
-  }, []);
+    const unsubscribe = subscribeSchoolSync(loadDocuments);
+    return () => {
+      loadRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm, selectedCategory]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -41,19 +66,6 @@ export function TeacherDocuments() {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
-
-  const categories = Array.from(new Set(documents.map((d) => d.category).filter(Boolean)));
-
-  const filtered = documents.filter((doc) => {
-    const matchesSearch =
-      doc.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      doc.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      doc.fileName?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = selectedCategory === 'all' || doc.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
-
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-16">
@@ -112,8 +124,8 @@ export function TeacherDocuments() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c9c7b6]/50">
-              {paginated.length > 0 ? (
-                paginated.map((doc) => (
+              {documents.length > 0 ? (
+                documents.map((doc) => (
                   <tr key={doc.id} className="hover:bg-[#faf8f0]/60 transition-colors">
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-2">
@@ -165,7 +177,7 @@ export function TeacherDocuments() {
         </div>
         <Pagination
           currentPage={currentPage}
-          totalItems={filtered.length}
+          totalItems={totalDocuments}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
         />

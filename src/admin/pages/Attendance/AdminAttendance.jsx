@@ -57,10 +57,10 @@ export function AdminAttendance() {
         } else if (students.length === 0) {
           setSelectedStudentId('');
         }
-      } catch {
-        const students = schoolStore.getStudents();
-        setAllStudents(students);
-        setAllAttendance(schoolStore.getAttendance());
+      } catch (error) {
+        console.error('Failed to load attendance overview:', error);
+        setAllStudents([]);
+        setAllAttendance({});
       }
     };
     sync();
@@ -83,10 +83,10 @@ export function AdminAttendance() {
           setStudentAuditData(audit?.student ? audit : null);
           setAuditPage(1);
         }
-      }).catch(() => {
+      }).catch((error) => {
+        console.error('Failed to load student attendance history:', error);
         if (active) {
-          const audit = schoolStore.getStudentAttendanceHistory(selectedStudentId);
-          setStudentAuditData(audit?.student ? audit : null);
+          setStudentAuditData(null);
           setAuditPage(1);
         }
       });

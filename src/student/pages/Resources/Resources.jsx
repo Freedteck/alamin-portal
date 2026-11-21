@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   BookOpen,
   FileText,
@@ -17,31 +17,53 @@ import { downloadSchoolFile } from '../../../shared/lib/storageService';
 
 export function StudentResources() {
   const [resources, setResources] = useState([]);
+  const [subjects, setSubjects] = useState([]);
+  const [totalResources, setTotalResources] = useState(0);
   const [activeStudent, setActiveStudent] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 8;
+  const loadRequest = useRef(0);
 
   const [viewModal, setViewModal] = useState(null);
   const [toast, setToast] = useState(null);
 
-  const loadResources = () => {
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const students = schoolStore.getStudents();
-    const matched =
-      students.find(
-        (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
-      ) || students[0];
-    setActiveStudent(matched);
-    const studentSubjects = matched?.enrolledSubjects || schoolStore.getSubjectsForClass(matched?.class);
-    setResources(schoolStore.getResourcesForUser('student', matched?.class || '', studentSubjects));
+  const loadResources = async () => {
+    const requestId = ++loadRequest.current;
+    try {
+      const [student, result] = await Promise.all([
+        schoolStore.fetchCurrentStudent(),
+        schoolStore.fetchResources({
+          page: currentPage,
+          limit: pageSize,
+          search: searchTerm,
+          subject: selectedSubject
+        })
+      ]);
+      if (requestId !== loadRequest.current) return;
+      setActiveStudent(student);
+      setResources(Array.isArray(result?.data) ? result.data : []);
+      setSubjects(Array.isArray(result?.subjects) ? result.subjects : []);
+      setTotalResources(result?.total || 0);
+    } catch (error) {
+      if (requestId !== loadRequest.current) return;
+      console.error('Failed to load student resources:', error);
+      setActiveStudent(null);
+      setResources([]);
+      setSubjects([]);
+      setTotalResources(0);
+    }
   };
 
   useEffect(() => {
     loadResources();
-    return subscribeSchoolSync(loadResources);
-  }, []);
+    const unsubscribe = subscribeSchoolSync(loadResources);
+    return () => {
+      loadRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm, selectedSubject]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -51,19 +73,6 @@ export function StudentResources() {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
-
-  const subjects = Array.from(new Set(resources.map((r) => r.subject).filter(Boolean)));
-
-  const filtered = resources.filter((r) => {
-    const matchSearch =
-      r.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.subject?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.fileName?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchSubject = selectedSubject === 'all' || r.subject === selectedSubject;
-    return matchSearch && matchSubject;
-  });
-
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const getTypeIcon = (type) => {
     switch (type) {
@@ -135,8 +144,8 @@ export function StudentResources() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c9c7b6]/50">
-              {paginated.length > 0 ? (
-                paginated.map((res) => (
+              {resources.length > 0 ? (
+                resources.map((res) => (
                   <tr key={res.id} className="hover:bg-[#faf8f0]/60 transition-colors">
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-2.5">
@@ -183,7 +192,7 @@ export function StudentResources() {
         </div>
         <Pagination
           currentPage={currentPage}
-          totalItems={filtered.length}
+          totalItems={totalResources}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
         />

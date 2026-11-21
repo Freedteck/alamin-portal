@@ -26,23 +26,24 @@ export function StudentTimetable() {
         schoolStore.fetchTimetable(cls),
         schoolStore.fetchAlerts()
       ]);
-      setSlots(Array.isArray(ttRes) ? ttRes.filter((s) => s.class === cls || s.class === 'All Classes') : []);
-      setAlerts(Array.isArray(alRes) ? alRes.filter((a) => !a.targetRole || a.targetRole === 'student') : []);
-    } catch {
-      setSlots(schoolStore.getTimetableForClass(cls));
-      setAlerts(schoolStore.getAlertsForUser('student', { class: cls }));
+      setSlots(Array.isArray(ttRes) ? ttRes : []);
+      setAlerts(Array.isArray(alRes) ? alRes : []);
+    } catch (error) {
+      console.error('Failed to load student timetable:', error);
+      setSlots([]);
+      setAlerts([]);
     }
   };
 
   useEffect(() => {
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const students = schoolStore.getStudents();
-    const matched =
-      students.find(
-        (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
-      ) || students[0];
-    const initialClass = matched?.class || schoolStore.getClasses()[0] || 'JSS 1';
-    setSelectedClass(initialClass);
+    let active = true;
+    schoolStore.fetchCurrentStudent().then((student) => {
+      if (active) setSelectedClass(student?.class || SCHOOL_CLASSES[0] || 'JSS 1');
+    }).catch((error) => {
+      console.error('Failed to load current student:', error);
+      if (active) setSelectedClass(SCHOOL_CLASSES[0] || 'JSS 1');
+    });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -55,9 +56,13 @@ export function StudentTimetable() {
     loadTimetable(nextClass);
   };
 
-  const handleDismissAlert = (id) => {
-    schoolStore.dismissAlert(id);
-    loadTimetable(selectedClass);
+  const handleDismissAlert = async (id) => {
+    try {
+      await schoolStore.dismissAlert(id);
+      await loadTimetable(selectedClass);
+    } catch (error) {
+      console.error('Failed to dismiss timetable alert:', error);
+    }
   };
 
   const daysToDisplay = selectedDay === 'Full Week' ? TIMETABLE_DAYS : [selectedDay];

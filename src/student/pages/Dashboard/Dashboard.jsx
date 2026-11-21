@@ -28,36 +28,24 @@ export function StudentDashboard() {
     if (saved.name) setAccountName(saved.name);
 
     try {
-      const [studentsRes] = await Promise.all([
-        schoolStore.fetchStudents(),
-        schoolStore.fetchTimetable(),
+      const activeStudent = await schoolStore.fetchCurrentStudent();
+      const [timetableRes, assignmentsRes, announcementsRes] = await Promise.all([
+        schoolStore.fetchTimetable(activeStudent?.class),
         schoolStore.fetchAssignments(),
         schoolStore.fetchAnnouncements()
       ]);
-      const students = Array.isArray(studentsRes) ? studentsRes : (studentsRes?.data || []);
-      const activeStudent =
-        students.find(
-          (s) =>
-            (saved.email && s.email?.toLowerCase() === saved.email.toLowerCase()) ||
-            s.id === saved.id ||
-            (saved.name && s.name?.toLowerCase() === saved.name.toLowerCase())
-        ) ||
-        students[0] ||
-        null;
       setUser(activeStudent);
 
       if (activeStudent) {
-        const historyAudit = await schoolStore.fetchStudentAttendanceHistory(activeStudent.id).catch(() => null);
-        setAttendanceSummary(historyAudit || schoolStore.getStudentAttendanceHistory(activeStudent.id));
-        const classSlots = schoolStore
-          .getTimetableForClass(activeStudent.class)
+        const historyAudit = await schoolStore.fetchStudentAttendanceHistory(activeStudent.id);
+        setAttendanceSummary(historyAudit);
+        const classSlots = (Array.isArray(timetableRes) ? timetableRes : [])
           .filter((s) => s.type === 'lesson')
           .slice(0, 4);
         setUpcomingClasses(classSlots);
 
-        const studentSubjects = activeStudent.enrolledSubjects || schoolStore.getSubjectsForClass(activeStudent.class);
-        const asgs = schoolStore
-          .getAssignments()
+        const studentSubjects = activeStudent.enrolledSubjects || [];
+        const asgs = (Array.isArray(assignmentsRes) ? assignmentsRes : [])
           .filter(
             (a) =>
               (a.class === 'All Classes' || a.class === activeStudent.class) &&
@@ -76,8 +64,8 @@ export function StudentDashboard() {
           });
         setPendingAssignments(asgs);
 
-        const notices = schoolStore
-          .getAnnouncementsForUser('student', activeStudent.class)
+        const notices = (Array.isArray(announcementsRes) ? announcementsRes : [])
+          .filter((n) => !n.targetRole || n.targetRole === 'all' || n.targetRole === 'student')
           .slice(0, 3)
           .map((n) => ({
             title: n.title,
@@ -118,8 +106,16 @@ export function StudentDashboard() {
         setSubjectProgress([]);
         setAverageGrade('—');
       }
-    } catch {
+    } catch (error) {
+      console.error('Failed to load student dashboard:', error);
       setUser(null);
+      setAttendanceSummary(null);
+      setUpcomingClasses([]);
+      setPendingAssignments([]);
+      setAnnouncements([]);
+      setRecentGrades([]);
+      setSubjectProgress([]);
+      setAverageGrade('—');
     }
   };
 

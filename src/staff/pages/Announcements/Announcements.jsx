@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Megaphone,
   Plus,
@@ -23,10 +23,12 @@ const TEACHER_AUDIENCE_OPTIONS = [
 
 export function StaffAnnouncements() {
   const [announcements, setAnnouncements] = useState([]);
+  const [totalAnnouncements, setTotalAnnouncements] = useState(0);
   const [activeTab, setActiveTab] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 6;
+  const loadRequest = useRef(0);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -43,35 +45,38 @@ export function StaffAnnouncements() {
   });
 
   const refreshData = async () => {
+    const requestId = ++loadRequest.current;
     try {
-      const [tRes, aRes] = await Promise.all([
-        schoolStore.fetchTeachers(),
-        schoolStore.fetchAnnouncements()
+      const [teacher, aRes] = await Promise.all([
+        schoolStore.fetchCurrentTeacher(),
+        schoolStore.fetchAnnouncements({
+          page: currentPage,
+          limit: pageSize,
+          search: searchTerm,
+          scope: activeTab
+        })
       ]);
-      const teachers = Array.isArray(tRes) ? tRes : (tRes?.data || []);
-      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-      const teacher =
-        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
-        teachers[0] ||
-        { name: saved.name || 'Teaching Staff' };
+      if (requestId !== loadRequest.current) return;
       setCurrentTeacher(teacher);
-      setAnnouncements(Array.isArray(aRes) ? aRes.filter((a) => a.targetRole === 'all' || a.targetRole === 'teacher') : []);
-    } catch {
-      const teachers = schoolStore.getTeachers();
-      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-      const teacher =
-        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
-        teachers[0] ||
-        { name: saved.name || 'Teaching Staff' };
-      setCurrentTeacher(teacher);
-      setAnnouncements(schoolStore.getAnnouncementsForUser('teacher'));
+      setAnnouncements(Array.isArray(aRes?.data) ? aRes.data : []);
+      setTotalAnnouncements(aRes?.total || 0);
+    } catch (error) {
+      if (requestId !== loadRequest.current) return;
+      console.error('Failed to load staff announcements:', error);
+      setCurrentTeacher(null);
+      setAnnouncements([]);
+      setTotalAnnouncements(0);
     }
   };
 
   useEffect(() => {
     refreshData();
-    return subscribeSchoolSync(refreshData);
-  }, []);
+    const unsubscribe = subscribeSchoolSync(refreshData);
+    return () => {
+      loadRequest.current += 1;
+      unsubscribe();
+    };
+  }, [activeTab, currentPage, searchTerm]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -137,27 +142,6 @@ export function StaffAnnouncements() {
     showToast('Announcement deleted.');
   };
 
-  const filtered = announcements.filter((a) => {
-    const matchesSearch =
-      a.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      a.content?.toLowerCase().includes(searchTerm.toLowerCase());
-    if (!matchesSearch) return false;
-
-    if (activeTab === 'admin') {
-      return a.authorRole !== 'Teaching Staff';
-    }
-    if (activeTab === 'mine') {
-      return a.authorRole === 'Teaching Staff';
-    }
-    return true;
-  });
-
-  const sorted = [...filtered].sort(
-    (a, b) => Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned))
-  );
-
-  const paginated = sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-16">
       {toast && (
@@ -214,8 +198,8 @@ export function StaffAnnouncements() {
       </div>
 
       <div className="space-y-3">
-        {paginated.length > 0 ? (
-          paginated.map((ann) => {
+        {announcements.length > 0 ? (
+          announcements.map((ann) => {
             const targets = ann.targetAudiences || ann.targetAudience || ['Everyone'];
             const isOwn = ann.authorRole === 'Teaching Staff';
             return (
@@ -287,7 +271,7 @@ export function StaffAnnouncements() {
 
       <Pagination
         currentPage={currentPage}
-        totalItems={sorted.length}
+        totalItems={totalAnnouncements}
         pageSize={pageSize}
         onPageChange={setCurrentPage}
       />

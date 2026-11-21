@@ -265,6 +265,18 @@ export const openApiSpec = {
         responses: { 200: { description: 'Deleted' } }
       }
     },
+    '/teachers/me': {
+      get: {
+        tags: ['Teachers'],
+        summary: 'Get the authenticated teacher profile',
+        security: bearerSecurity,
+        responses: {
+          200: { description: 'Authenticated teacher profile' },
+          403: { description: 'Teacher access required' },
+          404: { description: 'Teacher profile not found' }
+        }
+      }
+    },
     '/teachers/{id}/assign-class': {
       post: {
         tags: ['Teachers'],
@@ -303,8 +315,12 @@ export const openApiSpec = {
     '/subjects': {
       get: {
         tags: ['Subjects'],
-        summary: 'List all curriculum subjects',
+        summary: 'List curriculum subjects, optionally filtered by class and department',
         security: bearerSecurity,
+        parameters: [
+          { name: 'class', in: 'query', schema: { type: 'string' } },
+          { name: 'department', in: 'query', schema: { type: 'string' } }
+        ],
         responses: { 200: { description: 'Subject list' } }
       },
       post: {
@@ -427,9 +443,13 @@ export const openApiSpec = {
     '/attendance': {
       get: {
         tags: ['Attendance'],
-        summary: 'Get all recorded attendance registers',
+        summary: 'Get attendance registers, optionally filtered by date and class',
         security: bearerSecurity,
-        responses: { 200: { description: 'Map of date_className attendance entries' } }
+        parameters: [
+          { name: 'date', in: 'query', schema: { type: 'string', example: '2026-11-17' } },
+          { name: 'class', in: 'query', schema: { type: 'string', example: 'SSS 2' } }
+        ],
+        responses: { 200: { description: 'Map of matching date_className attendance entries' } }
       },
       post: {
         tags: ['Attendance'],
@@ -513,7 +533,20 @@ export const openApiSpec = {
       }
     },
     '/resources': {
-      get: { tags: ['Resources & Equipment'], summary: 'List learning resources', security: bearerSecurity, responses: { 200: { description: 'Resources array' } } },
+      get: {
+        tags: ['Resources & Equipment'],
+        summary: 'List learning resources',
+        security: bearerSecurity,
+        parameters: [
+          { name: 'search', in: 'query', schema: { type: 'string' } },
+          { name: 'subject', in: 'query', schema: { type: 'string' } },
+          { name: 'type', in: 'query', schema: { type: 'string' } },
+          { name: 'class', in: 'query', schema: { type: 'string' } },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } }
+        ],
+        responses: { 200: { description: 'Resources array or paginated result when page/limit is provided' } }
+      },
       post: { tags: ['Resources & Equipment'], summary: 'Add a learning resource', security: bearerSecurity, requestBody: { content: { 'application/json': { schema: { type: 'object' } } } }, responses: { 201: { description: 'Resource created' } } }
     },
     '/resources/{id}': {
@@ -535,7 +568,19 @@ export const openApiSpec = {
       patch: { tags: ['Resources & Equipment'], summary: 'Update maintenance request status', security: bearerSecurity, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { status: { type: 'string', example: 'completed' } } } } } }, responses: { 200: { description: 'Status updated' } } }
     },
     '/documents': {
-      get: { tags: ['Documents'], summary: 'List school documents', security: bearerSecurity, responses: { 200: { description: 'Documents list' } } },
+      get: {
+        tags: ['Documents'],
+        summary: 'List school documents',
+        security: bearerSecurity,
+        parameters: [
+          { name: 'search', in: 'query', schema: { type: 'string' } },
+          { name: 'category', in: 'query', schema: { type: 'string' } },
+          { name: 'access', in: 'query', schema: { type: 'string' } },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } }
+        ],
+        responses: { 200: { description: 'Documents array or paginated result when page/limit is provided' } }
+      },
       post: { tags: ['Documents'], summary: 'Upload/register a school document record', security: bearerSecurity, requestBody: { content: { 'application/json': { schema: { type: 'object' } } } }, responses: { 201: { description: 'Document created' } } }
     },
     '/documents/{id}/access': {
@@ -545,7 +590,20 @@ export const openApiSpec = {
       delete: { tags: ['Documents'], summary: 'Delete a document', security: bearerSecurity, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Deleted' } } }
     },
     '/announcements': {
-      get: { tags: ['Announcements'], summary: 'List announcements', security: bearerSecurity, responses: { 200: { description: 'Announcements array' } } },
+      get: {
+        tags: ['Announcements'],
+        summary: 'List announcements',
+        security: bearerSecurity,
+        parameters: [
+          { name: 'search', in: 'query', schema: { type: 'string' } },
+          { name: 'type', in: 'query', schema: { type: 'string' } },
+          { name: 'audience', in: 'query', schema: { type: 'string' } },
+          { name: 'scope', in: 'query', schema: { type: 'string', enum: ['all', 'admin', 'mine'] } },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } }
+        ],
+        responses: { 200: { description: 'Announcements array or paginated result when page/limit is provided' } }
+      },
       post: { tags: ['Announcements'], summary: 'Publish an announcement', security: bearerSecurity, requestBody: { content: { 'application/json': { schema: { type: 'object' } } } }, responses: { 201: { description: 'Created' } } }
     },
     '/announcements/{id}': {
@@ -563,7 +621,19 @@ export const openApiSpec = {
       delete: { tags: ['Availability'], summary: 'Delete availability slot', security: bearerSecurity, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Deleted' } } }
     },
     '/assignments': {
-      get: { tags: ['Assignments'], summary: 'List all assignments', security: bearerSecurity, responses: { 200: { description: 'Assignments list' } } },
+      get: {
+        tags: ['Assignments'],
+        summary: 'List assignments',
+        security: bearerSecurity,
+        parameters: [
+          { name: 'search', in: 'query', schema: { type: 'string' } },
+          { name: 'class', in: 'query', schema: { type: 'string' } },
+          { name: 'subject', in: 'query', schema: { type: 'string' } },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } }
+        ],
+        responses: { 200: { description: 'Assignments array or paginated result when page/limit is provided' } }
+      },
       post: { tags: ['Assignments'], summary: 'Create a new assignment', security: bearerSecurity, requestBody: { content: { 'application/json': { schema: { type: 'object' } } } }, responses: { 201: { description: 'Created' } } }
     },
     '/assignments/{id}': {

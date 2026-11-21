@@ -52,26 +52,19 @@ export function StaffAttendance() {
   const savedUser = JSON.parse(localStorage.getItem('alamin_user') || '{}');
 
   useEffect(() => {
-    const allTeachers = schoolStore.getTeachers();
-    const teacher =
-      allTeachers.find(
-        (t) =>
-          (savedUser.teacherId && t.id === savedUser.teacherId) ||
-          (savedUser.email && t.email?.toLowerCase() === savedUser.email.toLowerCase()) ||
-          (savedUser.name && t.name?.toLowerCase() === savedUser.name.toLowerCase())
-      ) ||
-      allTeachers[0] ||
-      (savedUser.name ? { name: savedUser.name, classTeacherOf: [] } : null);
-
-    setCurrentTeacher(teacher);
-
-    const myClasses = Array.isArray(teacher?.classTeacherOf)
-      ? teacher.classTeacherOf
-      : (Array.isArray(savedUser?.classTeacherOf) ? savedUser.classTeacherOf : []);
-
-    if (myClasses.length > 0) {
-      setSelectedClass((prev) => (myClasses.includes(prev) ? prev : myClasses[0]));
-    }
+    let active = true;
+    schoolStore.fetchCurrentTeacher().then((teacher) => {
+      if (!active) return;
+      setCurrentTeacher(teacher);
+      const myClasses = teacher?.classTeacherOf || savedUser?.classTeacherOf || [];
+      if (myClasses.length > 0) {
+        setSelectedClass((prev) => (myClasses.includes(prev) ? prev : myClasses[0]));
+      }
+    }).catch((error) => {
+      console.error('Failed to load current teacher:', error);
+      if (active) setCurrentTeacher(null);
+    });
+    return () => { active = false; };
   }, [syncTick]);
 
   const teacherClasses = Array.isArray(currentTeacher?.classTeacherOf)
@@ -108,19 +101,10 @@ export function StaffAttendance() {
           });
           setAttendanceRecords(defaults);
         }
-      } catch {
-        const allStudents = schoolStore.getStudents().filter((s) => s.class === selectedClass);
-        setStudents(allStudents);
-        const existing = schoolStore.getAttendanceForDateAndClass(selectedDate, selectedClass);
-        if (existing && existing.records) {
-          setAttendanceRecords(existing.records);
-        } else {
-          const defaults = {};
-          allStudents.forEach((s) => {
-            defaults[s.id] = 'absent';
-          });
-          setAttendanceRecords(defaults);
-        }
+      } catch (error) {
+        console.error('Failed to load class attendance:', error);
+        setStudents([]);
+        setAttendanceRecords({});
       }
     };
     loadClassAttendance();
@@ -141,8 +125,9 @@ export function StaffAttendance() {
       try {
         const audit = await schoolStore.fetchStudentAttendanceHistory(selectedStudentId);
         if (active) setStudentAuditData(audit);
-      } catch {
-        if (active) setStudentAuditData(schoolStore.getStudentAttendanceHistory(selectedStudentId));
+      } catch (error) {
+        console.error('Failed to load student attendance history:', error);
+        if (active) setStudentAuditData(null);
       }
     };
     loadAudit();

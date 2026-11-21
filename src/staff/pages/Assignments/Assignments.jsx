@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FileText,
   Plus,
@@ -20,10 +20,12 @@ import { uploadSchoolFile, downloadSchoolFile } from '../../../shared/lib/storag
 
 export function StaffAssignments() {
   const [assignments, setAssignments] = useState([]);
+  const [totalAssignments, setTotalAssignments] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterClass, setFilterClass] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 8;
+  const loadRequest = useRef(0);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -32,6 +34,8 @@ export function StaffAssignments() {
   const [toast, setToast] = useState(null);
 
   const [currentTeacher, setCurrentTeacher] = useState(null);
+  const [schoolClasses, setSchoolClasses] = useState(SCHOOL_CLASSES);
+  const [subjectCatalog, setSubjectCatalog] = useState([]);
   const [form, setForm] = useState({
     title: '',
     class: 'JSS 1',
@@ -47,48 +51,64 @@ export function StaffAssignments() {
   });
 
   const refreshData = async () => {
+    const requestId = ++loadRequest.current;
     try {
-      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-      const [tRes, aRes] = await Promise.all([
-        schoolStore.fetchTeachers(),
-        schoolStore.fetchAssignments()
-      ]);
-      const teachers = Array.isArray(tRes) ? tRes : (tRes?.data || []);
-      const teacher =
-        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
-        teachers[0] ||
-        null;
-      setCurrentTeacher(teacher);
-      const teacherClasses = schoolStore.getClassesForTeacher(teacher);
-      const teacherSubjects = schoolStore.getSubjectsForTeacher(teacher);
-      const all = Array.isArray(aRes) ? aRes : [];
-      if (teacher?.assignedClasses && teacher.assignedClasses.length > 0) {
-        setAssignments(
-          all.filter(
-            (a) =>
-              a.author === teacher.name ||
-              teacherClasses.includes(a.class) ||
-              teacherSubjects.includes(a.subject)
-          )
-        );
-      } else {
-        setAssignments(all);
-      }
-    } catch {
-      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-      const teachers = schoolStore.getTeachers();
-      const teacher =
-        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
-        teachers[0] ||
-        null;
-      setCurrentTeacher(teacher);
-      setAssignments(schoolStore.getAssignments());
+      const aRes = await schoolStore.fetchAssignments({
+        page: currentPage,
+        limit: pageSize,
+        search: searchTerm,
+        class: filterClass
+      });
+      if (requestId !== loadRequest.current) return;
+      setAssignments(Array.isArray(aRes?.data) ? aRes.data : []);
+      setTotalAssignments(aRes?.total || 0);
+    } catch (error) {
+      if (requestId !== loadRequest.current) return;
+      console.error('Failed to load staff assignments:', error);
+      setAssignments([]);
+      setTotalAssignments(0);
     }
   };
 
   useEffect(() => {
     refreshData();
-    return subscribeSchoolSync(refreshData);
+    const unsubscribe = subscribeSchoolSync(refreshData);
+    return () => {
+      loadRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm, filterClass]);
+
+  useEffect(() => {
+    let active = true;
+    const loadFormOptions = async () => {
+      try {
+        const [teacher, classes, subjects] = await Promise.all([
+          schoolStore.fetchCurrentTeacher(),
+          schoolStore.fetchClasses(),
+          schoolStore.fetchSubjects()
+        ]);
+        if (!active) return;
+        setCurrentTeacher(teacher);
+        if (Array.isArray(classes)) setSchoolClasses(classes.map((item) => item.name || item));
+        setSubjectCatalog(Array.isArray(subjects) ? subjects : []);
+      } catch (error) {
+        if (!active) return;
+        console.error('Failed to load assignment form options:', error);
+        setCurrentTeacher(null);
+        setSubjectCatalog([]);
+      }
+    };
+    loadFormOptions();
+    const unsubscribe = subscribeSchoolSync((topic) => {
+      if (topic === 'teachers' || topic === 'classes' || topic === 'subjects' || !topic) {
+        loadFormOptions();
+      }
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -100,13 +120,25 @@ export function StaffAssignments() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const teacherClasses = schoolStore.getClassesForTeacher(currentTeacher);
-  const teacherSubjects = schoolStore.getSubjectsForClassForTeacher(form.class, currentTeacher);
-  const subjectOptions = teacherSubjects.length > 0 ? teacherSubjects : schoolStore.getSubjectsForClass(form.class);
+  const teacherClasses = Array.from(new Set((currentTeacher?.assignedClasses || []).map((item) => item.class).filter(Boolean)));
+  const getSubjectsForClass = (className, teacher = currentTeacher) => {
+    const assignedSubjects = (teacher?.assignedClasses || [])
+      .filter((assignment) => !className || assignment.class === className)
+      .map((assignment) => assignment.subject)
+      .filter(Boolean);
+    if (assignedSubjects.length > 0) return Array.from(new Set(assignedSubjects));
+    return subjectCatalog
+      .filter((subject) =>
+        !className || subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(className))
+      )
+      .map((subject) => subject.name);
+  };
+  const classOptions = teacherClasses.length > 0 ? teacherClasses : schoolClasses;
+  const subjectOptions = getSubjectsForClass(form.class);
 
   const openCreateModal = () => {
-    const defaultCls = teacherClasses[0] || schoolStore.getClasses()[0] || 'JSS 1';
-    const subs = schoolStore.getSubjectsForClassForTeacher(defaultCls, currentTeacher);
+    const defaultCls = classOptions[0] || 'JSS 1';
+    const subs = getSubjectsForClass(defaultCls);
     setEditingId(null);
     setForm({
       title: '',
@@ -125,7 +157,7 @@ export function StaffAssignments() {
   };
 
   const openEditModal = (asg) => {
-    const defaultCls = teacherClasses[0] || schoolStore.getClasses()[0] || 'JSS 1';
+    const defaultCls = classOptions[0] || 'JSS 1';
     setEditingId(asg.id);
     setForm({
       title: asg.title || '',
@@ -208,16 +240,6 @@ export function StaffAssignments() {
     showToast('Assignment removed.');
   };
 
-  const filtered = assignments.filter((a) => {
-    const matchSearch =
-      a.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      a.subject?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchClass = filterClass === 'all' || a.class === filterClass;
-    return matchSearch && matchClass;
-  });
-
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-16">
       {toast && (
@@ -280,8 +302,8 @@ export function StaffAssignments() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c9c7b6]/50">
-              {paginated.length > 0 ? (
-                paginated.map((asg) => {
+              {assignments.length > 0 ? (
+                assignments.map((asg) => {
                   const fileLabel = asg.attachmentName || asg.attachments?.[0] || null;
                   return (
                     <tr key={asg.id} className="hover:bg-[#faf8f0]/60 transition-colors">
@@ -344,7 +366,7 @@ export function StaffAssignments() {
         </div>
         <Pagination
           currentPage={currentPage}
-          totalItems={filtered.length}
+          totalItems={totalAssignments}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
         />
@@ -386,7 +408,7 @@ export function StaffAssignments() {
                 value={form.class}
                 onChange={(e) => {
                   const nextCls = e.target.value;
-                  const nextSubs = schoolStore.getSubjectsForClassForTeacher(nextCls, currentTeacher);
+                  const nextSubs = getSubjectsForClass(nextCls);
                   setForm({
                     ...form,
                     class: nextCls,

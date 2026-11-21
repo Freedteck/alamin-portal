@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Bell,
   Mail,
@@ -29,8 +29,10 @@ export function AdminCommunications() {
   const [filterAudience, setFilterAudience] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 6;
+  const announcementRequest = useRef(0);
 
   const [announcements, setAnnouncements] = useState([]);
+  const [totalAnnouncements, setTotalAnnouncements] = useState(0);
   const [recipients, setRecipients] = useState([]);
   const [isAddAnnOpen, setIsAddAnnOpen] = useState(false);
   const [confirmDeleteAnn, setConfirmDeleteAnn] = useState(null);
@@ -67,21 +69,60 @@ export function AdminCommunications() {
     content: ''
   });
 
-  const refreshData = () => {
-    setAnnouncements(schoolStore.getAnnouncements());
-    const teachers = schoolStore.getTeachers().map((t) => ({ name: t.name, role: 'Teacher' }));
-    const students = schoolStore.getStudents().map((s) => ({ name: s.name, role: s.class }));
-    setRecipients([
-      { name: 'All Teaching Staff', role: 'Group' },
-      { name: 'All Parents', role: 'Group' },
-      ...teachers,
-      ...students
-    ]);
+  const refreshData = async () => {
+    const requestId = ++announcementRequest.current;
+    try {
+      const announcementsRes = await schoolStore.fetchAnnouncements({
+        page: currentPage,
+        limit: pageSize,
+        search: searchTerm,
+        audience: filterAudience
+      });
+      if (requestId !== announcementRequest.current) return;
+      setAnnouncements(Array.isArray(announcementsRes?.data) ? announcementsRes.data : []);
+      setTotalAnnouncements(announcementsRes?.total || 0);
+    } catch (error) {
+      if (requestId !== announcementRequest.current) return;
+      console.error('Failed to load announcements:', error);
+      setAnnouncements([]);
+      setTotalAnnouncements(0);
+    }
+  };
+
+  const refreshRecipients = async () => {
+    try {
+      const [teachersRes, studentsRes] = await Promise.all([
+        schoolStore.fetchTeachers(),
+        schoolStore.fetchStudents()
+      ]);
+      const teachers = (Array.isArray(teachersRes) ? teachersRes : teachersRes?.data || [])
+        .map((t) => ({ name: t.name, role: 'Teacher' }));
+      const students = (Array.isArray(studentsRes) ? studentsRes : studentsRes?.data || [])
+        .map((s) => ({ name: s.name, role: s.class }));
+      setRecipients([
+        { name: 'All Teaching Staff', role: 'Group' },
+        { name: 'All Parents', role: 'Group' },
+        ...teachers,
+        ...students
+      ]);
+    } catch (error) {
+      console.error('Failed to load communication recipients:', error);
+      setRecipients([]);
+    }
   };
 
   useEffect(() => {
     refreshData();
-    return subscribeSchoolSync(refreshData);
+    const unsubscribe = subscribeSchoolSync(refreshData);
+    return () => {
+      announcementRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm, filterAudience]);
+
+  useEffect(() => {
+    refreshRecipients();
+    return subscribeSchoolSync(refreshRecipients);
   }, []);
 
   useEffect(() => {
@@ -183,27 +224,6 @@ export function AdminCommunications() {
     }
   };
 
-  const filteredAnnouncements = announcements.filter((a) => {
-    const matchesSearch =
-      a.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      a.content?.toLowerCase().includes(searchTerm.toLowerCase());
-    const targets = a.targetAudiences || a.targetAudience || [];
-    const matchesAudience =
-      filterAudience === 'all' ||
-      targets.includes(filterAudience) ||
-      targets.includes('Everyone');
-    return matchesSearch && matchesAudience;
-  });
-
-  const sortedAnnouncements = [...filteredAnnouncements].sort(
-    (a, b) => Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned))
-  );
-
-  const paginatedAnnouncements = sortedAnnouncements.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
-
   const getPriorityBadge = (priority) => {
     switch (priority) {
       case 'high':
@@ -297,8 +317,8 @@ export function AdminCommunications() {
           </div>
 
           <div className="space-y-3">
-            {paginatedAnnouncements.length > 0 ? (
-              paginatedAnnouncements.map((ann) => {
+            {announcements.length > 0 ? (
+              announcements.map((ann) => {
                 const targets = ann.targetAudiences || ann.targetAudience || ['Everyone'];
                 return (
                   <div
@@ -382,7 +402,7 @@ export function AdminCommunications() {
 
           <Pagination
             currentPage={currentPage}
-            totalItems={sortedAnnouncements.length}
+            totalItems={totalAnnouncements}
             pageSize={pageSize}
             onPageChange={setCurrentPage}
           />

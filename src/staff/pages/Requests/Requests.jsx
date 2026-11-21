@@ -31,9 +31,14 @@ export function StaffStudentRequests() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
 
-  const loadRequests = () => {
-    const list = schoolStore.getRequests();
-    setRequests(list);
+  const loadRequests = async () => {
+    try {
+      const list = await schoolStore.fetchRequests();
+      setRequests(Array.isArray(list) ? list : []);
+    } catch (error) {
+      console.error('Failed to load student requests:', error);
+      setRequests([]);
+    }
   };
 
   useEffect(() => {

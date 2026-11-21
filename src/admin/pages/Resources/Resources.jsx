@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FileText,
   BookOpen,
@@ -37,6 +37,9 @@ export function AdminResources() {
   const pageSize = 8;
 
   const [resources, setResources] = useState([]);
+  const [totalResources, setTotalResources] = useState(0);
+  const [resourceCount, setResourceCount] = useState(0);
+  const resourceRequest = useRef(0);
   const [equipment, setEquipment] = useState([]);
   const [maintenance, setMaintenance] = useState([]);
   const [subjectNames, setSubjectNames] = useState([]);
@@ -77,26 +80,47 @@ export function AdminResources() {
 
   const refreshData = async () => {
     try {
-      const [rRes, eRes, mRes, subRes] = await Promise.all([
-        schoolStore.fetchResources(),
+      const [eRes, mRes, subRes] = await Promise.all([
         schoolStore.fetchEquipment(),
         schoolStore.fetchMaintenance(),
         schoolStore.fetchSubjects()
       ]);
-      setResources(Array.isArray(rRes) ? rRes : []);
       setEquipment(Array.isArray(eRes) ? eRes : []);
       setMaintenance(Array.isArray(mRes) ? mRes : []);
-      const subs = Array.isArray(subRes) ? subRes.map((s) => s.name || s) : schoolStore.getSubjectNames();
+      const subs = Array.isArray(subRes) ? subRes.map((s) => s.name || s) : [];
       setSubjectNames(subs);
       setResourceForm((prev) => ({
         ...prev,
         subject: prev.subject || subs[0] || 'Mathematics'
       }));
-    } catch {
-      setResources(schoolStore.getResources());
-      setEquipment(schoolStore.getEquipment());
-      setMaintenance(schoolStore.getMaintenance());
-      setSubjectNames(schoolStore.getSubjectNames());
+    } catch (error) {
+      console.error('Failed to load resource management data:', error);
+      setEquipment([]);
+      setMaintenance([]);
+      setSubjectNames([]);
+    }
+  };
+
+  const refreshResources = async () => {
+    const requestId = ++resourceRequest.current;
+    try {
+      const result = await schoolStore.fetchResources({
+        page: currentPage,
+        limit: pageSize,
+        search: searchTerm,
+        subject: selectedSubject,
+        type: selectedType
+      });
+      if (requestId !== resourceRequest.current) return;
+      setResources(Array.isArray(result?.data) ? result.data : []);
+      setTotalResources(result?.total || 0);
+      setResourceCount(result?.resourceCount || 0);
+    } catch (error) {
+      if (requestId !== resourceRequest.current) return;
+      console.error('Failed to load learning resources:', error);
+      setResources([]);
+      setTotalResources(0);
+      setResourceCount(0);
     }
   };
 
@@ -104,6 +128,15 @@ export function AdminResources() {
     refreshData();
     return subscribeSchoolSync(refreshData);
   }, []);
+
+  useEffect(() => {
+    refreshResources();
+    const unsubscribe = subscribeSchoolSync(refreshResources);
+    return () => {
+      resourceRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm, selectedSubject, selectedType, activeTab]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -189,6 +222,7 @@ export function AdminResources() {
     });
     setIsAddResourceOpen(false);
     refreshData();
+    refreshResources();
     showToast('Learning resource uploaded and access permissions saved.');
   };
 
@@ -254,17 +288,8 @@ export function AdminResources() {
     }
     setConfirmDelete(null);
     refreshData();
+    if (confirmDelete.kind === 'resource') refreshResources();
   };
-
-  const filteredResources = resources.filter((r) => {
-    const matchesSearch =
-      r.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.subject?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.fileName?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesSubject = selectedSubject === 'all' || r.subject === selectedSubject;
-    const matchesType = selectedType === 'all' || r.type === selectedType;
-    return matchesSearch && matchesSubject && matchesType;
-  });
 
   const filteredEquipment = equipment.filter(
     (e) =>
@@ -283,15 +308,15 @@ export function AdminResources() {
 
   const activeList =
     activeTab === 'resources'
-      ? filteredResources
+      ? resources
       : activeTab === 'equipment'
       ? filteredEquipment
       : filteredMaintenance;
 
-  const paginatedList = activeList.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
+  const paginatedList =
+    activeTab === 'resources'
+      ? activeList
+      : activeList.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const getTypeIcon = (type) => {
     switch (type) {
@@ -375,7 +400,7 @@ export function AdminResources() {
               Learning Resources
             </p>
             <p className="text-2xl font-bold text-[#1c1c14] mt-1 tabular-nums">
-              {resources.length}
+              {resourceCount}
             </p>
           </div>
           <div className="w-10 h-10 rounded-lg bg-[#faf8f0] border border-[#c9c7b6] flex items-center justify-center text-[#616218]">
@@ -561,7 +586,7 @@ export function AdminResources() {
           </div>
           <Pagination
             currentPage={currentPage}
-            totalItems={filteredResources.length}
+            totalItems={totalResources}
             pageSize={pageSize}
             onPageChange={setCurrentPage}
           />

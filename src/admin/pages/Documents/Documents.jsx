@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FileText,
   FolderOpen,
@@ -35,11 +35,17 @@ export function AdminDocuments() {
   const pageSize = 8;
 
   const [documents, setDocuments] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [categoryCounts, setCategoryCounts] = useState({});
+  const [totalDocuments, setTotalDocuments] = useState(0);
+  const [filteredDocumentCount, setFilteredDocumentCount] = useState(0);
+  const [restrictedCount, setRestrictedCount] = useState(0);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [viewDocModal, setViewDocModal] = useState(null);
   const [editAccessDoc, setEditAccessDoc] = useState(null);
   const [confirmDeleteDoc, setConfirmDeleteDoc] = useState(null);
   const [toast, setToast] = useState(null);
+  const loadRequest = useRef(0);
 
   const [uploadForm, setUploadForm] = useState({
     name: '',
@@ -59,14 +65,43 @@ export function AdminDocuments() {
     allowedClasses: []
   });
 
-  const refreshDocuments = () => {
-    setDocuments(schoolStore.getDocuments());
+  const refreshDocuments = async () => {
+    const requestId = ++loadRequest.current;
+    try {
+      const result = await schoolStore.fetchDocuments({
+        page: currentPage,
+        limit: pageSize,
+        search: searchTerm,
+        category: selectedCategory,
+        access: selectedAccess
+      });
+      if (requestId !== loadRequest.current) return;
+      setDocuments(Array.isArray(result?.data) ? result.data : []);
+      setCategories(Array.isArray(result?.categories) ? result.categories : []);
+      setCategoryCounts(result?.categoryCounts || {});
+      setTotalDocuments(result?.documentCount || 0);
+      setFilteredDocumentCount(result?.total || 0);
+      setRestrictedCount(result?.restrictedCount || 0);
+    } catch (error) {
+      if (requestId !== loadRequest.current) return;
+      console.error('Failed to load documents:', error);
+      setDocuments([]);
+      setCategories([]);
+      setCategoryCounts({});
+      setTotalDocuments(0);
+      setFilteredDocumentCount(0);
+      setRestrictedCount(0);
+    }
   };
 
   useEffect(() => {
     refreshDocuments();
-    return subscribeSchoolSync(refreshDocuments);
-  }, []);
+    const unsubscribe = subscribeSchoolSync(refreshDocuments);
+    return () => {
+      loadRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm, selectedCategory, selectedAccess, activeTab]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -205,23 +240,6 @@ export function AdminDocuments() {
     showToast('Document removed from archive.');
   };
 
-  const categories = Array.from(new Set(documents.map((d) => d.category).filter(Boolean)));
-
-  const filteredDocs = documents.filter((doc) => {
-    const matchesSearch =
-      doc.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      doc.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      doc.fileName?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = selectedCategory === 'all' || doc.category === selectedCategory;
-    const matchesAccess = selectedAccess === 'all' || doc.accessLevel === selectedAccess;
-    return matchesSearch && matchesCategory && matchesAccess;
-  });
-
-  const paginatedDocs = filteredDocs.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
-
   const getAccessBadge = (level) => {
     const meta = ACCESS_META[level] || ACCESS_META.all;
     return (
@@ -269,7 +287,7 @@ export function AdminDocuments() {
               Total Documents
             </p>
             <p className="text-2xl font-bold text-[#1c1c14] mt-1 tabular-nums">
-              {documents.length}
+              {totalDocuments}
             </p>
           </div>
           <div className="w-10 h-10 rounded-lg bg-[#faf8f0] border border-[#c9c7b6] flex items-center justify-center text-[#616218]">
@@ -297,7 +315,7 @@ export function AdminDocuments() {
               Restricted Files
             </p>
             <p className="text-2xl font-bold text-amber-700 mt-1 tabular-nums">
-              {documents.filter((d) => d.accessLevel === 'staff' || d.accessLevel === 'admin').length}
+              {restrictedCount}
             </p>
           </div>
           <div className="w-10 h-10 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700">
@@ -383,8 +401,8 @@ export function AdminDocuments() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#c9c7b6]/50">
-                {paginatedDocs.length > 0 ? (
-                  paginatedDocs.map((doc) => (
+                {documents.length > 0 ? (
+                  documents.map((doc) => (
                     <tr key={doc.id} className="hover:bg-[#faf8f0]/60 transition-colors">
                       <td className="py-3.5 px-4 font-semibold text-[#1c1c14]">{doc.name}</td>
                       <td className="py-3.5 px-4 text-[#44443b]">{doc.category}</td>
@@ -440,7 +458,7 @@ export function AdminDocuments() {
           </div>
           <Pagination
             currentPage={currentPage}
-            totalItems={filteredDocs.length}
+            totalItems={filteredDocumentCount}
             pageSize={pageSize}
             onPageChange={setCurrentPage}
           />
@@ -450,7 +468,7 @@ export function AdminDocuments() {
       {activeTab === 'folders' && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {categories.map((cat) => {
-            const count = documents.filter((d) => d.category === cat).length;
+            const count = categoryCounts[cat] || 0;
             return (
               <div
                 key={cat}
@@ -496,7 +514,7 @@ export function AdminDocuments() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#c9c7b6]/50">
-                {paginatedDocs.map((doc) => (
+                {documents.map((doc) => (
                   <tr key={doc.id} className="hover:bg-[#faf8f0]/60 transition-colors">
                     <td className="py-3.5 px-4 font-semibold text-[#1c1c14]">{doc.name}</td>
                     <td className="py-3.5 px-4 text-[#44443b]">{doc.category}</td>
@@ -525,7 +543,7 @@ export function AdminDocuments() {
           </div>
           <Pagination
             currentPage={currentPage}
-            totalItems={filteredDocs.length}
+            totalItems={filteredDocumentCount}
             pageSize={pageSize}
             onPageChange={setCurrentPage}
           />

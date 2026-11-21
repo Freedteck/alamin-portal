@@ -18,8 +18,10 @@ import {
 
 export function AdminTimetable() {
   const [selectedClass, setSelectedClass] = useState(SCHOOL_CLASSES[0] || 'JSS 1');
-  const [, setRevision] = useState(0);
+  const [classTimetable, setClassTimetable] = useState([]);
   const [teachers, setTeachers] = useState([]);
+  const [classNames, setClassNames] = useState(SCHOOL_CLASSES);
+  const [subjects, setSubjects] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSlot, setEditingSlot] = useState(null);
@@ -40,25 +42,34 @@ export function AdminTimetable() {
 
   const loadData = async () => {
     try {
-      const [tRes, , alRes] = await Promise.all([
+      const [tRes, timetableRes, alRes, subjectsRes, classesRes] = await Promise.all([
         schoolStore.fetchTeachers(),
         schoolStore.fetchTimetable(selectedClass),
-        schoolStore.fetchAlerts()
+        schoolStore.fetchAlerts(),
+        schoolStore.fetchSubjects(),
+        schoolStore.fetchClasses()
       ]);
-      setRevision((n) => n + 1);
+      setClassTimetable(Array.isArray(timetableRes) ? timetableRes : []);
       if (tRes) setTeachers(Array.isArray(tRes) ? tRes : (tRes.data || []));
-      if (alRes) setAlerts(alRes);
-    } catch {
-      setRevision((n) => n + 1);
-      setTeachers(schoolStore.getTeachers());
-      setAlerts(schoolStore.getAlertsForUser('admin'));
+      setAlerts(Array.isArray(alRes) ? alRes : []);
+      setSubjects(Array.isArray(subjectsRes) ? subjectsRes : []);
+      if (Array.isArray(classesRes)) setClassNames(classesRes.map((item) => item.name || item));
+    } catch (error) {
+      console.error('Failed to load timetable data:', error);
+      setClassTimetable([]);
+      setTeachers([]);
+      setAlerts([]);
+      setSubjects([]);
     }
   };
 
   useEffect(() => {
     loadData();
     const unsubscribe = subscribeSchoolSync((topic) => {
-      if (topic === 'timetable' || topic === 'alerts' || topic === 'teachers' || !topic) {
+      if (
+        topic === 'timetable' || topic === 'alerts' || topic === 'teachers' ||
+        topic === 'classes' || topic === 'subjects' || !topic
+      ) {
         loadData();
       }
     });
@@ -70,11 +81,9 @@ export function AdminTimetable() {
     setTimeout(() => setToast(''), 3200);
   };
 
-  const classTimetable = schoolStore.getTimetableForClass(selectedClass);
-
   const openAddModal = (preset = {}) => {
-    const targetClass = selectedClass === 'All Classes' ? (SCHOOL_CLASSES[0] || 'JSS 1') : selectedClass;
-    const classSubjects = schoolStore.getSubjectsForClass(targetClass);
+    const targetClass = selectedClass === 'All Classes' ? (classNames[0] || 'JSS 1') : selectedClass;
+    const classSubjects = getSubjectsForClass(targetClass);
     setEditingSlot(null);
     setFormState({
       class: selectedClass,
@@ -150,20 +159,36 @@ export function AdminTimetable() {
     setEditingSlot(null);
   };
 
-  const handleDeleteSlot = () => {
+  const handleDeleteSlot = async () => {
     if (!confirmDelete) return;
-    schoolStore.deleteTimetableSlot(confirmDelete.id);
-    loadData();
-    setConfirmDelete(null);
-    showToast('Removed period from weekly time table.');
+    try {
+      await schoolStore.deleteTimetableSlot(confirmDelete.id);
+      await loadData();
+      setConfirmDelete(null);
+      showToast('Removed period from weekly time table.');
+    } catch (error) {
+      console.error('Failed to delete timetable slot:', error);
+      showToast('Unable to remove period from weekly timetable.');
+    }
   };
 
-  const handleDismissAlert = (id) => {
-    schoolStore.dismissAlert(id);
-    loadData();
+  const handleDismissAlert = async (id) => {
+    try {
+      await schoolStore.dismissAlert(id);
+      await loadData();
+    } catch (error) {
+      console.error('Failed to dismiss timetable alert:', error);
+      showToast('Unable to dismiss timetable alert.');
+    }
   };
 
-  const availableSubjects = schoolStore.getSubjectsForClass(
+  const getSubjectsForClass = (className) =>
+    subjects
+      .filter((subject) =>
+        !className || subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(className))
+      )
+      .map((subject) => subject.name);
+  const availableSubjects = getSubjectsForClass(
     formState.class === 'All Classes' ? '' : formState.class
   );
 
@@ -222,7 +247,7 @@ export function AdminTimetable() {
       <div className="rounded-lg border border-[#c9c7b6] bg-white p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold text-[#797869] mr-1">Class View:</span>
-          {[...SCHOOL_CLASSES, 'All Classes'].map((cls) => (
+          {[...classNames, 'All Classes'].map((cls) => (
             <button
               key={cls}
               type="button"
@@ -289,7 +314,7 @@ export function AdminTimetable() {
                 value={formState.class}
                 onChange={(e) => {
                   const nextCls = e.target.value;
-                  const subs = schoolStore.getSubjectsForClass(nextCls === 'All Classes' ? '' : nextCls);
+                  const subs = getSubjectsForClass(nextCls === 'All Classes' ? '' : nextCls);
                   setFormState({
                     ...formState,
                     class: nextCls,
@@ -298,7 +323,7 @@ export function AdminTimetable() {
                 }}
                 className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218]"
               >
-                {SCHOOL_CLASSES.map((cls) => (
+                {classNames.map((cls) => (
                   <option key={cls} value={cls}>
                     {cls}
                   </option>

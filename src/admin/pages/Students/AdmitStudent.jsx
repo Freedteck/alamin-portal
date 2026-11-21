@@ -34,13 +34,46 @@ export function AdmitStudent() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [admittedStudent, setAdmittedStudent] = useState(null);
   const [syncTick, setSyncTick] = useState(0);
+  const [subjects, setSubjects] = useState([]);
+  const [schoolClasses, setSchoolClasses] = useState(SCHOOL_CLASSES);
   const [showPortalPassword, setShowPortalPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [copiedField, setCopiedField] = useState('');
 
   useEffect(() => {
-    return subscribeSchoolSync(() => setSyncTick((t) => t + 1));
+    const loadSubjects = async () => {
+      try {
+        const [result, classes] = await Promise.all([
+          schoolStore.fetchSubjects(),
+          schoolStore.fetchClasses()
+        ]);
+        const subjectList = Array.isArray(result) ? result : [];
+        setSubjects(subjectList);
+        if (Array.isArray(classes)) setSchoolClasses(classes.map((item) => item.name || item));
+        const initialSubjects = subjectList
+          .filter((subject) =>
+            subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes('JSS 1'))
+          )
+          .map((subject) => subject.name);
+        setFormData((previous) => ({
+          ...previous,
+          enrolledSubjects: previous.enrolledSubjects.length > 0
+            ? previous.enrolledSubjects
+            : initialSubjects
+        }));
+      } catch (error) {
+        console.error('Failed to load curriculum subjects:', error);
+        setSubjects([]);
+      }
+    };
+    loadSubjects();
+    return subscribeSchoolSync((topic) => {
+      if (topic === 'subjects' || topic === 'classes' || !topic) {
+        setSyncTick((tick) => tick + 1);
+        loadSubjects();
+      }
+    });
   }, []);
 
   const [formData, setFormData] = useState({
@@ -62,7 +95,7 @@ export function AdmitStudent() {
     department: '',
     session: '2026/2027',
     entryTerm: 'First Term',
-    enrolledSubjects: schoolStore.getSubjectsForClass('JSS 1', ''),
+    enrolledSubjects: [],
     portalEmail: '',
     portalPassword: '',
 
@@ -93,8 +126,16 @@ export function AdmitStudent() {
   };
 
   const eligibleSubjects = useMemo(
-    () => schoolStore.getSubjectsForClass(formData.class, formData.department),
-    [formData.class, formData.department, syncTick]
+    () => subjects
+      .filter((subject) =>
+        subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(formData.class))
+      )
+      .filter((subject) =>
+        !formData.department || subject.allDepartments || !Array.isArray(subject.departments) ||
+        subject.departments.includes(formData.department)
+      )
+      .map((subject) => subject.name),
+    [subjects, formData.class, formData.department, syncTick]
   );
 
   const allEligibleSelected =
@@ -111,7 +152,15 @@ export function AdmitStudent() {
   const handleClassChange = (nextClass) => {
     const senior = isSeniorClass(nextClass);
     const nextDepartment = senior ? (formData.department || SSS_DEPARTMENTS[0]) : '';
-    const nextEligible = schoolStore.getSubjectsForClass(nextClass, nextDepartment);
+    const nextEligible = subjects
+      .filter((subject) =>
+        subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(nextClass))
+      )
+      .filter((subject) =>
+        !nextDepartment || subject.allDepartments || !Array.isArray(subject.departments) ||
+        subject.departments.includes(nextDepartment)
+      )
+      .map((subject) => subject.name);
     setFormData((prev) => {
       const kept = prev.enrolledSubjects.filter((s) => nextEligible.includes(s));
       return {
@@ -124,7 +173,15 @@ export function AdmitStudent() {
   };
 
   const handleDepartmentChange = (nextDept) => {
-    const nextEligible = schoolStore.getSubjectsForClass(formData.class, nextDept);
+    const nextEligible = subjects
+      .filter((subject) =>
+        subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(formData.class))
+      )
+      .filter((subject) =>
+        !nextDept || subject.allDepartments || !Array.isArray(subject.departments) ||
+        subject.departments.includes(nextDept)
+      )
+      .map((subject) => subject.name);
     setFormData((prev) => {
       const kept = prev.enrolledSubjects.filter((s) => nextEligible.includes(s));
       return {
@@ -773,7 +830,7 @@ export function AdmitStudent() {
                     onChange={(e) => handleClassChange(e.target.value)}
                     className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white font-semibold text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                   >
-                    {SCHOOL_CLASSES.map((cls) => (
+                    {schoolClasses.map((cls) => (
                       <option key={cls} value={cls}>
                         {cls}
                       </option>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   FileText,
@@ -18,52 +18,64 @@ import { uploadSchoolFile, downloadSchoolFile } from '../../../shared/lib/storag
 
 export function StudentAssignments() {
   const [assignments, setAssignments] = useState([]);
+  const [subjects, setSubjects] = useState([]);
+  const [totalAssignments, setTotalAssignments] = useState(0);
   const [activeStudent, setActiveStudent] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterSubject, setFilterSubject] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 6;
+  const loadRequest = useRef(0);
 
   const [submitModal, setSubmitModal] = useState(null);
   const [submitForm, setSubmitForm] = useState({ notes: '', fileName: '', fileObj: null });
   const [toast, setToast] = useState(null);
 
   const loadData = async () => {
+    const requestId = ++loadRequest.current;
     try {
-      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-      const [sRes, aRes] = await Promise.all([
-        schoolStore.fetchStudents(),
-        schoolStore.fetchAssignments()
-      ]);
-      const students = Array.isArray(sRes) ? sRes : (sRes?.data || []);
-      const matched =
-        students.find(
-          (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
-        ) || students[0];
-      setActiveStudent(matched);
-      const allAsg = Array.isArray(aRes) ? aRes : [];
-      const studentSubjects = matched?.enrolledSubjects || schoolStore.getSubjectsForClass(matched?.class);
-      const relevant = allAsg.filter(
-        (a) =>
-          (!matched?.class || a.class === 'All Classes' || a.class === matched.class) &&
-          (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
-      );
-      setAssignments(relevant);
-    } catch {
-      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-      const students = schoolStore.getStudents();
-      const matched =
-        students.find(
-          (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
-        ) || students[0];
-      setActiveStudent(matched);
-      setAssignments(schoolStore.getAssignments());
+      const aRes = await schoolStore.fetchAssignments({
+        page: currentPage,
+        limit: pageSize,
+        search: searchTerm,
+        subject: filterSubject
+      });
+      if (requestId !== loadRequest.current) return;
+      setAssignments(Array.isArray(aRes?.data) ? aRes.data : []);
+      setSubjects(Array.isArray(aRes?.subjects) ? aRes.subjects : []);
+      setTotalAssignments(aRes?.total || 0);
+    } catch (error) {
+      if (requestId !== loadRequest.current) return;
+      console.error('Failed to load student assignments:', error);
+      setAssignments([]);
+      setSubjects([]);
+      setTotalAssignments(0);
     }
   };
 
   useEffect(() => {
     loadData();
-    return subscribeSchoolSync(loadData);
+    const unsubscribe = subscribeSchoolSync(loadData);
+    return () => {
+      loadRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm, filterSubject]);
+
+  useEffect(() => {
+    let active = true;
+    schoolStore.fetchCurrentStudent()
+      .then((student) => {
+        if (active) setActiveStudent(student);
+      })
+      .catch((error) => {
+        if (!active) return;
+        console.error('Failed to load current student:', error);
+        setActiveStudent(null);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -113,18 +125,6 @@ export function StudentAssignments() {
     loadData();
     showToast('Assignment submitted successfully.');
   };
-
-  const subjects = Array.from(new Set(assignments.map((a) => a.subject).filter(Boolean)));
-
-  const filtered = assignments.filter((a) => {
-    const matchSearch =
-      a.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      a.subject?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchSub = filterSubject === 'all' || a.subject === filterSubject;
-    return matchSearch && matchSub;
-  });
-
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-16">
@@ -181,8 +181,8 @@ export function StudentAssignments() {
 
       {/* Assignment Cards */}
       <div className="space-y-4">
-        {paginated.length > 0 ? (
-          paginated.map((asg) => {
+        {assignments.length > 0 ? (
+          assignments.map((asg) => {
             const mySub = asg.submissions?.find((s) => s.studentId === activeStudent?.id);
             const worksheet = asg.attachmentName || asg.attachments?.[0] || null;
             return (
@@ -278,7 +278,7 @@ export function StudentAssignments() {
 
       <Pagination
         currentPage={currentPage}
-        totalItems={filtered.length}
+        totalItems={totalAssignments}
         pageSize={pageSize}
         onPageChange={setCurrentPage}
       />

@@ -143,57 +143,11 @@ export function Settings() {
   const loadRolloverData = async () => {
     setIsLoadingRollover(true);
     try {
-      const cls = schoolStore.getClasses();
-      setClassesList(cls);
-
-      let candidates = [];
-      try {
-        const res = await schoolStore.getPromotionCandidates();
-        if (Array.isArray(res) && res.length > 0) candidates = res;
-      } catch {}
-
-      if (!candidates || candidates.length === 0) {
-        const students = schoolStore.getStudents() || [];
-        const grades = schoolStore.getGrades() || {};
-        candidates = students.map((student) => {
-          const studentGrades = grades[student.id] || {};
-          const scores = Object.values(studentGrades).map(
-            (g) => Number(g.total) || 0,
-          );
-          const avg =
-            scores.length > 0
-              ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
-              : 0;
-          let nextCls = student.class;
-          let action = "promote";
-          if (student.class === "JSS 1") nextCls = "JSS 2";
-          else if (student.class === "JSS 2") nextCls = "JSS 3";
-          else if (student.class === "JSS 3") nextCls = "SSS 1";
-          else if (student.class === "SSS 1") nextCls = "SSS 2";
-          else if (student.class === "SSS 2") nextCls = "SSS 3";
-          else if (student.class === "SSS 3") {
-            nextCls = "Graduated";
-            action = "graduate";
-          }
-          if (
-            action !== "graduate" &&
-            avg < passThreshold &&
-            scores.length > 0
-          ) {
-            action = "repeat";
-          }
-          return {
-            id: student.id,
-            name: student.name,
-            admissionNumber: student.admissionNumber,
-            currentClass: student.class,
-            department: student.department || "",
-            averageScore: avg,
-            suggestedClass: nextCls,
-            suggestedAction: action,
-          };
-        });
-      }
+      const [classes, candidates] = await Promise.all([
+        schoolStore.fetchClasses(),
+        schoolStore.getPromotionCandidates()
+      ]);
+      setClassesList(classes.map((item) => item.name || item));
 
       setRolloverCandidates(candidates);
       const initialMap = {};
@@ -207,8 +161,9 @@ export function Settings() {
         };
       });
       setPromotionsMap(initialMap);
-    } catch {
-      showToast("Error loading session rollover candidates.");
+    } catch (error) {
+      console.error('Failed to load session rollover data:', error);
+      showToast(error?.message || "Error loading session rollover candidates.");
     } finally {
       setIsLoadingRollover(false);
     }
@@ -369,30 +324,44 @@ export function Settings() {
     }
   };
 
-  const handleExportArchive = () => {
-    const snapshot = {
-      exportedAt: new Date().toISOString(),
-      institution: { institutionName, officialEmail, registrationNumber },
-      students: schoolStore.getStudents(),
-      teachers: schoolStore.getTeachers(),
-      subjects: schoolStore.getSubjects(),
-      attendance: schoolStore.getAttendance(),
-      grades: schoolStore.getGrades(),
-      assignments: schoolStore.getAssignments(),
-      announcements: schoolStore.getAnnouncements(),
-    };
-    const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `alamin-school-backup-${new Date().toISOString().split("T")[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast("Institution data export downloaded as JSON archive.");
+  const handleExportArchive = async () => {
+    try {
+      const [students, teachers, subjects, attendance, grades, assignments, announcements] = await Promise.all([
+        apiClient.get('/students'),
+        apiClient.get('/teachers'),
+        apiClient.get('/subjects'),
+        apiClient.get('/attendance'),
+        apiClient.get('/grades'),
+        apiClient.get('/assignments'),
+        apiClient.get('/announcements')
+      ]);
+      const snapshot = {
+        exportedAt: new Date().toISOString(),
+        institution: { institutionName, officialEmail, registrationNumber },
+        students,
+        teachers,
+        subjects,
+        attendance,
+        grades,
+        assignments,
+        announcements
+      };
+      const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `alamin-school-backup-${new Date().toISOString().split("T")[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("Institution data export downloaded as JSON archive.");
+    } catch (error) {
+      console.error('Failed to export institution data:', error);
+      showToast(error?.message || "Unable to export institution data.");
+    }
   };
 
   const toggleIntegration = (key, label) => {

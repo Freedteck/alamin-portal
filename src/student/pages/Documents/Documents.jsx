@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FileText,
   Download,
@@ -15,30 +15,53 @@ import { downloadSchoolFile } from '../../../shared/lib/storageService';
 
 export function StudentDocuments() {
   const [documents, setDocuments] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [totalDocuments, setTotalDocuments] = useState(0);
   const [activeStudent, setActiveStudent] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 8;
+  const loadRequest = useRef(0);
 
   const [viewDoc, setViewDoc] = useState(null);
   const [toast, setToast] = useState(null);
 
-  const loadDocuments = () => {
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const students = schoolStore.getStudents();
-    const matched =
-      students.find(
-        (s) => s.email === saved.email || s.id === saved.id || s.name === saved.name
-      ) || students[0];
-    setActiveStudent(matched);
-    setDocuments(schoolStore.getDocumentsForUser('student', matched?.class || ''));
+  const loadDocuments = async () => {
+    const requestId = ++loadRequest.current;
+    try {
+      const [student, result] = await Promise.all([
+        schoolStore.fetchCurrentStudent(),
+        schoolStore.fetchDocuments({
+          page: currentPage,
+          limit: pageSize,
+          search: searchTerm,
+          category: selectedCategory
+        })
+      ]);
+      if (requestId !== loadRequest.current) return;
+      setActiveStudent(student);
+      setDocuments(Array.isArray(result?.data) ? result.data : []);
+      setCategories(Array.isArray(result?.categories) ? result.categories : []);
+      setTotalDocuments(result?.total || 0);
+    } catch (error) {
+      if (requestId !== loadRequest.current) return;
+      console.error('Failed to load student documents:', error);
+      setActiveStudent(null);
+      setDocuments([]);
+      setCategories([]);
+      setTotalDocuments(0);
+    }
   };
 
   useEffect(() => {
     loadDocuments();
-    return subscribeSchoolSync(loadDocuments);
-  }, []);
+    const unsubscribe = subscribeSchoolSync(loadDocuments);
+    return () => {
+      loadRequest.current += 1;
+      unsubscribe();
+    };
+  }, [currentPage, searchTerm, selectedCategory]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -48,19 +71,6 @@ export function StudentDocuments() {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
-
-  const categories = Array.from(new Set(documents.map((d) => d.category).filter(Boolean)));
-
-  const filtered = documents.filter((doc) => {
-    const matchSearch =
-      doc.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      doc.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      doc.fileName?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchCategory = selectedCategory === 'all' || doc.category === selectedCategory;
-    return matchSearch && matchCategory;
-  });
-
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-16">
@@ -121,8 +131,8 @@ export function StudentDocuments() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c9c7b6]/50">
-              {paginated.length > 0 ? (
-                paginated.map((doc) => (
+              {documents.length > 0 ? (
+                documents.map((doc) => (
                   <tr key={doc.id} className="hover:bg-[#faf8f0]/60 transition-colors">
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-2">
@@ -169,7 +179,7 @@ export function StudentDocuments() {
         </div>
         <Pagination
           currentPage={currentPage}
-          totalItems={filtered.length}
+          totalItems={totalDocuments}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
         />

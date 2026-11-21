@@ -40,13 +40,14 @@ export function Dashboard() {
         setAttendanceMap(attendanceRes || {});
         setAnnouncements(announcementsRes || []);
         setAssignments(assignmentsRes || []);
-      } catch {
+      } catch (error) {
+        console.error('Failed to load admin dashboard:', error);
         if (!active) return;
-        setStudents(schoolStore.getStudents());
-        setTeachers(schoolStore.getTeachers());
-        setAttendanceMap(schoolStore.getAttendance());
-        setAnnouncements(schoolStore.getAnnouncements());
-        setAssignments(schoolStore.getAssignments());
+        setStudents([]);
+        setTeachers([]);
+        setAttendanceMap({});
+        setAnnouncements([]);
+        setAssignments([]);
       }
     };
     sync();

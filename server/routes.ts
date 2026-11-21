@@ -22,6 +22,32 @@ const upload = multer({
 const paramStr = (val: string | string[] | undefined): string =>
   Array.isArray(val) ? String(val[0] || '') : String(val || '');
 
+const paginateList = <T,>(items: T[], req: Request, extra: Record<string, unknown> = {}) => {
+  const query = req.query as Record<string, string | undefined>;
+  if (!query.page && !query.limit) return items;
+
+  const requestedPage = Number(query.page);
+  const requestedLimit = Number(query.limit);
+  const limit = Number.isInteger(requestedLimit) && requestedLimit > 0
+    ? Math.min(requestedLimit, 100)
+    : 20;
+  const total = items.length;
+  const totalPages = Math.ceil(total / limit);
+  const page = Math.min(
+    Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1,
+    Math.max(totalPages, 1)
+  );
+
+  return {
+    data: items.slice((page - 1) * limit, page * limit),
+    total,
+    page,
+    limit,
+    totalPages,
+    ...extra
+  };
+};
+
 /* ── System & Health ─────────────────────────────────────────────────────── */
 
 router.get('/', (_req: Request, res: Response) => {
@@ -245,27 +271,39 @@ router.delete('/classes/:id', requireAuth, requireRole('admin'), (req: Request, 
 /* ── Subjects ────────────────────────────────────────────────────────────── */
 
 router.get('/subjects', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  const all = backendStore.getSubjects();
+  let subjects = backendStore.getSubjects();
   if (req.user?.role === 'student') {
     const student = backendStore.getStudentById(req.user.studentId || '');
     const enrolled = student?.enrolledSubjects || [];
     if (enrolled.length > 0) {
-      return res.json(all.filter((s: any) => enrolled.includes(s.name)));
+      subjects = subjects.filter((s: any) => enrolled.includes(s.name));
+    } else {
+      const studentClass = student?.class || '';
+      subjects = subjects.filter(
+        (s: any) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass))
+      );
     }
-    const studentClass = student?.class || '';
-    return res.json(
-      all.filter((s: any) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass)))
-    );
-  }
-  if (req.user?.role === 'teacher') {
+  } else if (req.user?.role === 'teacher') {
     const teacher = backendStore.getTeacherById(req.user.teacherId || '');
     const assigned = teacher?.assignedClasses || [];
     const assignedSubjects = Array.from(new Set(assigned.map((a: any) => a.subject).filter(Boolean)));
     if (assignedSubjects.length > 0) {
-      return res.json(all.filter((s: any) => assignedSubjects.includes(s.name)));
+      subjects = subjects.filter((s: any) => assignedSubjects.includes(s.name));
     }
   }
-  res.json(all);
+
+  const { class: className, department } = req.query as Record<string, string | undefined>;
+  if (className) {
+    subjects = subjects.filter((subject: any) =>
+      subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(className))
+    );
+  }
+  if (department) {
+    subjects = subjects.filter((subject: any) =>
+      subject.allDepartments || !Array.isArray(subject.departments) || subject.departments.includes(department)
+    );
+  }
+  res.json(subjects);
 });
 
 router.post('/subjects', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
@@ -391,6 +429,15 @@ router.get('/teachers', requireAuth, (req: Request, res: Response) => {
     limit: limit ? Number(limit) : undefined
   });
   res.json(result);
+});
+
+router.get('/teachers/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  if (req.user?.role !== 'teacher') {
+    return res.status(403).json({ error: 'Only teachers can access their teacher profile.' });
+  }
+  const teacher = backendStore.getTeacherByEmailOrId(req.user.email, req.user.teacherId);
+  if (!teacher) return res.status(404).json({ error: 'Teacher profile not found.' });
+  res.json(teacher);
 });
 
 router.get('/teachers/:id', requireAuth, (req: Request, res: Response) => {
@@ -550,8 +597,12 @@ router.post('/timetable/reschedule', requireAuth, requireRole('admin', 'teacher'
   res.json(result);
 });
 
-router.get('/alerts', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getAlerts());
+router.get('/alerts', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const role = req.user?.role;
+  const alerts = backendStore.getAlerts().filter((alert: any) =>
+    !alert.targetRole || alert.targetRole === 'all' || alert.targetRole === role
+  );
+  res.json(alerts);
 });
 
 router.delete('/alerts/:id', requireAuth, (req: Request, res: Response) => {
@@ -563,8 +614,20 @@ router.delete('/alerts/:id', requireAuth, (req: Request, res: Response) => {
 
 /* ── Attendance ──────────────────────────────────────────────────────────── */
 
-router.get('/attendance', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getAttendance());
+router.get('/attendance', requireAuth, (req: Request, res: Response) => {
+  const { date, class: className } = req.query as Record<string, string | undefined>;
+  const attendance = backendStore.getAttendance();
+  const filteredAttendance = Object.fromEntries(
+    Object.entries(attendance).filter(([, entry]: [string, any]) =>
+      (!date && !className) ||
+      Boolean(
+        entry &&
+        (!date || entry.date === date) &&
+        (!className || (entry.className || entry.class) === className)
+      )
+    )
+  );
+  res.json(filteredAttendance);
 });
 
 router.post('/attendance', requireAuth, requireRole('admin', 'teacher'), (req: AuthenticatedRequest, res: Response) => {
@@ -640,36 +703,55 @@ router.get('/reports/:studentId', requireAuth, (req: AuthenticatedRequest, res: 
 
 router.get('/resources', requireAuth, (req: AuthenticatedRequest, res: Response) => {
   const all = backendStore.getResources();
+  let resources = all;
   if (req.user?.role === 'student') {
     const student = backendStore.getStudentById(req.user.studentId || '');
     const studentClass = student?.class || '';
     const studentSubjects = student?.enrolledSubjects || [];
-    return res.json(
-      all.filter(
-        (r: any) =>
-          r.accessLevel === 'students' &&
-          (r.allClasses || (r.classes && r.classes.includes(studentClass))) &&
-          (!r.subject || r.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(r.subject))
-      )
+    resources = all.filter(
+      (r: any) =>
+        r.accessLevel === 'students' &&
+        (r.allClasses || (r.classes && r.classes.includes(studentClass))) &&
+        (!r.subject || r.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(r.subject))
     );
-  }
-  if (req.user?.role === 'teacher') {
+  } else if (req.user?.role === 'teacher') {
     const teacher = backendStore.getTeacherById(req.user.teacherId || '');
     const teacherSubjects = (teacher?.assignedClasses || []).map((ac: any) => ac.subject);
     const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
     if (teacherSubjects.length > 0) {
-      return res.json(
-        all.filter(
-          (r: any) =>
-            r.uploadedBy === teacher?.name ||
-            teacherSubjects.includes(r.subject) ||
-            r.allClasses ||
-            (r.classes && r.classes.some((c: string) => teacherClasses.includes(c)))
-        )
+      resources = all.filter(
+        (r: any) =>
+          r.uploadedBy === teacher?.name ||
+          teacherSubjects.includes(r.subject) ||
+          r.allClasses ||
+          (r.classes && r.classes.some((c: string) => teacherClasses.includes(c)))
       );
     }
   }
-  res.json(all);
+
+  const query = req.query as Record<string, string | undefined>;
+  const search = (query.search || '').trim().toLowerCase();
+  const subjects = [...new Set(resources.map((resource: any) => resource.subject).filter(Boolean))];
+  const resourceCount = resources.length;
+  if (search) {
+    resources = resources.filter((resource: any) =>
+      `${resource.title || ''} ${resource.subject || ''} ${resource.fileName || ''}`.toLowerCase().includes(search)
+    );
+  }
+  if (query.subject && query.subject !== 'all') {
+    resources = resources.filter((resource: any) => resource.subject === query.subject);
+  }
+  if (query.type && query.type !== 'all') {
+    resources = resources.filter((resource: any) => resource.type === query.type);
+  }
+  if (query.class && query.class !== 'all') {
+    resources = resources.filter((resource: any) =>
+      resource.allClasses || (resource.classes || ['All Classes']).includes('All Classes') ||
+      (resource.classes || []).includes(query.class)
+    );
+  }
+
+  res.json(paginateList(resources, req, { subjects, resourceCount }));
 });
 
 router.post('/resources', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
@@ -731,8 +813,38 @@ router.patch('/maintenance/:id', requireAuth, requireRole('admin', 'teacher'), (
 
 /* ── Documents ───────────────────────────────────────────────────────────── */
 
-router.get('/documents', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getDocuments());
+router.get('/documents', requireAuth, (req: Request, res: Response) => {
+  const documents = backendStore.getDocuments();
+  const categories = [...new Set(documents.map((document: any) => document.category).filter(Boolean))];
+  const categoryCounts = documents.reduce((counts: Record<string, number>, document: any) => {
+    if (document.category) counts[document.category] = (counts[document.category] || 0) + 1;
+    return counts;
+  }, {});
+  const restrictedCount = documents.filter(
+    (document: any) => document.accessLevel === 'staff' || document.accessLevel === 'admin'
+  ).length;
+  const query = req.query as Record<string, string | undefined>;
+  const search = (query.search || '').trim().toLowerCase();
+  let filteredDocuments = documents;
+
+  if (search) {
+    filteredDocuments = filteredDocuments.filter((document: any) =>
+      `${document.name || ''} ${document.category || ''} ${document.fileName || ''}`.toLowerCase().includes(search)
+    );
+  }
+  if (query.category && query.category !== 'all') {
+    filteredDocuments = filteredDocuments.filter((document: any) => document.category === query.category);
+  }
+  if (query.access && query.access !== 'all') {
+    filteredDocuments = filteredDocuments.filter((document: any) => document.accessLevel === query.access);
+  }
+
+  res.json(paginateList(filteredDocuments, req, {
+    categories,
+    categoryCounts,
+    documentCount: documents.length,
+    restrictedCount
+  }));
 });
 
 router.post('/documents', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
@@ -763,8 +875,43 @@ router.delete('/documents/:id', requireAuth, requireRole('admin', 'teacher'), (r
 
 /* ── Announcements ───────────────────────────────────────────────────────── */
 
-router.get('/announcements', requireAuth, (_req: Request, res: Response) => {
-  res.json(backendStore.getAnnouncements());
+router.get('/announcements', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const query = req.query as Record<string, string | undefined>;
+  const search = (query.search || '').trim().toLowerCase();
+  const type = query.type || '';
+  const audience = query.audience || '';
+  const scope = query.scope || '';
+
+  let announcements = backendStore.getAnnouncements().filter((announcement: any) => {
+    if (req.user?.role === 'student' &&
+      announcement.targetRole && announcement.targetRole !== 'all' && announcement.targetRole !== 'student') {
+      return false;
+    }
+    if (req.user?.role === 'teacher' &&
+      announcement.targetRole !== 'all' && announcement.targetRole !== 'teacher') {
+      return false;
+    }
+    if (search && !`${announcement.title || ''} ${announcement.content || ''}`.toLowerCase().includes(search)) {
+      return false;
+    }
+    if (type && type !== 'all' && announcement.type !== type) return false;
+    if (audience && audience !== 'all') {
+      const targets = announcement.targetAudiences || announcement.targetAudience || ['Everyone'];
+      if (!Array.isArray(targets) || (!targets.includes(audience) && !targets.includes('Everyone'))) {
+        return false;
+      }
+    }
+    if (scope === 'admin' && announcement.authorRole === 'Teaching Staff') return false;
+    if (scope === 'mine' && announcement.authorRole !== 'Teaching Staff') return false;
+    return true;
+  });
+
+  if (query.page || query.limit) {
+    announcements = [...announcements].sort(
+      (a: any, b: any) => Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned))
+    );
+  }
+  res.json(paginateList(announcements, req));
 });
 
 router.post('/announcements', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {
@@ -815,34 +962,46 @@ router.delete('/availability/:id', requireAuth, requireRole('admin', 'teacher'),
 
 router.get('/assignments', requireAuth, (req: AuthenticatedRequest, res: Response) => {
   const all = backendStore.getAssignments();
+  let assignments = all;
   if (req.user?.role === 'student') {
     const student = backendStore.getStudentById(req.user.studentId || '');
     const studentClass = student?.class || '';
     const studentSubjects = student?.enrolledSubjects || [];
-    return res.json(
-      all.filter(
-        (a: any) =>
-          (!studentClass || a.class === 'All Classes' || a.class === studentClass) &&
-          (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
-      )
+    assignments = all.filter(
+      (a: any) =>
+        (!studentClass || a.class === 'All Classes' || a.class === studentClass) &&
+        (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
     );
-  }
-  if (req.user?.role === 'teacher') {
+  } else if (req.user?.role === 'teacher') {
     const teacher = backendStore.getTeacherById(req.user.teacherId || '');
     const teacherSubjects = (teacher?.assignedClasses || []).map((ac: any) => ac.subject);
     const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
     if (teacherClasses.length > 0 || teacherSubjects.length > 0) {
-      return res.json(
-        all.filter(
-          (a: any) =>
-            a.author === teacher?.name ||
-            teacherClasses.includes(a.class) ||
-            teacherSubjects.includes(a.subject)
-        )
+      assignments = all.filter(
+        (a: any) =>
+          a.author === teacher?.name ||
+          teacherClasses.includes(a.class) ||
+          teacherSubjects.includes(a.subject)
       );
     }
   }
-  res.json(all);
+
+  const query = req.query as Record<string, string | undefined>;
+  const search = (query.search || '').trim().toLowerCase();
+  const subjects = [...new Set(assignments.map((assignment: any) => assignment.subject).filter(Boolean))];
+  if (search) {
+    assignments = assignments.filter((assignment: any) =>
+      `${assignment.title || ''} ${assignment.subject || ''}`.toLowerCase().includes(search)
+    );
+  }
+  if (query.class && query.class !== 'all') {
+    assignments = assignments.filter((assignment: any) => assignment.class === query.class);
+  }
+  if (query.subject && query.subject !== 'all') {
+    assignments = assignments.filter((assignment: any) => assignment.subject === query.subject);
+  }
+
+  res.json(paginateList(assignments, req, { subjects }));
 });
 
 router.post('/assignments', requireAuth, requireRole('admin', 'teacher'), (req: Request, res: Response) => {

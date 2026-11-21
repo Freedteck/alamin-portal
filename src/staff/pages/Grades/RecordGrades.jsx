@@ -31,32 +31,32 @@ export function RecordGrades() {
   }, []);
 
   useEffect(() => {
-    const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-    const allTeachers = schoolStore.getTeachers();
-    const teacher =
-      allTeachers.find(
-        (t) =>
-          (saved.email && t.email?.toLowerCase() === saved.email.toLowerCase()) ||
-          (saved.name && t.name?.toLowerCase() === saved.name.toLowerCase())
-      ) ||
-      allTeachers[0] ||
-      null;
-
-    setCurrentTeacher(teacher);
-    if (teacher && teacher.assignedClasses?.length > 0) {
-      setSelectedClass(teacher.assignedClasses[0].class);
-      setSelectedSubject(teacher.assignedClasses[0].subject);
-    } else {
-      const cls = schoolStore.getClasses();
-      const firstClass = cls[0] || 'JSS 1';
-      setSelectedClass(firstClass);
-      const subs = schoolStore.getSubjectsForClass(firstClass);
-      setSelectedSubject(subs[0] || 'Mathematics');
-    }
+    let active = true;
+    schoolStore.fetchCurrentTeacher().then((teacher) => {
+      if (!active) return;
+      setCurrentTeacher(teacher);
+      const firstAssignment = teacher?.assignedClasses?.[0];
+      setSelectedClass(firstAssignment?.class || SCHOOL_CLASSES[0] || 'JSS 1');
+      setSelectedSubject(firstAssignment?.subject || 'Mathematics');
+    }).catch((error) => {
+      console.error('Failed to load current teacher:', error);
+      if (active) {
+        setCurrentTeacher(null);
+        setSelectedClass(SCHOOL_CLASSES[0] || 'JSS 1');
+      }
+    });
+    return () => { active = false; };
   }, [syncTick]);
 
-  const teacherClasses = schoolStore.getClassesForTeacher(currentTeacher);
-  const teacherSubjects = schoolStore.getSubjectsForClassForTeacher(selectedClass, currentTeacher);
+  const teacherClasses = currentTeacher?.assignedClasses?.length
+    ? [...new Set(currentTeacher.assignedClasses.map((assignment) => assignment.class))]
+    : SCHOOL_CLASSES;
+  const teacherSubjects = [...new Set(
+    (currentTeacher?.assignedClasses || [])
+      .filter((assignment) => assignment.class === selectedClass)
+      .map((assignment) => assignment.subject)
+      .filter(Boolean)
+  )];
 
   useEffect(() => {
     if (teacherClasses.length > 0 && !teacherClasses.includes(selectedClass)) {
@@ -78,7 +78,7 @@ export function RecordGrades() {
     let active = true;
     const loadClassGrades = async () => {
       try {
-        const [stuRes] = await Promise.all([
+        const [stuRes, gradesRes] = await Promise.all([
           schoolStore.fetchStudents({ class: selectedClass, subject: selectedSubject }),
           schoolStore.fetchGrades()
         ]);
@@ -88,7 +88,10 @@ export function RecordGrades() {
 
         const existing = {};
         allStudents.forEach((student) => {
-          const record = schoolStore.getStudentSubjectGrade(student.id, selectedTerm, selectedSubject, selectedSession);
+          const sessionKey = `${student.id}_${selectedSession}_${selectedTerm}_${selectedSubject}`;
+          const legacyKey = `${student.id}_${selectedTerm}_${selectedSubject}`;
+          const record = gradesRes?.[sessionKey] || gradesRes?.[legacyKey] ||
+            gradesRes?.[student.id]?.[selectedSubject];
           if (record && record.isRecorded) {
             existing[student.id] = {
               ca1: record.ca1,
@@ -106,11 +109,10 @@ export function RecordGrades() {
           }
         });
         setGradesInput(existing);
-      } catch {
-        const allStudents = schoolStore
-          .getStudents()
-          .filter((s) => s.class === selectedClass && (s.enrolledSubjects || []).includes(selectedSubject));
-        setStudents(allStudents);
+      } catch (error) {
+        console.error('Failed to load students and grades:', error);
+        setStudents([]);
+        setGradesInput({});
       }
     };
     loadClassGrades();

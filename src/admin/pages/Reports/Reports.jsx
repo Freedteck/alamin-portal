@@ -38,9 +38,9 @@ export function AdminReports() {
           setSelectedStudentId('');
           setReportCard(null);
         }
-      } catch {
-        const list = schoolStore.getStudents();
-        setStudents(list);
+      } catch (error) {
+        console.error('Failed to load report students:', error);
+        setStudents([]);
       }
     };
     sync();

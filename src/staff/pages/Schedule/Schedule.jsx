@@ -19,6 +19,7 @@ export function ClassScheduling() {
   const [slots, setSlots] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [currentTeacher, setCurrentTeacher] = useState(null);
+  const [schoolClasses, setSchoolClasses] = useState(SCHOOL_CLASSES);
   const [selectedClass, setSelectedClass] = useState('All Classes');
   const [selectedDay, setSelectedDay] = useState('Full Week');
   const [viewMode, setViewMode] = useState('mine'); // 'all' | 'mine'
@@ -32,37 +33,31 @@ export function ClassScheduling() {
 
   const loadScheduleData = async () => {
     try {
-      const [tRes, ttRes, alRes] = await Promise.all([
-        schoolStore.fetchTeachers(),
+      const [teacher, ttRes, alRes, classes] = await Promise.all([
+        schoolStore.fetchCurrentTeacher(),
         schoolStore.fetchTimetable(),
-        schoolStore.fetchAlerts()
+        schoolStore.fetchAlerts(),
+        schoolStore.fetchClasses()
       ]);
-      const teachers = Array.isArray(tRes) ? tRes : (tRes?.data || []);
-      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-      const teacher =
-        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
-        teachers[0] ||
-        { name: saved.name || 'Teaching Staff' };
       setCurrentTeacher(teacher);
       setSlots(Array.isArray(ttRes) ? ttRes : []);
       setAlerts(Array.isArray(alRes) ? alRes : []);
-    } catch {
-      const teachers = schoolStore.getTeachers();
-      const saved = JSON.parse(localStorage.getItem('alamin_user') || '{}');
-      const teacher =
-        teachers.find((t) => t.email === saved.email || t.name === saved.name) ||
-        teachers[0] ||
-        { name: saved.name || 'Teaching Staff' };
-      setCurrentTeacher(teacher);
-      setSlots(schoolStore.getTimetableSlots());
-      setAlerts(schoolStore.getAlertsForUser('teacher', { name: teacher.name }));
+      if (Array.isArray(classes)) setSchoolClasses(classes.map((item) => item.name || item));
+    } catch (error) {
+      console.error('Failed to load staff schedule:', error);
+      setCurrentTeacher(null);
+      setSlots([]);
+      setAlerts([]);
     }
   };
 
   useEffect(() => {
     loadScheduleData();
     const unsubscribe = subscribeSchoolSync((topic) => {
-      if (topic === 'timetable' || topic === 'alerts' || topic === 'teachers' || !topic) {
+      if (
+        topic === 'timetable' || topic === 'alerts' || topic === 'teachers' ||
+        topic === 'classes' || !topic
+      ) {
         loadScheduleData();
       }
     });
@@ -74,9 +69,14 @@ export function ClassScheduling() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  const handleDismissAlert = (id) => {
-    schoolStore.dismissAlert(id);
-    loadScheduleData();
+  const handleDismissAlert = async (id) => {
+    try {
+      await schoolStore.dismissAlert(id);
+      await loadScheduleData();
+    } catch (error) {
+      console.error('Failed to dismiss timetable alert:', error);
+      showToast('Unable to dismiss timetable alert.');
+    }
   };
 
   const openReschedule = (slot) => {
@@ -205,7 +205,7 @@ export function ClassScheduling() {
             onClick={() => {
               setViewMode('all');
               if (selectedClass === 'All Classes') {
-                setSelectedClass(currentTeacher?.assignedClasses?.[0]?.class || schoolStore.getClasses()[0] || 'JSS 1');
+                setSelectedClass(currentTeacher?.assignedClasses?.[0]?.class || schoolClasses[0] || 'JSS 1');
               }
             }}
             className={`h-10 px-4 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
@@ -302,7 +302,7 @@ export function ClassScheduling() {
             className="h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-xs font-semibold text-[#1c1c14]"
           >
             <option value="All Classes">All My Classes</option>
-            {schoolStore.getClassesForTeacher(currentTeacher).map((cls) => (
+            {[...new Set((currentTeacher?.assignedClasses || []).map((assignment) => assignment.class))].map((cls) => (
               <option key={cls} value={cls}>
                 {cls}
               </option>
