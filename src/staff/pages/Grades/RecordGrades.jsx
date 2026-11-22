@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   Save,
   CheckCircle2,
-  FileText
+  FileText,
+  Pencil
 } from 'lucide-react';
 import { Pagination } from '../../../shared/components/Pagination/Pagination';
 import { TableActions } from '../../../shared/components/TableActions/TableActions';
@@ -21,6 +22,8 @@ export function RecordGrades() {
   const [currentTeacher, setCurrentTeacher] = useState(null);
   const [students, setStudents] = useState([]);
   const [gradesInput, setGradesInput] = useState({});
+  const [editingStudents, setEditingStudents] = useState({});
+  const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
@@ -57,6 +60,7 @@ export function RecordGrades() {
       .map((assignment) => assignment.subject)
       .filter(Boolean)
   )];
+  const classTeacherClasses = currentTeacher?.classTeacherOf || [];
 
   useEffect(() => {
     if (teacherClasses.length > 0 && !teacherClasses.includes(selectedClass)) {
@@ -90,25 +94,30 @@ export function RecordGrades() {
         allStudents.forEach((student) => {
           const sessionKey = `${student.id}_${selectedSession}_${selectedTerm}_${selectedSubject}`;
           const legacyKey = `${student.id}_${selectedTerm}_${selectedSubject}`;
-          const record = gradesRes?.[sessionKey] || gradesRes?.[legacyKey] ||
+          const record = gradesRes?.[student.id]?.[sessionKey] || gradesRes?.[sessionKey] || gradesRes?.[legacyKey] ||
             gradesRes?.[student.id]?.[selectedSubject];
-          if (record && record.isRecorded) {
+          if (record && (record.isRecorded || record.session || record.total != null)) {
             existing[student.id] = {
               ca1: record.ca1,
               ca2: record.ca2,
               exam: record.exam,
-              remark: record.remark
+              remark: record.remark,
+              isRecorded: true
             };
           } else {
             existing[student.id] = {
               ca1: 0,
               ca2: 0,
               exam: 0,
-              remark: ''
+              remark: '',
+              isRecorded: false
             };
           }
         });
         setGradesInput(existing);
+        setEditingStudents(Object.fromEntries(
+          Object.entries(existing).map(([studentId, grade]) => [studentId, !grade.isRecorded])
+        ));
       } catch (error) {
         console.error('Failed to load students and grades:', error);
         setStudents([]);
@@ -165,15 +174,60 @@ export function RecordGrades() {
     return { total, grade, badge };
   };
 
-  const handleSaveGrades = () => {
-    students.forEach((student) => {
-      const entry = gradesInput[student.id];
-      if (entry) {
-        schoolStore.saveGrade(student.id, selectedTerm, selectedSubject, entry, selectedSession);
+  const handleSaveGrades = async () => {
+    const pending = students.filter((student) =>
+      gradesInput[student.id] && editingStudents[student.id]
+    );
+    if (!pending.length) {
+      setToast('There are no grade changes to save.');
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const results = await Promise.allSettled(pending.map(async (student) => {
+        const result = await schoolStore.saveGrade(
+          student.id,
+          selectedTerm,
+          selectedSubject,
+          gradesInput[student.id],
+          selectedSession
+        );
+        if (result?.error) throw new Error(result.error);
+        return student.id;
+      }));
+      const savedIds = results
+        .filter((result) => result.status === 'fulfilled')
+        .map((result) => result.value);
+      const failedResults = results.filter((result) => result.status === 'rejected');
+      failedResults.forEach((result) => console.error('Failed to save a student grade:', result.reason));
+
+      if (savedIds.length === 0) {
+        throw new Error('Failed to save grades. Please try again.');
       }
-    });
-    setToast(`Grades for ${selectedClass} ${selectedSubject} saved for ${selectedSession}!`);
-    setTimeout(() => setToast(null), 3000);
+
+      setGradesInput((previous) => ({
+        ...previous,
+        ...Object.fromEntries(savedIds.map((studentId) => [
+          studentId,
+          { ...previous[studentId], isRecorded: true }
+        ]))
+      }));
+      setEditingStudents((previous) => ({
+        ...previous,
+        ...Object.fromEntries(savedIds.map((studentId) => [studentId, false]))
+      }));
+      setToast(failedResults.length
+        ? `Saved ${savedIds.length} grade(s); ${failedResults.length} failed. Please retry the editable rows.`
+        : `Grades for ${selectedClass} ${selectedSubject} saved for ${selectedSession}.`);
+    } catch (error) {
+      console.error('Failed to save grades:', error);
+      setToast(error?.message || 'Failed to save grades. Please try again.');
+    } finally {
+      setIsSaving(false);
+      setTimeout(() => setToast(null), 3000);
+    }
   };
 
   const paginatedStudents = students.slice(
@@ -204,10 +258,11 @@ export function RecordGrades() {
           <button
             type="button"
             onClick={handleSaveGrades}
-            className="h-10 px-4 rounded-lg bg-[#616218] hover:bg-[#494900] text-white text-xs font-semibold shadow-xs inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            disabled={isSaving}
+            className="h-10 px-4 rounded-lg bg-[#616218] hover:bg-[#494900] text-white text-xs font-semibold shadow-xs inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Save className="w-4 h-4" />
-            <span>Save All Grades</span>
+            <span>{isSaving ? 'Saving Grades...' : 'Save All Grades'}</span>
           </button>
         </div>
       </div>
@@ -329,8 +384,9 @@ export function RecordGrades() {
                           min="0"
                           max="20"
                           value={scores.ca1 ?? ''}
+                          disabled={!editingStudents[student.id]}
                           onChange={(e) => handleScoreChange(student.id, 'ca1', e.target.value)}
-                          className="w-16 h-10 text-center font-bold font-mono rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                          className="w-16 h-10 text-center font-bold font-mono rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs disabled:bg-[#faf8f0] disabled:text-[#797869] disabled:cursor-default"
                         />
                       </td>
 
@@ -340,8 +396,9 @@ export function RecordGrades() {
                           min="0"
                           max="20"
                           value={scores.ca2 ?? ''}
+                          disabled={!editingStudents[student.id]}
                           onChange={(e) => handleScoreChange(student.id, 'ca2', e.target.value)}
-                          className="w-16 h-10 text-center font-bold font-mono rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                          className="w-16 h-10 text-center font-bold font-mono rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs disabled:bg-[#faf8f0] disabled:text-[#797869] disabled:cursor-default"
                         />
                       </td>
 
@@ -351,8 +408,9 @@ export function RecordGrades() {
                           min="0"
                           max="60"
                           value={scores.exam ?? ''}
+                          disabled={!editingStudents[student.id]}
                           onChange={(e) => handleScoreChange(student.id, 'exam', e.target.value)}
-                          className="w-16 h-10 text-center font-bold font-mono rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                          className="w-16 h-10 text-center font-bold font-mono rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs disabled:bg-[#faf8f0] disabled:text-[#797869] disabled:cursor-default"
                         />
                       </td>
 
@@ -370,9 +428,10 @@ export function RecordGrades() {
                         <input
                           type="text"
                           value={scores.remark || ''}
+                          disabled={!editingStudents[student.id]}
                           onChange={(e) => handleRemarkChange(student.id, e.target.value)}
                           placeholder="Teacher's remark..."
-                          className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                          className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs disabled:bg-[#faf8f0] disabled:text-[#797869] disabled:cursor-default"
                         />
                       </td>
 
@@ -380,11 +439,23 @@ export function RecordGrades() {
                         <div className="flex justify-end">
                           <TableActions
                             actions={[
-                              {
-                                label: 'Preview Terminal Report Sheet',
-                                icon: FileText,
-                                to: `/admin/reports?student=${student.id}`
-                              }
+                              ...(classTeacherClasses.includes(student.class)
+                                ? [{
+                                    label: 'View Terminal Report Sheet',
+                                    icon: FileText,
+                                    to: `/teacher/reports?student=${student.id}`
+                                  }]
+                                : []),
+                              ...(gradesInput[student.id]?.isRecorded && !editingStudents[student.id]
+                                ? [{
+                                    label: 'Edit Grades',
+                                    icon: Pencil,
+                                    onClick: () => setEditingStudents((previous) => ({
+                                      ...previous,
+                                      [student.id]: true
+                                    }))
+                                  }]
+                                : [])
                             ]}
                           />
                         </div>
@@ -416,10 +487,11 @@ export function RecordGrades() {
           <button
             type="button"
             onClick={handleSaveGrades}
-            className="h-10 px-4 rounded-lg bg-[#616218] hover:bg-[#494900] text-white text-xs font-semibold shadow-xs inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            disabled={isSaving}
+            className="h-10 px-4 rounded-lg bg-[#616218] hover:bg-[#494900] text-white text-xs font-semibold shadow-xs inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Save className="w-4 h-4" />
-            <span>Save All Grades</span>
+            <span>{isSaving ? 'Saving Grades...' : 'Save All Grades'}</span>
           </button>
         </div>
       </div>

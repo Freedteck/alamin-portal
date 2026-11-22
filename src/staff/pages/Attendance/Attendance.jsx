@@ -1,77 +1,134 @@
-import React, { useState, useEffect } from 'react';
-import { useSearchParams, Link, Navigate } from 'react-router-dom';
+import React, { useState, useEffect } from "react";
+import { useSearchParams, Link, Navigate } from "react-router-dom";
 import {
   CheckCircle2,
   XCircle,
   Save,
   Check,
   X,
+  Pencil,
   Users,
   UserCheck,
   Printer,
   ShieldAlert,
-  ArrowLeft
-} from 'lucide-react';
+  ArrowLeft,
+} from "lucide-react";
 import {
   schoolStore,
-  subscribeSchoolSync
-} from '../../../shared/data/schoolData';
-import { SearchInput } from '../../../shared/components/SearchInput/SearchInput';
-import { Button } from '../../../shared/components/Button/Button';
-import { TableActions } from '../../../shared/components/TableActions/TableActions';
-import { Pagination } from '../../../shared/components/Pagination/Pagination';
-import { ProfileAvatar } from '../../../shared/components/ProfileAvatar/ProfileAvatar';
+  subscribeSchoolSync,
+} from "../../../shared/data/schoolData";
+import { SearchInput } from "../../../shared/components/SearchInput/SearchInput";
+import { Button } from "../../../shared/components/Button/Button";
+import { TableActions } from "../../../shared/components/TableActions/TableActions";
+import { Pagination } from "../../../shared/components/Pagination/Pagination";
+import { ProfileAvatar } from "../../../shared/components/ProfileAvatar/ProfileAvatar";
 
 export function StaffAttendance() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialStudentId = searchParams.get('student') || '';
+  const initialStudentId = searchParams.get("student") || "";
 
-  const [activeTab, setActiveTab] = useState(initialStudentId ? 'student' : 'rollcall');
+  const [activeTab, setActiveTab] = useState(
+    initialStudentId ? "student" : "rollcall",
+  );
   const [currentTeacher, setCurrentTeacher] = useState(null);
-  const [selectedClass, setSelectedClass] = useState('');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedClass, setSelectedClass] = useState("");
+  const [selectedDate, setSelectedDate] = useState(
+    new Date().toISOString().split("T")[0],
+  );
   const [attendanceRecords, setAttendanceRecords] = useState({});
   const [toast, setToast] = useState(null);
   const [students, setStudents] = useState([]);
+  const [studentSearchResults, setStudentSearchResults] = useState({
+    data: [],
+    total: 0,
+  });
 
-  const [selectedStudentId, setSelectedStudentId] = useState(initialStudentId || '');
-  const [studentClassFilter, setStudentClassFilter] = useState('all');
+  const [selectedStudentId, setSelectedStudentId] = useState(
+    initialStudentId || "",
+  );
+  const [studentClassFilter, setStudentClassFilter] = useState("all");
   const [studentAuditData, setStudentAuditData] = useState(null);
-  const [studentSearch, setStudentSearch] = useState('');
+  const [studentSearch, setStudentSearch] = useState("");
+  const [studentPage, setStudentPage] = useState(1);
+  const studentPageSize = 10;
   const [rollPage, setRollPage] = useState(1);
   const [rollPageSize, setRollPageSize] = useState(10);
   const [auditPage, setAuditPage] = useState(1);
   const [auditPageSize, setAuditPageSize] = useState(5);
   const [syncTick, setSyncTick] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingRegister, setIsLoadingRegister] = useState(false);
+  const [hasSubmittedAttendance, setHasSubmittedAttendance] = useState(false);
+  const [editingAttendanceStudents, setEditingAttendanceStudents] = useState({});
+  const [savingAttendanceStudent, setSavingAttendanceStudent] = useState(null);
 
   useEffect(() => {
     return subscribeSchoolSync(() => setSyncTick((t) => t + 1));
   }, []);
 
-  const savedUser = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+  const savedUser = JSON.parse(localStorage.getItem("alamin_user") || "{}");
 
   useEffect(() => {
     let active = true;
-    schoolStore.fetchCurrentTeacher().then((teacher) => {
-      if (!active) return;
-      setCurrentTeacher(teacher);
-      const myClasses = teacher?.classTeacherOf || savedUser?.classTeacherOf || [];
-      if (myClasses.length > 0) {
-        setSelectedClass((prev) => (myClasses.includes(prev) ? prev : myClasses[0]));
-      }
-    }).catch((error) => {
-      console.error('Failed to load current teacher:', error);
-      if (active) setCurrentTeacher(null);
-    });
-    return () => { active = false; };
+    schoolStore
+      .fetchCurrentTeacher()
+      .then((teacher) => {
+        if (!active) return;
+        setCurrentTeacher(teacher);
+        const myClasses =
+          teacher?.classTeacherOf || savedUser?.classTeacherOf || [];
+        if (myClasses.length > 0) {
+          setSelectedClass((prev) =>
+            myClasses.includes(prev) ? prev : myClasses[0],
+          );
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to load current teacher:", error);
+        if (active) setCurrentTeacher(null);
+      });
+    return () => {
+      active = false;
+    };
   }, [syncTick]);
 
-  const teacherClasses = Array.isArray(currentTeacher?.classTeacherOf)
-    ? currentTeacher.classTeacherOf
-    : (Array.isArray(savedUser?.classTeacherOf) ? savedUser.classTeacherOf : []);
+  const teacherClasses = [
+    ...new Set(
+      [
+        ...(currentTeacher?.assignedClasses || []).map(
+          (assignment) => assignment.class,
+        ),
+        ...(currentTeacher?.classTeacherOf || savedUser?.classTeacherOf || []),
+      ].filter(Boolean),
+    ),
+  ];
 
   const isClassTeacher = teacherClasses.length > 0;
+
+  useEffect(() => {
+    let active = true;
+    schoolStore
+      .fetchStudents({
+        page: studentPage,
+        limit: studentPageSize,
+        class: studentClassFilter,
+        search: studentSearch,
+      })
+      .then((result) => {
+        if (!active) return;
+        setStudentSearchResults({
+          data: Array.isArray(result?.data) ? result.data : [],
+          total: result?.total || 0,
+        });
+      })
+      .catch((error) => {
+        console.error("Failed to search attendance students:", error);
+        if (active) setStudentSearchResults({ data: [], total: 0 });
+      });
+    return () => {
+      active = false;
+    };
+  }, [studentPage, studentClassFilter, studentSearch, syncTick]);
 
   useEffect(() => {
     setRollPage(1);
@@ -81,34 +138,55 @@ export function StaffAttendance() {
     if (!selectedClass) return;
     let active = true;
     const loadClassAttendance = async () => {
+      setIsLoadingRegister(true);
       try {
         const [stuRes, attRes] = await Promise.all([
           schoolStore.fetchStudents({ class: selectedClass }),
-          schoolStore.fetchAttendance({ date: selectedDate, class: selectedClass })
+          schoolStore.fetchAttendance({
+            date: selectedDate,
+            class: selectedClass,
+          }),
         ]);
         if (!active) return;
-        const classStudents = Array.isArray(stuRes) ? stuRes : (stuRes?.data || []);
+        const classStudents = Array.isArray(stuRes)
+          ? stuRes
+          : stuRes?.data || [];
         setStudents(classStudents);
 
         const key = `${selectedDate}_${selectedClass}`;
-        const existing = attRes && (attRes[key] || (attRes[selectedDate] && attRes[selectedDate][selectedClass]));
+        const existing =
+          attRes &&
+          (attRes[key] ||
+            (attRes[selectedDate] && attRes[selectedDate][selectedClass]));
         if (existing && existing.records) {
           setAttendanceRecords(existing.records);
+          setHasSubmittedAttendance(true);
+          setEditingAttendanceStudents({});
         } else {
           const defaults = {};
           classStudents.forEach((s) => {
-            defaults[s.id] = 'absent';
+            defaults[s.id] = "absent";
           });
           setAttendanceRecords(defaults);
+          setHasSubmittedAttendance(false);
+          setEditingAttendanceStudents({});
         }
       } catch (error) {
-        console.error('Failed to load class attendance:', error);
-        setStudents([]);
-        setAttendanceRecords({});
+        console.error("Failed to load class attendance:", error);
+        if (active) {
+          setStudents([]);
+          setAttendanceRecords({});
+          setHasSubmittedAttendance(false);
+          setEditingAttendanceStudents({});
+        }
+      } finally {
+        if (active) setIsLoadingRegister(false);
       }
     };
     loadClassAttendance();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [selectedClass, selectedDate, syncTick]);
 
   useEffect(() => {
@@ -123,19 +201,22 @@ export function StaffAttendance() {
         return;
       }
       try {
-        const audit = await schoolStore.fetchStudentAttendanceHistory(selectedStudentId);
+        const audit =
+          await schoolStore.fetchStudentAttendanceHistory(selectedStudentId);
         if (active) setStudentAuditData(audit);
       } catch (error) {
-        console.error('Failed to load student attendance history:', error);
+        console.error("Failed to load student attendance history:", error);
         if (active) setStudentAuditData(null);
       }
     };
     loadAudit();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [selectedStudentId, syncTick]);
 
   // If user is not assigned as a Class Teacher
-  if (!isClassTeacher && savedUser.role === 'teacher') {
+  if (!isClassTeacher && savedUser.role === "teacher") {
     return (
       <div className="max-w-2xl mx-auto py-16 px-4 font-['Poppins',sans-serif]">
         <div className="rounded-xl border border-[#c9c7b6] bg-white p-8 text-center shadow-xs">
@@ -146,8 +227,10 @@ export function StaffAttendance() {
             Class Teacher Attendance Access Only
           </h2>
           <p className="text-sm text-[#797869] mt-2 leading-relaxed">
-            You are currently not designated as the <strong>Class Teacher</strong> for any classroom.
-            Daily morning registers and roll call marking are restricted to appointed Class Teachers.
+            You are currently not designated as the{" "}
+            <strong>Class Teacher</strong> for any classroom. Daily morning
+            registers and roll call marking are restricted to appointed Class
+            Teachers.
           </p>
           <div className="mt-6 flex items-center justify-center gap-3">
             <Link to="/teacher/dashboard">
@@ -163,50 +246,93 @@ export function StaffAttendance() {
   }
 
   const toggleStudent = (studentId) => {
+    if (isLoadingRegister || (hasSubmittedAttendance && !editingAttendanceStudents[studentId])) return;
     setAttendanceRecords((prev) => {
       const current = prev[studentId];
-      const next = current === 'present' ? 'absent' : 'present';
+      const next = current === "present" ? "absent" : "present";
       return {
         ...prev,
-        [studentId]: next
+        [studentId]: next,
       };
     });
   };
 
-  const presentCount = students.filter((s) => attendanceRecords[s.id] === 'present').length;
+  const presentCount = students.filter(
+    (s) => attendanceRecords[s.id] === "present",
+  ).length;
   const absentCount = students.length - presentCount;
   const allPresent = students.length > 0 && presentCount === students.length;
   const total = students.length;
-  const attendanceRate = total > 0 ? Math.round((presentCount / total) * 100) : 0;
+  const attendanceRate =
+    total > 0 ? Math.round((presentCount / total) * 100) : 0;
+  const isEditingStudentAttendance = Object.values(editingAttendanceStudents).some(Boolean);
 
   const toggleAll = () => {
-    const nextStatus = allPresent ? 'absent' : 'present';
+    if (isLoadingRegister || hasSubmittedAttendance) return;
+    const nextStatus = allPresent ? "absent" : "present";
     const updated = {};
     students.forEach((s) => {
       updated[s.id] = nextStatus;
     });
     setAttendanceRecords(updated);
-    showToast(allPresent ? 'All students unmarked (Absent).' : 'All students marked as Present.');
+    showToast(
+      allPresent
+        ? "All students unmarked (Absent)."
+        : "All students marked as Present.",
+    );
   };
 
   const handleSaveAttendance = async () => {
     if (!selectedClass) {
-      showToast('Please select a class first.');
+      showToast("Please select a class first.");
       return;
     }
     setIsSaving(true);
     try {
-      const teacherName = currentTeacher?.name || savedUser.name || 'Class Teacher';
-      const res = await schoolStore.saveAttendance(selectedDate, selectedClass, teacherName, attendanceRecords);
+      const teacherName =
+        currentTeacher?.name || savedUser.name || "Class Teacher";
+      const res = await schoolStore.saveAttendance(
+        selectedDate,
+        selectedClass,
+        teacherName,
+        attendanceRecords,
+      );
       if (res?.error) {
         showToast(res.error);
       } else {
+        setHasSubmittedAttendance(true);
+        setEditingAttendanceStudents({});
         showToast(`Attendance for Class ${selectedClass} saved successfully!`);
       }
     } catch (err) {
-      showToast(err?.message || 'Failed to save attendance register.');
+      showToast(err?.message || "Failed to save attendance register.");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const saveStudentAttendance = async (studentId) => {
+    if (!selectedClass || isLoadingRegister || savingAttendanceStudent) return;
+    setSavingAttendanceStudent(studentId);
+    try {
+      const teacherName = currentTeacher?.name || savedUser.name || "Class Teacher";
+      const result = await schoolStore.saveAttendance(
+        selectedDate,
+        selectedClass,
+        teacherName,
+        attendanceRecords,
+      );
+      if (result?.error) throw new Error(result.error);
+      setEditingAttendanceStudents((previous) => ({
+        ...previous,
+        [studentId]: false,
+      }));
+      showToast(`Attendance for ${students.find((student) => student.id === studentId)?.name || "student"} saved successfully.`);
+    } catch (error) {
+      console.error("Failed to save individual student attendance:", error);
+      showToast(error?.message || "Failed to save student attendance.");
+    } finally {
+      setSavingAttendanceStudent(null);
     }
   };
 
@@ -215,19 +341,7 @@ export function StaffAttendance() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const allTeacherStudents = schoolStore
-    .getStudents()
-    .filter((s) => teacherClasses.includes(s.class));
-
-  const filteredStudentList = allTeacherStudents.filter((s) => {
-    const matchesClass = studentClassFilter === 'all' || s.class === studentClassFilter;
-    const term = studentSearch.toLowerCase();
-    const matchesSearch =
-      s.name.toLowerCase().includes(term) ||
-      (s.admissionNumber && s.admissionNumber.toLowerCase().includes(term)) ||
-      s.class.toLowerCase().includes(term);
-    return matchesClass && matchesSearch;
-  });
+  const filteredStudentList = studentSearchResults.data;
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-16">
@@ -245,32 +359,41 @@ export function StaffAttendance() {
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1c1c14]">
               Class Attendance Register
             </h1>
-            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#fdf9ec] text-[#616218] border border-[#c9c7b6]/80">
-              Class Teacher Portal
-            </span>
           </div>
           <p className="text-sm text-[#797869] mt-0.5 max-w-xl">
-            Mark present students with a single checkbox. Unchecked students are automatically recorded as absent.
+            Mark present students with a single checkbox. Unchecked students are
+            automatically recorded as absent.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5">
-          {activeTab === 'rollcall' && (
+          {activeTab === "rollcall" && !hasSubmittedAttendance && (
             <>
               <Button
                 variant="outline"
                 onClick={toggleAll}
-                disabled={students.length === 0}
+                disabled={
+                  isLoadingRegister ||
+                  students.length === 0
+                }
               >
                 <Check className="w-3.5 h-3.5 text-[#616218]" />
-                <span>{allPresent ? 'Uncheck All' : 'Mark All Present'}</span>
+                <span>{allPresent ? "Uncheck All" : "Mark All Present"}</span>
               </Button>
               <Button
                 onClick={handleSaveAttendance}
-                disabled={isSaving || students.length === 0}
+                disabled={
+                  isLoadingRegister ||
+                  isSaving ||
+                  students.length === 0
+                }
               >
                 <Save className="w-3.5 h-3.5" />
-                <span>{isSaving ? 'Saving...' : 'Save & Submit Register'}</span>
+                <span>
+                  {isSaving
+                    ? "Saving..."
+                    : "Save & Submit Register"}
+                </span>
               </Button>
             </>
           )}
@@ -282,13 +405,13 @@ export function StaffAttendance() {
         <button
           type="button"
           onClick={() => {
-            setActiveTab('rollcall');
+            setActiveTab("rollcall");
             setSearchParams({});
           }}
           className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'rollcall'
-              ? 'border-[#616218] text-[#494900]'
-              : 'border-transparent text-[#797869] hover:text-[#1c1c14]'
+            activeTab === "rollcall"
+              ? "border-[#616218] text-[#494900]"
+              : "border-transparent text-[#797869] hover:text-[#1c1c14]"
           }`}
         >
           <Users className="w-4 h-4" />
@@ -296,11 +419,11 @@ export function StaffAttendance() {
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('student')}
+          onClick={() => setActiveTab("student")}
           className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'student'
-              ? 'border-[#616218] text-[#494900]'
-              : 'border-transparent text-[#797869] hover:text-[#1c1c14]'
+            activeTab === "student"
+              ? "border-[#616218] text-[#494900]"
+              : "border-transparent text-[#797869] hover:text-[#1c1c14]"
           }`}
         >
           <UserCheck className="w-4 h-4" />
@@ -309,7 +432,7 @@ export function StaffAttendance() {
       </div>
 
       {/* Tab 1: Roll Call Register */}
-      {activeTab === 'rollcall' && (
+      {activeTab === "rollcall" && (
         <div className="space-y-6 animate-in fade-in duration-200">
           {/* Controls Bar */}
           <div className="rounded-lg border border-[#c9c7b6] bg-white p-4 shadow-xs">
@@ -332,7 +455,9 @@ export function StaffAttendance() {
                   </select>
                 ) : (
                   <div className="h-10 px-3.5 rounded-lg border border-[#c9c7b6] bg-[#faf8f0] flex items-center justify-between">
-                    <span className="text-sm font-bold text-[#1c1c14]">{selectedClass || 'No Class'}</span>
+                    <span className="text-sm font-bold text-[#1c1c14]">
+                      {selectedClass || "No Class"}
+                    </span>
                     <span className="text-[10px] font-bold uppercase tracking-wider text-[#616218] bg-white px-2 py-0.5 rounded border border-[#c9c7b6]/60">
                       Class Teacher
                     </span>
@@ -354,9 +479,11 @@ export function StaffAttendance() {
 
               <div className="flex-1 w-full flex items-end justify-between sm:justify-end gap-3 pt-2 sm:pt-0">
                 <div className="text-xs text-[#797869]">
-                  Class Teacher in Charge:{' '}
+                  Class Teacher in Charge:{" "}
                   <span className="font-bold text-[#1c1c14]">
-                    {currentTeacher ? currentTeacher.name : (savedUser.name || 'Class Teacher')}
+                    {currentTeacher
+                      ? currentTeacher.name
+                      : savedUser.name || "Class Teacher"}
                   </span>
                 </div>
               </div>
@@ -366,26 +493,48 @@ export function StaffAttendance() {
           {/* Quick Metrics */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="p-4 rounded-lg border border-[#c9c7b6] bg-white shadow-xs">
-              <span className="text-xs font-semibold text-[#797869] uppercase">Class Enrolled</span>
-              <div className="text-2xl font-bold text-[#1c1c14] mt-1 tabular-nums">{total}</div>
-              <span className="text-[11px] text-[#797869]">{selectedClass} students</span>
+              <span className="text-xs font-semibold text-[#797869] uppercase">
+                Class Enrolled
+              </span>
+              <div className="text-2xl font-bold text-[#1c1c14] mt-1 tabular-nums">
+                {total}
+              </div>
+              <span className="text-[11px] text-[#797869]">
+                {selectedClass} students
+              </span>
             </div>
 
             <div className="p-4 rounded-lg border border-emerald-200 bg-emerald-50/50 shadow-xs">
-              <span className="text-xs font-semibold text-emerald-800 uppercase">Present</span>
-              <div className="text-2xl font-bold text-emerald-700 mt-1 tabular-nums">{presentCount}</div>
-              <span className="text-[11px] text-emerald-600">Marked on register</span>
+              <span className="text-xs font-semibold text-emerald-800 uppercase">
+                Present
+              </span>
+              <div className="text-2xl font-bold text-emerald-700 mt-1 tabular-nums">
+                {presentCount}
+              </div>
+              <span className="text-[11px] text-emerald-600">
+                Marked on register
+              </span>
             </div>
 
             <div className="p-4 rounded-lg border border-stone-200 bg-[#faf8f0] shadow-xs">
-              <span className="text-xs font-semibold text-stone-700 uppercase">Absent</span>
-              <div className="text-2xl font-bold text-stone-700 mt-1 tabular-nums">{absentCount}</div>
-              <span className="text-[11px] text-stone-500">Unchecked (Automatic)</span>
+              <span className="text-xs font-semibold text-stone-700 uppercase">
+                Absent
+              </span>
+              <div className="text-2xl font-bold text-stone-700 mt-1 tabular-nums">
+                {absentCount}
+              </div>
+              <span className="text-[11px] text-stone-500">
+                Unchecked (Automatic)
+              </span>
             </div>
 
             <div className="p-4 rounded-lg border border-[#c9c7b6] bg-[#fdf9ec] shadow-xs">
-              <span className="text-xs font-semibold text-[#616218] uppercase">Attendance Rate</span>
-              <div className="text-2xl font-bold text-[#616218] mt-1 tabular-nums">{attendanceRate}%</div>
+              <span className="text-xs font-semibold text-[#616218] uppercase">
+                Attendance Rate
+              </span>
+              <div className="text-2xl font-bold text-[#616218] mt-1 tabular-nums">
+                {attendanceRate}%
+              </div>
               <span className="text-[11px] text-[#494900]">Daily turnout</span>
             </div>
           </div>
@@ -398,7 +547,8 @@ export function StaffAttendance() {
                   Roll Call Roster for Class {selectedClass}
                 </h3>
                 <p className="text-xs text-[#797869]">
-                  Check the box to mark student present. Unchecked students are automatically absent.
+                  Check the box to mark student present. Unchecked students are
+                  automatically absent.
                 </p>
               </div>
               <span className="text-xs font-bold px-2.5 py-1 rounded bg-[#fdf9ec] text-[#494900] border border-[#c9c7b6]/60">
@@ -415,7 +565,11 @@ export function StaffAttendance() {
                         type="checkbox"
                         checked={allPresent}
                         onChange={toggleAll}
-                        disabled={students.length === 0}
+                        disabled={
+                          isLoadingRegister ||
+                          students.length === 0 ||
+                          hasSubmittedAttendance
+                        }
                         title="Toggle all students"
                         className="w-4 h-4 rounded border-[#c9c7b6] text-[#616218] focus:ring-[#616218]/30 cursor-pointer accent-[#616218]"
                       />
@@ -431,21 +585,30 @@ export function StaffAttendance() {
                 <tbody className="divide-y divide-[#c9c7b6]/40">
                   {students.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-[#797869] text-xs">
+                      <td
+                        colSpan={7}
+                        className="py-8 text-center text-[#797869] text-xs"
+                      >
                         No students enrolled in Class {selectedClass} yet.
                       </td>
                     </tr>
                   ) : (
                     students
-                      .slice((rollPage - 1) * rollPageSize, rollPage * rollPageSize)
+                      .slice(
+                        (rollPage - 1) * rollPageSize,
+                        rollPage * rollPageSize,
+                      )
                       .map((student, idx) => {
-                        const isPresent = attendanceRecords[student.id] === 'present';
+                        const isPresent =
+                          attendanceRecords[student.id] === "present";
                         const rowNum = (rollPage - 1) * rollPageSize + idx + 1;
                         return (
                           <tr
                             key={student.id}
                             className={`transition-colors ${
-                              isPresent ? 'bg-emerald-50/25 hover:bg-emerald-50/40' : 'hover:bg-[#faf8f0]'
+                              isPresent
+                                ? "bg-emerald-50/25 hover:bg-emerald-50/40"
+                                : "hover:bg-[#faf8f0]"
                             }`}
                           >
                             <td className="py-3 px-4 text-center">
@@ -453,19 +616,31 @@ export function StaffAttendance() {
                                 type="checkbox"
                                 checked={isPresent}
                                 onChange={() => toggleStudent(student.id)}
-                                className="w-4 h-4 rounded border-[#c9c7b6] text-[#616218] focus:ring-[#616218]/30 cursor-pointer accent-[#616218]"
+                                disabled={
+                                  isLoadingRegister ||
+                                  (hasSubmittedAttendance && !editingAttendanceStudents[student.id]) ||
+                                  savingAttendanceStudent === student.id
+                                }
+                                className="w-4 h-4 rounded border-[#c9c7b6] text-[#616218] focus:ring-[#616218]/30 cursor-pointer accent-[#616218] disabled:cursor-not-allowed"
                               />
                             </td>
                             <td className="py-3 px-4 text-xs font-mono text-[#797869]">
                               #{rowNum}
                             </td>
                             <td className="py-3 px-4 font-mono font-bold text-xs text-[#616218]">
-                              {student.admissionNumber || '-'}
+                              {student.admissionNumber || "-"}
                             </td>
                             <td className="py-3 px-4">
                               <div className="flex items-center gap-2.5">
-                                <ProfileAvatar name={student.name} size="sm" shape="rounded" />
-                                <span className="font-semibold text-[#1c1c14]">{student.name}</span>
+                                <ProfileAvatar
+                                  src={student.avatarUrl}
+                                  name={student.name}
+                                  size="sm"
+                                  shape="rounded"
+                                />
+                                <span className="font-semibold text-[#1c1c14]">
+                                  {student.name}
+                                </span>
                               </div>
                             </td>
                             <td className="py-3 px-4 text-center">
@@ -485,27 +660,57 @@ export function StaffAttendance() {
                               <button
                                 type="button"
                                 onClick={() => toggleStudent(student.id)}
-                                className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                                disabled={
+                                  isLoadingRegister ||
+                                  (hasSubmittedAttendance && !editingAttendanceStudents[student.id]) ||
+                                  savingAttendanceStudent === student.id
+                                }
+                                className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 ${
                                   isPresent
-                                    ? 'bg-emerald-600 text-white shadow-xs'
-                                    : 'bg-white text-stone-600 border border-[#c9c7b6] hover:bg-[#faf8f0]'
+                                    ? "bg-emerald-600 text-white shadow-xs"
+                                    : "bg-white text-stone-600 border border-[#c9c7b6] hover:bg-[#faf8f0]"
                                 }`}
                               >
-                                {isPresent ? 'Marked Present' : 'Click to Mark Present'}
+                                {isPresent
+                                  ? "Marked Present"
+                                  : "Click to Mark Present"}
                               </button>
                             </td>
                             <td className="py-3 px-4 text-right">
                               <TableActions
                                 actions={[
                                   {
-                                    label: 'Check Attendance History',
+                                    label: "Check Attendance History",
                                     icon: UserCheck,
                                     onClick: () => {
                                       setSelectedStudentId(student.id);
-                                      setActiveTab('student');
+                                      setActiveTab("student");
                                       setSearchParams({ student: student.id });
-                                    }
-                                  }
+                                    },
+                                  },
+                                  hasSubmittedAttendance
+                                    ? editingAttendanceStudents[student.id]
+                                      ? {
+                                          label: "Save Attendance",
+                                          icon: Save,
+                                          onClick: () => saveStudentAttendance(student.id),
+                                          className: savingAttendanceStudent
+                                            ? "opacity-50 pointer-events-none"
+                                            : "",
+                                        }
+                                      : {
+                                          label: "Edit Attendance",
+                                          icon: Pencil,
+                                          onClick: () => {
+                                            if (!isEditingStudentAttendance) {
+                                              setEditingAttendanceStudents({ [student.id]: true });
+                                            }
+                                          },
+                                          className: isEditingStudentAttendance
+                                            ? "opacity-50 pointer-events-none"
+                                            : "",
+                                        }
+                                    : null,
                                 ]}
                               />
                             </td>
@@ -532,7 +737,7 @@ export function StaffAttendance() {
       )}
 
       {/* Tab 2: Individual Student Attendance Audit */}
-      {activeTab === 'student' && (
+      {activeTab === "student" && (
         <div className="space-y-6 animate-in fade-in duration-200">
           <div className="rounded-lg border border-[#c9c7b6] bg-white p-5 shadow-xs">
             <h2 className="text-base font-bold text-[#1c1c14] mb-3">
@@ -542,7 +747,10 @@ export function StaffAttendance() {
               <div>
                 <SearchInput
                   value={studentSearch}
-                  onChange={(e) => setStudentSearch(e.target.value)}
+                  onChange={(e) => {
+                    setStudentSearch(e.target.value);
+                    setStudentPage(1);
+                  }}
                   placeholder="Filter by name or admission number..."
                 />
               </div>
@@ -550,13 +758,8 @@ export function StaffAttendance() {
                 <select
                   value={studentClassFilter}
                   onChange={(e) => {
-                    const cls = e.target.value;
-                    setStudentClassFilter(cls);
-                    const nextList = allTeacherStudents.filter((s) => cls === 'all' || s.class === cls);
-                    if (nextList[0]) {
-                      setSelectedStudentId(nextList[0].id);
-                      setSearchParams({ student: nextList[0].id });
-                    }
+                    setStudentClassFilter(e.target.value);
+                    setStudentPage(1);
                   }}
                   className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                 >
@@ -577,14 +780,34 @@ export function StaffAttendance() {
                   }}
                   className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                 >
-                  {filteredStudentList.map((st) => (
-                    <option key={st.id} value={st.id}>
-                      {st.name} ({st.class})
-                    </option>
-                  ))}
+                  {studentAuditData?.student &&
+                    !filteredStudentList.some(
+                      (student) => student.id === selectedStudentId,
+                    ) && (
+                      <option value={selectedStudentId}>
+                        {studentAuditData.student.name} (
+                        {studentAuditData.student.class})
+                      </option>
+                    )}
+                  {filteredStudentList.length === 0 ? (
+                    <option value="">No students found</option>
+                  ) : (
+                    filteredStudentList.map((st) => (
+                      <option key={st.id} value={st.id}>
+                        {st.name} ({st.class})
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
             </div>
+            <Pagination
+              currentPage={studentPage}
+              totalItems={studentSearchResults.total}
+              pageSize={studentPageSize}
+              onPageChange={setStudentPage}
+              itemLabel="students"
+            />
           </div>
 
           {!studentAuditData || !studentAuditData.student ? (
@@ -596,27 +819,50 @@ export function StaffAttendance() {
               <div className="p-5 rounded-lg border border-[#c9c7b6] bg-white shadow-xs">
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-4 border-b border-[#c9c7b6]/40">
                   <div className="flex items-start gap-3 flex-1">
-                    <ProfileAvatar name={studentAuditData.student.name} size="lg" shape="rounded" />
+                    <ProfileAvatar
+                      src={studentAuditData.student.avatarUrl}
+                      name={studentAuditData.student.name}
+                      size="lg"
+                      shape="rounded"
+                    />
                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 flex-1 text-xs">
                       <div>
-                        <span className="text-[#797869] block">Student Name</span>
-                        <span className="text-sm font-bold text-[#1c1c14]">{studentAuditData.student.name}</span>
+                        <span className="text-[#797869] block">
+                          Student Name
+                        </span>
+                        <span className="text-sm font-bold text-[#1c1c14]">
+                          {studentAuditData.student.name}
+                        </span>
                       </div>
                       <div>
-                        <span className="text-[#797869] block">Admission Number</span>
-                        <span className="font-mono font-bold text-[#494900]">{studentAuditData.student.admissionNumber || '-'}</span>
+                        <span className="text-[#797869] block">
+                          Admission Number
+                        </span>
+                        <span className="font-mono font-bold text-[#494900]">
+                          {studentAuditData.student.admissionNumber || "-"}
+                        </span>
                       </div>
                       <div>
                         <span className="text-[#797869] block">Class</span>
-                        <span className="font-bold text-[#1c1c14]">{studentAuditData.student.class}</span>
+                        <span className="font-bold text-[#1c1c14]">
+                          {studentAuditData.student.class}
+                        </span>
                       </div>
                       <div>
-                        <span className="text-[#797869] block">Guardian Name</span>
-                        <span className="font-semibold text-[#1c1c14]">{studentAuditData.student.parentName || '-'}</span>
+                        <span className="text-[#797869] block">
+                          Guardian Name
+                        </span>
+                        <span className="font-semibold text-[#1c1c14]">
+                          {studentAuditData.student.parentName || "-"}
+                        </span>
                       </div>
                       <div>
-                        <span className="text-[#797869] block">Guardian Phone</span>
-                        <span className="font-semibold text-[#1c1c14]">{studentAuditData.student.parentPhone || '-'}</span>
+                        <span className="text-[#797869] block">
+                          Guardian Phone
+                        </span>
+                        <span className="font-semibold text-[#1c1c14]">
+                          {studentAuditData.student.parentPhone || "-"}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -632,35 +878,51 @@ export function StaffAttendance() {
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4">
                   <div className="p-3 rounded-lg bg-[#fdf9ec] border border-[#c9c7b6]/60">
-                    <span className="text-[11px] font-bold text-[#797869] uppercase">Attendance Rate</span>
+                    <span className="text-[11px] font-bold text-[#797869] uppercase">
+                      Attendance Rate
+                    </span>
                     <div className="text-2xl font-bold text-[#616218] mt-0.5 tabular-nums">
                       {studentAuditData.attendanceRate}%
                     </div>
-                    <span className="text-[10px] text-emerald-700 font-semibold">Academic Standing</span>
+                    <span className="text-[10px] text-emerald-700 font-semibold">
+                      Academic Standing
+                    </span>
                   </div>
 
                   <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200">
-                    <span className="text-[11px] font-bold text-emerald-800 uppercase">Days Present</span>
+                    <span className="text-[11px] font-bold text-emerald-800 uppercase">
+                      Days Present
+                    </span>
                     <div className="text-2xl font-bold text-emerald-700 mt-0.5 tabular-nums">
                       {studentAuditData.presentCount}
                     </div>
-                    <span className="text-[10px] text-emerald-600">Sessions Attended</span>
+                    <span className="text-[10px] text-emerald-600">
+                      Sessions Attended
+                    </span>
                   </div>
 
                   <div className="p-3 rounded-lg bg-stone-50 border border-stone-200">
-                    <span className="text-[11px] font-bold text-stone-700 uppercase">Days Absent</span>
+                    <span className="text-[11px] font-bold text-stone-700 uppercase">
+                      Days Absent
+                    </span>
                     <div className="text-2xl font-bold text-stone-700 mt-0.5 tabular-nums">
                       {studentAuditData.absentCount}
                     </div>
-                    <span className="text-[10px] text-stone-500">Recorded Absences</span>
+                    <span className="text-[10px] text-stone-500">
+                      Recorded Absences
+                    </span>
                   </div>
 
                   <div className="p-3 rounded-lg bg-white border border-[#c9c7b6]">
-                    <span className="text-[11px] font-bold text-[#797869] uppercase">Total Sessions</span>
+                    <span className="text-[11px] font-bold text-[#797869] uppercase">
+                      Total Sessions
+                    </span>
                     <div className="text-2xl font-bold text-[#1c1c14] mt-0.5 tabular-nums">
                       {studentAuditData.totalDays}
                     </div>
-                    <span className="text-[10px] text-[#797869]">Total School Days Logged</span>
+                    <span className="text-[10px] text-[#797869]">
+                      Total School Days Logged
+                    </span>
                   </div>
                 </div>
               </div>
@@ -687,47 +949,59 @@ export function StaffAttendance() {
                     <tbody className="divide-y divide-[#c9c7b6]/40">
                       {studentAuditData.logs.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="py-6 text-center text-xs text-[#797869]">
+                          <td
+                            colSpan={5}
+                            className="py-6 text-center text-xs text-[#797869]"
+                          >
                             No attendance records logged for this student yet.
                           </td>
                         </tr>
                       ) : (
                         studentAuditData.logs
-                          .slice((auditPage - 1) * auditPageSize, auditPage * auditPageSize)
+                          .slice(
+                            (auditPage - 1) * auditPageSize,
+                            auditPage * auditPageSize,
+                          )
                           .map((log, idx) => (
-                          <tr key={idx} className="hover:bg-[#fbf9f1] transition-colors">
-                            <td className="py-3 px-4 font-semibold text-[#1c1c14] tabular-nums">
-                              {new Date(log.date).toLocaleDateString('en-GB', {
-                                weekday: 'short',
-                                day: 'numeric',
-                                month: 'short',
-                                year: 'numeric'
-                              })}
-                            </td>
-                            <td className="py-3 px-4 font-bold text-xs text-[#494900]">
-                              {log.className}
-                            </td>
-                            <td className="py-3 px-4">
-                              {log.status === 'present' ? (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                                  <span>Present</span>
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-stone-100 text-stone-600 border border-stone-200">
-                                  <XCircle className="w-3.5 h-3.5 text-stone-500" />
-                                  <span>Absent</span>
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-3 px-4 text-xs font-medium text-[#1c1c14]">
-                              {log.submittedBy}
-                            </td>
-                            <td className="py-3 px-4 text-xs text-[#797869] tabular-nums">
-                              {log.timestamp}
-                            </td>
-                          </tr>
-                        ))
+                            <tr
+                              key={idx}
+                              className="hover:bg-[#fbf9f1] transition-colors"
+                            >
+                              <td className="py-3 px-4 font-semibold text-[#1c1c14] tabular-nums">
+                                {new Date(log.date).toLocaleDateString(
+                                  "en-GB",
+                                  {
+                                    weekday: "short",
+                                    day: "numeric",
+                                    month: "short",
+                                    year: "numeric",
+                                  },
+                                )}
+                              </td>
+                              <td className="py-3 px-4 font-bold text-xs text-[#494900]">
+                                {log.className}
+                              </td>
+                              <td className="py-3 px-4">
+                                {log.status === "present" ? (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>Present</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-stone-100 text-stone-600 border border-stone-200">
+                                    <XCircle className="w-3.5 h-3.5 text-stone-500" />
+                                    <span>Absent</span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-4 text-xs font-medium text-[#1c1c14]">
+                                {log.submittedBy}
+                              </td>
+                              <td className="py-3 px-4 text-xs text-[#797869] tabular-nums">
+                                {log.timestamp}
+                              </td>
+                            </tr>
+                          ))
                       )}
                     </tbody>
                   </table>

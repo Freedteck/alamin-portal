@@ -332,7 +332,7 @@ export function StaffStudentRequests() {
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#c9c7b6]/40">
                   <div className="flex items-center gap-3">
-                    <ProfileAvatar name={request.studentName} size="md" />
+                    <ProfileAvatar src={request.avatarUrl} name={request.studentName} size="md" />
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-5 gap-y-1 text-xs">
                       <div>
                         <span className="text-[10px] text-[#797869] block">Student</span>
@@ -507,7 +507,7 @@ export function StaffStudentRequests() {
             <div className="p-4 rounded-xl bg-[#fdf9ec] border border-[#c9c7b6]/60 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <ProfileAvatar name={selectedRequest.studentName} size="md" />
+                  <ProfileAvatar src={selectedRequest.avatarUrl} name={selectedRequest.studentName} size="md" />
                   <div>
                     <h4 className="font-bold text-sm text-[#1c1c14]">{selectedRequest.studentName}</h4>
                     <span className="text-xs text-[#797869]">{selectedRequest.studentEmail}</span>

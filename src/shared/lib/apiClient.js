@@ -4,6 +4,37 @@ const rawBaseUrl =
 export const API_BASE_URL = String(rawBaseUrl).trim().replace(/\/$/, '');
 const TOKEN_STORAGE_KEY = 'alamin_token';
 const AUTH_CHANGE_EVENT = 'alamin:auth-changed';
+const API_ACTIVITY_EVENT = 'alamin:api-activity';
+let activeRequestCount = 0;
+
+function emitApiActivity(detail) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(API_ACTIVITY_EVENT, { detail }));
+  }
+}
+
+export async function trackApiActivity(operation, { method = 'GET', endpoint = '' } = {}) {
+  activeRequestCount += 1;
+  emitApiActivity({ type: 'start', activeRequestCount });
+  try {
+    return await operation();
+  } catch (error) {
+    emitApiActivity({
+      type: 'error',
+      activeRequestCount,
+      error: {
+        message: error?.message || 'An unexpected request error occurred.',
+        status: error?.status,
+        method,
+        endpoint: endpoint.replace(/^https?:\/\/[^/]+/i, '').split('?')[0]
+      }
+    });
+    throw error;
+  } finally {
+    activeRequestCount = Math.max(0, activeRequestCount - 1);
+    emitApiActivity({ type: 'finish', activeRequestCount });
+  }
+}
 
 export function getAuthToken() {
   if (typeof window === 'undefined') return '';
@@ -52,6 +83,7 @@ export function resolveApiUrl(path = '') {
 
 async function request(path, options = {}) {
   const url = resolveApiUrl(path);
+  const method = options.method || 'GET';
   const token = getAuthToken();
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
 
@@ -64,27 +96,36 @@ async function request(path, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers
-  });
+  return trackApiActivity(async () => {
+    const response = await fetch(url, {
+      ...options,
+      headers
+    });
 
-  const contentType = response.headers.get('content-type') || '';
-  const data = contentType.includes('application/json')
-    ? await response.json().catch(() => null)
-    : await response.text().catch(() => null);
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json')
+      ? await response.json().catch(() => null)
+      : await response.text().catch(() => null);
 
-  if (!response.ok) {
-    const message =
-      (data && typeof data === 'object' && (data.error || data.message)) ||
-      `Request failed (${response.status})`;
-    const err = new Error(message);
-    err.status = response.status;
-    err.payload = data;
-    throw err;
-  }
+    if (!response.ok) {
+      const message =
+        (data && typeof data === 'object' && (data.error || data.message)) ||
+        `Request failed (${response.status})`;
+      const err = new Error(message);
+      err.status = response.status;
+      err.payload = data;
+      throw err;
+    }
 
-  return data;
+    return data;
+  }, { method, endpoint: url });
+}
+
+export function subscribeApiActivity(callback) {
+  if (typeof window === 'undefined' || typeof callback !== 'function') return () => {};
+  const handler = (event) => callback(event.detail);
+  window.addEventListener(API_ACTIVITY_EVENT, handler);
+  return () => window.removeEventListener(API_ACTIVITY_EVENT, handler);
 }
 
 export const apiClient = {

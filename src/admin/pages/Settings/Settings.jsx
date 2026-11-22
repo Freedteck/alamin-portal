@@ -27,62 +27,38 @@ import {
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState("general");
-  const [institutionName, setInstitutionName] = useState("Al-Amin Group of Schools");
+  const [institutionName, setInstitutionName] = useState(
+    "Al-Amin Group of Schools",
+  );
   const [establishedYear, setEstablishedYear] = useState("2010");
-  const [officialEmail, setOfficialEmail] = useState("info@alaminschools.edu.ng");
+  const [officialEmail, setOfficialEmail] = useState(
+    "info@alaminschools.edu.ng",
+  );
   const [phone, setPhone] = useState("+234 803 456 7890");
-  const [address, setAddress] = useState("Al-Amin Campus, 14 Ahmadu Bello Way, Nassarawa GRA");
+  const [address, setAddress] = useState(
+    "Al-Amin Campus, 14 Ahmadu Bello Way, Nassarawa GRA",
+  );
   const [website, setWebsite] = useState("www.alaminschools.edu.ng");
-  const [registrationNumber, setRegistrationNumber] = useState("ASS-2010-008920");
+  const [registrationNumber, setRegistrationNumber] =
+    useState("ASS-2010-008920");
   const [timezone, setTimezone] = useState("wat");
   const [dateFormat, setDateFormat] = useState("dd-mm-yyyy");
   const [academicTerm, setAcademicTerm] = useState("first-term");
   const [language, setLanguage] = useState("en");
   const [emailNotifications, setEmailNotifications] = useState(true);
-  const [smsNotifications, setSmsNotifications] = useState(
-    initial.smsNotifications ?? false,
-  );
-  const [pushNotifications, setPushNotifications] = useState(
-    initial.pushNotifications ?? true,
-  );
-  const [reportCardAlerts, setReportCardAlerts] = useState(
-    initial.reportCardAlerts ?? true,
-  );
-  const [attendanceAlerts, setAttendanceAlerts] = useState(
-    initial.attendanceAlerts ?? true,
-  );
-  const [autoBackup, setAutoBackup] = useState(initial.autoBackup ?? true);
-  const [sessionDuration, setSessionDuration] = useState(
-    initial.sessionDuration || "45",
-  );
-  const [academicYear, setAcademicYear] = useState(
-    initial.academicYear || "2026-27",
-  );
-  const [gradingSystem, setGradingSystem] = useState(
-    initial.gradingSystem || "ca-exam",
-  );
-  const [attendanceThreshold, setAttendanceThreshold] = useState(
-    initial.attendanceThreshold || "75",
-  );
-  const [twoFactorAuth, setTwoFactorAuth] = useState(
-    initial.twoFactorAuth ?? false,
-  );
-  const [sessionTimeoutEnabled, setSessionTimeoutEnabled] = useState(
-    initial.sessionTimeoutEnabled ?? true,
-  );
-  const [sessionTimeoutDuration, setSessionTimeoutDuration] = useState(
-    initial.sessionTimeoutDuration || "30",
-  );
-  const [retentionPeriod, setRetentionPeriod] = useState(
-    initial.retentionPeriod || "12",
-  );
-  const [integrations, setIntegrations] = useState(
-    initial.integrations || {
-      googleWorkspace: false,
-      whatsapp: false,
-      zoom: false,
-    },
-  );
+  const [smsNotifications, setSmsNotifications] = useState(false);
+  const [pushNotifications, setPushNotifications] = useState(true);
+  const [reportCardAlerts, setReportCardAlerts] = useState(true);
+  const [attendanceAlerts, setAttendanceAlerts] = useState(true);
+  const [autoBackup, setAutoBackup] = useState(true);
+  const [sessionDuration, setSessionDuration] = useState("45");
+  const [academicYear, setAcademicYear] = useState("2026-27");
+  const [gradingSystem, setGradingSystem] = useState("ca-exam");
+  const [attendanceThreshold, setAttendanceThreshold] = useState("75");
+  const [twoFactorAuth, setTwoFactorAuth] = useState(false);
+  const [sessionTimeoutEnabled, setSessionTimeoutEnabled] = useState(true);
+  const [sessionTimeoutDuration, setSessionTimeoutDuration] = useState("30");
+  const [retentionPeriod, setRetentionPeriod] = useState("12");
   const [showEmailPassword, setShowEmailPassword] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -120,22 +96,30 @@ export function Settings() {
         if (data.phone) setPhone(data.phone);
         if (data.address) setAddress(data.address);
         if (data.website) setWebsite(data.website);
-        if (data.registrationNumber) setRegistrationNumber(data.registrationNumber);
+        if (data.registrationNumber)
+          setRegistrationNumber(data.registrationNumber);
         if (data.timezone) setTimezone(data.timezone);
         if (data.dateFormat) setDateFormat(data.dateFormat);
         if (data.academicTerm) setAcademicTerm(data.academicTerm);
         if (data.language) setLanguage(data.language);
-        if (data.emailNotifications !== undefined) setEmailNotifications(data.emailNotifications);
-        if (data.smsNotifications !== undefined) setSmsNotifications(data.smsNotifications);
-        if (data.pushNotifications !== undefined) setPushNotifications(data.pushNotifications);
+        if (data.emailNotifications !== undefined)
+          setEmailNotifications(data.emailNotifications);
+        if (data.smsNotifications !== undefined)
+          setSmsNotifications(data.smsNotifications);
+        if (data.pushNotifications !== undefined)
+          setPushNotifications(data.pushNotifications);
         if (data.autoBackup !== undefined) setAutoBackup(data.autoBackup);
         if (data.sessionDuration) setSessionDuration(data.sessionDuration);
         if (data.academicYear) setAcademicYear(data.academicYear);
         if (data.gradingSystem) setGradingSystem(data.gradingSystem);
-        if (data.attendanceThreshold !== undefined) setAttendanceThreshold(data.attendanceThreshold);
-        if (data.twoFactorAuth !== undefined) setTwoFactorAuth(data.twoFactorAuth);
-        if (data.sessionTimeoutEnabled !== undefined) setSessionTimeoutEnabled(data.sessionTimeoutEnabled);
-        if (data.sessionTimeoutDuration) setSessionTimeoutDuration(data.sessionTimeoutDuration);
+        if (data.attendanceThreshold !== undefined)
+          setAttendanceThreshold(data.attendanceThreshold);
+        if (data.twoFactorAuth !== undefined)
+          setTwoFactorAuth(data.twoFactorAuth);
+        if (data.sessionTimeoutEnabled !== undefined)
+          setSessionTimeoutEnabled(data.sessionTimeoutEnabled);
+        if (data.sessionTimeoutDuration)
+          setSessionTimeoutDuration(data.sessionTimeoutDuration);
       })
       .catch(() => {});
   }, []);
@@ -145,7 +129,7 @@ export function Settings() {
     try {
       const [classes, candidates] = await Promise.all([
         schoolStore.fetchClasses(),
-        schoolStore.getPromotionCandidates()
+        schoolStore.getPromotionCandidates(),
       ]);
       setClassesList(classes.map((item) => item.name || item));
 
@@ -162,7 +146,7 @@ export function Settings() {
       });
       setPromotionsMap(initialMap);
     } catch (error) {
-      console.error('Failed to load session rollover data:', error);
+      console.error("Failed to load session rollover data:", error);
       showToast(error?.message || "Error loading session rollover candidates.");
     } finally {
       setIsLoadingRollover(false);
@@ -315,7 +299,6 @@ export function Settings() {
         sessionTimeoutEnabled,
         sessionTimeoutDuration,
         retentionPeriod,
-        integrations,
       };
       await apiClient.put("/settings", payload);
       showToast("Institution settings saved successfully to database!");
@@ -326,14 +309,22 @@ export function Settings() {
 
   const handleExportArchive = async () => {
     try {
-      const [students, teachers, subjects, attendance, grades, assignments, announcements] = await Promise.all([
-        apiClient.get('/students'),
-        apiClient.get('/teachers'),
-        apiClient.get('/subjects'),
-        apiClient.get('/attendance'),
-        apiClient.get('/grades'),
-        apiClient.get('/assignments'),
-        apiClient.get('/announcements')
+      const [
+        students,
+        teachers,
+        subjects,
+        attendance,
+        grades,
+        assignments,
+        announcements,
+      ] = await Promise.all([
+        apiClient.get("/students"),
+        apiClient.get("/teachers"),
+        apiClient.get("/subjects"),
+        apiClient.get("/attendance"),
+        apiClient.get("/grades"),
+        apiClient.get("/assignments"),
+        apiClient.get("/announcements"),
       ]);
       const snapshot = {
         exportedAt: new Date().toISOString(),
@@ -344,7 +335,7 @@ export function Settings() {
         attendance,
         grades,
         assignments,
-        announcements
+        announcements,
       };
       const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
         type: "application/json",
@@ -359,20 +350,11 @@ export function Settings() {
       URL.revokeObjectURL(url);
       showToast("Institution data export downloaded as JSON archive.");
     } catch (error) {
-      console.error('Failed to export institution data:', error);
+      console.error("Failed to export institution data:", error);
       showToast(error?.message || "Unable to export institution data.");
     }
   };
 
-  const toggleIntegration = (key, label) => {
-    setIntegrations((prev) => {
-      const next = { ...prev, [key]: !prev[key] };
-      showToast(
-        `${label} marked as ${next[key] ? "Configured" : "Not Configured"}. Click Save Changes to persist.`,
-      );
-      return next;
-    });
-  };
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif]">
       {toast && (
@@ -427,13 +409,6 @@ export function Settings() {
             className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === "security" ? "border-[#616218] text-[#616218]" : "border-transparent text-[#797869] hover:text-[#1c1c14]"} `}
           >
             Security
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("integrations")}
-            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === "integrations" ? "border-[#616218] text-[#616218]" : "border-transparent text-[#797869] hover:text-[#1c1c14]"} `}
-          >
-            Integrations
           </button>
         </div>
 
@@ -558,9 +533,6 @@ export function Settings() {
                     <div className="p-2 bg-white rounded-lg border border-[#c9c7b6] shadow-xs">
                       <Logo variant="dark" className="h-10" showText={true} />
                     </div>
-                    <span className="text-xs text-[#616218] font-semibold bg-[#e7e78f]/50 px-2.5 py-1 rounded-md">
-                      Verified Crest Active
-                    </span>
                   </div>
                 </div>
               </div>
@@ -1498,111 +1470,6 @@ export function Settings() {
           </div>
         )}
 
-        {activeTab === "integrations" && (
-          <div className="space-y-6">
-            <div className="rounded-lg border bg-card p-6 shadow-sm">
-              <div className="mb-4">
-                <h3 className="font-semibold leading-none tracking-tight">
-                  Third-Party Integrations
-                </h3>
-              </div>
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded flex items-center justify-center font-bold text-blue-700 text-xs">
-                      GW
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium leading-none">
-                        Google Workspace
-                      </label>
-                      <p className="text-sm text-muted-foreground">
-                        Sync with Google Calendar and Gmail
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${integrations.googleWorkspace ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-stone-100 text-stone-700 border-stone-200"}`}
-                    >
-                      {integrations.googleWorkspace
-                        ? "Configured"
-                        : "Not Configured"}
-                    </span>
-                    <Button
-                      variant="outline"
-                      onClick={() =>
-                        toggleIntegration("googleWorkspace", "Google Workspace")
-                      }
-                    >
-                      {integrations.googleWorkspace ? "Disable" : "Configure"}
-                    </Button>
-                  </div>
-                </div>
-                <hr className="my-4 border-t border-border" />
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-green-100 rounded flex items-center justify-center font-bold text-green-700 text-xs">
-                      WA
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium leading-none">
-                        WhatsApp Business
-                      </label>
-                      <p className="text-sm text-muted-foreground">
-                        Send parent notifications via WhatsApp
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${integrations.whatsapp ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-stone-100 text-stone-700 border-stone-200"}`}
-                    >
-                      {integrations.whatsapp ? "Configured" : "Not Configured"}
-                    </span>
-                    <Button
-                      variant="outline"
-                      onClick={() =>
-                        toggleIntegration("whatsapp", "WhatsApp Business")
-                      }
-                    >
-                      {integrations.whatsapp ? "Disable" : "Configure"}
-                    </Button>
-                  </div>
-                </div>
-                <hr className="my-4 border-t border-border" />
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-purple-100 rounded flex items-center justify-center font-bold text-purple-700 text-xs">
-                      ZM
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium leading-none">
-                        Zoom
-                      </label>
-                      <p className="text-sm text-muted-foreground">
-                        Schedule and manage virtual parent-teacher conferences
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${integrations.zoom ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-stone-100 text-stone-700 border-stone-200"}`}
-                    >
-                      {integrations.zoom ? "Configured" : "Not Configured"}
-                    </span>
-                    <Button
-                      variant="outline"
-                      onClick={() => toggleIntegration("zoom", "Zoom")}
-                    >
-                      {integrations.zoom ? "Disable" : "Configure"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="flex justify-end">

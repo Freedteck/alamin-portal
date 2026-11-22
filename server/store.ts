@@ -363,6 +363,18 @@ export const backendStore = {
     if (!user) return false;
     if (user.role === 'admin') return true;
 
+    if (filePath.startsWith('avatars/')) {
+      const avatarUrl = `/api/files/download/${filePath}`;
+      const client = requireServerSupabase();
+      const [teacherAvatar, studentAvatar] = await Promise.all([
+        client.from('teachers').select('id').eq('avatar_url', avatarUrl).limit(1),
+        client.from('students').select('id').eq('avatar_url', avatarUrl).limit(1)
+      ]);
+      if (teacherAvatar.error) throw teacherAvatar.error;
+      if (studentAvatar.error) throw studentAvatar.error;
+      return Boolean(teacherAvatar.data?.length || studentAvatar.data?.length);
+    }
+
     const sameFile = (entry: any, path: string) =>
       [entry.filePath, entry.attachmentPath, entry.fileUrl, entry.attachmentUrl]
         .some((value) => value === path || value === `/api/files/download/${path}`);
@@ -709,7 +721,7 @@ export const backendStore = {
     )).values()];
     const subjectCounts = await Promise.all(subjectPairs.map(async ({ className, subject }) => {
       const { count, error } = await client.from('students').select('id', { count: 'exact', head: true })
-        .eq('class', className).contains('enrolled_subjects', [subject]);
+        .eq('class', className).filter('enrolled_subjects', 'cs', JSON.stringify([subject]));
       if (error) throw error;
       return [`${className}::${subject}`, count || 0] as const;
     }));
@@ -1236,7 +1248,7 @@ export const backendStore = {
         query = query.ilike('department', quotePostgrestSearch(options.department.trim()));
       }
       if (options?.subject && options.subject !== 'all') {
-        query = query.contains('enrolled_subjects', [options.subject.trim()]);
+        query = query.filter('enrolled_subjects', 'cs', JSON.stringify([options.subject.trim()]));
       }
       if (options?.status && options.status !== 'all') {
         query = query.ilike('status', quotePostgrestSearch(options.status.trim()));
@@ -1415,8 +1427,8 @@ export const backendStore = {
     if (options?.class && options.class !== 'all') {
       const className = options.class.trim();
       const [{ data: assignedTeachers, error: assignedError }, { data: classTeachers, error: classTeacherError }] = await Promise.all([
-        client.from('teachers').select('id').contains('assigned_classes', [{ class: className }]),
-        client.from('teachers').select('id').contains('class_teacher_of', [className])
+        client.from('teachers').select('id').filter('assigned_classes', 'cs', JSON.stringify([{ class: className }])),
+        client.from('teachers').select('id').filter('class_teacher_of', 'cs', JSON.stringify([className]))
       ]);
       if (assignedError) throw assignedError;
       if (classTeacherError) throw classTeacherError;
@@ -1436,7 +1448,7 @@ export const backendStore = {
           : query.eq('id', '');
       }
       if (options?.subject && options.subject !== 'all') {
-        query = query.contains('assigned_classes', [{ subject: options.subject.trim() }]);
+        query = query.filter('assigned_classes', 'cs', JSON.stringify([{ subject: options.subject.trim() }]));
       }
       if (options?.search?.trim()) {
         const pattern = `"%${quotePostgrestSearch(options.search.trim())}%"`;
@@ -2099,6 +2111,7 @@ export const backendStore = {
         remark: row.remark,
         session: row.session,
         term: row.term,
+        isRecorded: true,
         subject: row.subject
       };
       return result;
@@ -2547,11 +2560,11 @@ export const backendStore = {
     if (options?.role === 'student') {
       query = query.in('access_level', ['all', 'student', 'students']);
       if (options.classes?.length) query = query.or(jsonArrayContainsFilter('allowed_classes', ['All Classes', ...options.classes]));
-      else query = query.contains('allowed_classes', ['All Classes']);
+      else query = query.filter('allowed_classes', 'cs', JSON.stringify(['All Classes']));
     } else if (options?.role === 'teacher') {
       query = query.in('access_level', ['all', 'staff', 'teacher', 'teachers']);
       if (options.classes?.length) query = query.or(jsonArrayContainsFilter('allowed_classes', ['All Classes', ...options.classes]));
-      else query = query.contains('allowed_classes', ['All Classes']);
+      else query = query.filter('allowed_classes', 'cs', JSON.stringify(['All Classes']));
     }
     if (options?.search?.trim()) {
       const term = `"%${quotePostgrestSearch(options.search.trim())}%"`;
@@ -2642,26 +2655,42 @@ export const backendStore = {
     audience?: string;
     scope?: string;
     role?: string;
+    classes?: string[];
     page?: number;
     limit?: number;
   }) {
     const page = paginationFor(options);
     let query = requireServerSupabase().from('announcements').select('*', { count: 'exact' });
+    const orGroups: string[] = [];
     if (options?.role === 'student') {
-      query = query.or('target_role.is.null,target_role.eq.all,target_role.eq.student');
+      orGroups.push(jsonArrayContainsFilter('target_audiences', [
+        'Everyone',
+        'All Students',
+        ...(options.classes || [])
+      ]));
     } else if (options?.role === 'teacher') {
-      query = query.in('target_role', ['all', 'teacher']);
+      orGroups.push(jsonArrayContainsFilter('target_audiences', [
+        'Everyone',
+        'All Students',
+        'Teaching Staff',
+        ...(options.classes || [])
+      ]));
     }
     if (options?.search?.trim()) {
       const term = `"%${quotePostgrestSearch(options.search.trim())}%"`;
-      query = query.or(`title.ilike.${term},content.ilike.${term}`);
+      orGroups.push(`title.ilike.${term},content.ilike.${term}`);
     }
     if (options?.type && options.type !== 'all') query = query.eq('type', options.type);
     if (options?.audience && options.audience !== 'all') {
-      query = query.or(`target_audiences.cs.${JSON.stringify(['Everyone'])},target_audiences.cs.${JSON.stringify([options.audience])}`);
+      orGroups.push(jsonArrayContainsFilter('target_audiences', ['Everyone', options.audience]));
     }
     if (options?.scope === 'admin') query = query.neq('author_role', 'Teaching Staff');
     if (options?.scope === 'mine') query = query.eq('author_role', 'Teaching Staff');
+    if (orGroups.length === 1) {
+      query = query.or(orGroups[0]);
+    } else if (orGroups.length > 1) {
+      query = query.or(`and(${orGroups.map((group) => `or(${group})`).join(',')})`);
+    }
     query = query.order('is_pinned', { ascending: false }).order('date', { ascending: false });
     query = applyPage(query, page);
     const { data, error, count } = await query;
@@ -2937,11 +2966,23 @@ export const backendStore = {
   },
 
   async getRequests(studentId?: string) {
-    let query = requireServerSupabase().from('student_requests').select('*').order('submitted_date', { ascending: false });
+    const client = requireServerSupabase();
+    let query = client.from('student_requests').select('*').order('submitted_date', { ascending: false });
     if (studentId) query = query.eq('student_id', studentId);
     const { data, error } = await query;
     if (error) throw error;
-    return mapDatabaseRows(data);
+    const requests = mapDatabaseRows(data);
+    const studentIds = [...new Set(requests.map((request) => request.studentId).filter(Boolean))];
+    if (!studentIds.length) return requests;
+    const { data: students, error: studentsError } = await client.from('students')
+      .select('id,avatar_url')
+      .in('id', studentIds);
+    if (studentsError) throw studentsError;
+    const avatarByStudentId = new Map((students || []).map((student) => [student.id, student.avatar_url || '']));
+    return requests.map((request) => ({
+      ...request,
+      avatarUrl: avatarByStudentId.get(request.studentId) || ''
+    }));
   },
 
   async addRequest(reqData: any) {

@@ -242,7 +242,7 @@ export function StudentManagement() {
                     </td>
                     <td className="py-3.5 px-4 font-semibold text-[#1c1c14]">
                       <div className="flex items-center gap-2.5">
-                        <ProfileAvatar name={student.name} size="sm" />
+                        <ProfileAvatar src={student.avatarUrl} name={student.name} size="sm" />
                         <span>{student.name}</span>
                       </div>
                     </td>
@@ -339,7 +339,7 @@ export function StudentManagement() {
         {selectedStudent && (
           <div className="space-y-6 text-sm">
             <div className="flex items-center gap-4 p-4 bg-[#faf8f0] rounded-xl border border-[#c9c7b6]/70">
-              <ProfileAvatar name={selectedStudent.name || 'Student'} size="lg" />
+              <ProfileAvatar src={selectedStudent.avatarUrl} name={selectedStudent.name || 'Student'} size="lg" />
               <div className="min-w-0">
                 <h3 className="font-bold text-base text-[#1c1c14]">{selectedStudent.name || 'Student Profile'}</h3>
                 <p className="text-xs text-[#797869] mt-0.5">Active Student</p>

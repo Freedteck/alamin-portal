@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { User } from 'lucide-react';
+import { apiClient, trackApiActivity } from '../../lib/apiClient';
 
 const SIZE_CLASSES = {
   xs: 'w-6 h-6',
@@ -26,11 +27,69 @@ export const ProfileAvatar = ({
   shape = 'circle',
   className = '',
 }) => {
+  const [imageSource, setImageSource] = useState('');
   const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl = '';
+    setHasError(false);
+    setImageSource('');
+
+    if (!src) {
+      setImageSource('');
+      return () => {
+        active = false;
+      };
+    }
+
+    if (!/(?:\/api)?\/files\/download\//.test(src)) {
+      setImageSource(src);
+      return () => {
+        active = false;
+      };
+    }
+
+    const loadProtectedImage = () => trackApiActivity(async () => {
+      const token = apiClient.getToken();
+      const response = await fetch(apiClient.resolveUrl(src), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!response.ok) {
+        throw new Error(`Profile photo request failed (${response.status}).`);
+      }
+
+      const responseBlob = await response.blob();
+      const extension = src.split('?')[0].split('.').pop()?.toLowerCase();
+      const imageType = {
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        png: 'image/png',
+        gif: 'image/gif',
+        webp: 'image/webp',
+        avif: 'image/avif'
+      }[extension] || responseBlob.type;
+      objectUrl = URL.createObjectURL(new Blob([responseBlob], { type: imageType }));
+      if (active) setImageSource(objectUrl);
+      else URL.revokeObjectURL(objectUrl);
+    }, { endpoint: apiClient.resolveUrl(src) });
+
+    loadProtectedImage().catch((error) => {
+      if (active) {
+        console.error('Failed to load profile photo:', error);
+        setHasError(true);
+      }
+    });
+
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
 
   const sizeClass = SIZE_CLASSES[size] || SIZE_CLASSES.sm;
   const shapeClass = shape === 'rounded' ? 'rounded-lg' : 'rounded-full';
-  const hasValidImage = Boolean(src && !hasError);
+  const hasValidImage = Boolean(imageSource && !hasError);
 
   return (
     <div
@@ -39,7 +98,7 @@ export const ProfileAvatar = ({
     >
       {hasValidImage ? (
         <img
-          src={src}
+          src={imageSource}
           alt={name}
           referrerPolicy="no-referrer"
           onError={() => setHasError(true)}

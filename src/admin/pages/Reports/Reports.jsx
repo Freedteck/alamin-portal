@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Printer } from 'lucide-react';
+import { ChevronDown, Printer, Search, X } from 'lucide-react';
 import { Logo } from '../../../shared/components/Logo/Logo';
-import { SearchInput } from '../../../shared/components/SearchInput/SearchInput';
-import { Pagination } from '../../../shared/components/Pagination/Pagination';
 import {
   schoolStore,
   SCHOOL_CLASSES,
@@ -11,40 +9,46 @@ import {
   subscribeSchoolSync
 } from '../../../shared/data/schoolData';
 
-export function AdminReports() {
+export function AdminReports({ readOnly = false }) {
   const [searchParams] = useSearchParams();
   const studentParam = searchParams.get('student');
 
   const [students, setStudents] = useState([]);
-  const [totalStudents, setTotalStudents] = useState(0);
-  const [studentPage, setStudentPage] = useState(1);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
+  const [debouncedStudentSearch, setDebouncedStudentSearch] = useState('');
   const [linkedStudent, setLinkedStudent] = useState(null);
   const [selectedClassFilter, setSelectedClassFilter] = useState('all');
   const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [isStudentDropdownOpen, setIsStudentDropdownOpen] = useState(false);
+  const studentPickerRef = useRef(null);
   const [selectedSession, setSelectedSession] = useState(ACADEMIC_SESSIONS[0]);
   const [selectedTerm, setSelectedTerm] = useState('Term1');
   const [reportCard, setReportCard] = useState(null);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedStudentSearch(studentSearchTerm);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [studentSearchTerm]);
+
+  useEffect(() => {
+    if (readOnly) {
+      setStudents([]);
+      return undefined;
+    }
     let active = true;
     const sync = async () => {
       try {
         const res = await schoolStore.fetchStudents({
-          page: studentPage,
+          page: 1,
           limit: 20,
           class: selectedClassFilter,
-          search: studentSearchTerm
+          search: debouncedStudentSearch
         });
         if (!active) return;
         const list = Array.isArray(res?.data) ? res.data : [];
         setStudents(list);
-        setTotalStudents(res?.total || 0);
-        if (!studentParam && list.length > 0 && !list.some((student) => student.id === selectedStudentId)) {
-          setSelectedStudentId(list[0].id);
-        } else if (list.length === 0) {
-          if (!studentParam) setSelectedStudentId('');
-        }
       } catch (error) {
         console.error('Failed to load report students:', error);
         setStudents([]);
@@ -56,7 +60,17 @@ export function AdminReports() {
       active = false;
       unsubscribe();
     };
-  }, [studentParam, selectedClassFilter, studentPage, studentSearchTerm]);
+  }, [readOnly, selectedClassFilter, debouncedStudentSearch]);
+
+  useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (!studentPickerRef.current?.contains(event.target)) {
+        setIsStudentDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -68,6 +82,7 @@ export function AdminReports() {
       if (!active) return;
       setLinkedStudent(student);
       setSelectedStudentId(student.id);
+      setStudentSearchTerm(student.name);
       setSelectedClassFilter(student.class || 'all');
     }).catch((error) => {
       console.error('Failed to load report student:', error);
@@ -99,7 +114,7 @@ export function AdminReports() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-[#c9c7b6]/50 print:hidden">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1c1c14]">
-            Terminal Academic Report Cards
+            {readOnly ? 'Student Terminal Report Sheet' : 'Terminal Academic Report Cards'}
           </h1>
           <p className="text-sm text-[#797869] mt-0.5 max-w-xl">
             Official terminal report sheets, continuous assessment records, and psychomotor evaluations.
@@ -119,14 +134,17 @@ export function AdminReports() {
       </div>
 
       <div className="rounded-lg border border-[#c9c7b6] bg-white p-4 shadow-xs print:hidden">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <div className="space-y-1">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 ${readOnly ? 'lg:grid-cols-2' : 'lg:grid-cols-4'} gap-4`}>
+          <div className={`space-y-1 ${readOnly ? 'hidden' : ''}`}>
             <label className="text-xs font-semibold text-[#797869]">Class</label>
             <select
               value={selectedClassFilter}
               onChange={(e) => {
                 setSelectedClassFilter(e.target.value);
-                setStudentPage(1);
+                setSelectedStudentId('');
+                setLinkedStudent(null);
+                setStudentSearchTerm('');
+                setReportCard(null);
               }}
               className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
             >
@@ -139,45 +157,81 @@ export function AdminReports() {
             </select>
           </div>
 
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-[#797869]">Search Students</label>
-            <SearchInput
-              value={studentSearchTerm}
-              onChange={(e) => {
-                setStudentSearchTerm(e.target.value);
-                setStudentPage(1);
-              }}
-              placeholder="Name or admission number..."
-            />
-          </div>
-
-          <div className="space-y-1">
+          <div className={`space-y-1 ${readOnly ? 'hidden' : ''}`} ref={studentPickerRef}>
             <label className="text-xs font-semibold text-[#797869]">Select Enrolled Student</label>
-            <select
-              value={selectedStudentId}
-              onChange={(e) => setSelectedStudentId(e.target.value)}
-              className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm font-semibold text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
-            >
-              {linkedStudent && !students.some((student) => student.id === linkedStudent.id) && (
-                <option value={linkedStudent.id}>{linkedStudent.name}</option>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#797869] pointer-events-none" />
+              <input
+                type="text"
+                role="combobox"
+                aria-expanded={isStudentDropdownOpen}
+                aria-controls="report-student-options"
+                aria-autocomplete="list"
+                value={isStudentDropdownOpen ? studentSearchTerm : (linkedStudent?.name || studentSearchTerm)}
+                onFocus={() => {
+                  setIsStudentDropdownOpen(true);
+                  if (selectedStudentId) setStudentSearchTerm('');
+                }}
+                onChange={(event) => {
+                  setStudentSearchTerm(event.target.value);
+                  setSelectedStudentId('');
+                  setLinkedStudent(null);
+                  setReportCard(null);
+                  setIsStudentDropdownOpen(true);
+                }}
+                placeholder="Search by name or admission number..."
+                className="w-full h-10 pl-10 pr-10 rounded-lg border border-[#c9c7b6] bg-white text-sm font-semibold text-[#1c1c14] placeholder:font-normal placeholder:text-[#797869] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+              />
+              {studentSearchTerm && (
+                <button
+                  type="button"
+                  aria-label="Clear student search"
+                  onClick={() => {
+                    setStudentSearchTerm('');
+                    setSelectedStudentId('');
+                    setLinkedStudent(null);
+                    setReportCard(null);
+                    setIsStudentDropdownOpen(true);
+                  }}
+                  className="absolute right-8 top-1/2 -translate-y-1/2 rounded p-1 text-[#797869] hover:bg-[#faf8f0]"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               )}
-              {students.length === 0 ? (
-                <option value="">No students enrolled</option>
-              ) : (
-                students.map((st) => (
-                    <option key={st.id} value={st.id}>
-                      {st.name}
-                    </option>
-                  ))
+              <ChevronDown className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#797869] pointer-events-none" />
+              {isStudentDropdownOpen && (
+                <div
+                  id="report-student-options"
+                  role="listbox"
+                  className="absolute z-30 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-[#c9c7b6] bg-white py-1 shadow-lg"
+                >
+                  {students.length ? students.map((student) => (
+                    <button
+                      key={student.id}
+                      type="button"
+                      role="option"
+                      aria-selected={student.id === selectedStudentId}
+                      onClick={() => {
+                        setSelectedStudentId(student.id);
+                        setLinkedStudent(student);
+                        setStudentSearchTerm(student.name);
+                        setIsStudentDropdownOpen(false);
+                      }}
+                      className="flex w-full flex-col px-3 py-2 text-left hover:bg-[#faf8f0] focus:bg-[#faf8f0] focus:outline-none"
+                    >
+                      <span className="text-sm font-semibold text-[#1c1c14]">{student.name}</span>
+                      <span className="text-xs text-[#797869]">
+                        {[student.admissionNumber, student.class].filter(Boolean).join(' · ')}
+                      </span>
+                    </button>
+                  )) : (
+                    <p className="px-3 py-3 text-xs text-[#797869]">
+                      No matching students found.
+                    </p>
+                  )}
+                </div>
               )}
-            </select>
-            <Pagination
-              currentPage={studentPage}
-              totalItems={totalStudents}
-              pageSize={20}
-              onPageChange={setStudentPage}
-              itemLabel="students"
-            />
+            </div>
           </div>
 
           <div className="space-y-1">
@@ -441,7 +495,9 @@ export function AdminReports() {
         </div>
       ) : (
         <div className="rounded-lg border border-[#c9c7b6] bg-white p-12 text-center text-xs text-[#797869]">
-          {students.length === 0
+          {readOnly
+            ? 'The report is unavailable for this student, term, and session. Confirm that you are the class teacher and that grades have been recorded.'
+            : students.length === 0
             ? 'No students enrolled yet. Admit a student first to generate official academic report cards.'
             : 'Select an enrolled student above to load their official academic report card.'}
         </div>

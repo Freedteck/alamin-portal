@@ -13,6 +13,7 @@ import { StaffAnnouncements } from './pages/Announcements/Announcements';
 import { StaffAttendance } from './pages/Attendance/Attendance';
 import { RecordGrades } from './pages/Grades/RecordGrades';
 import { StaffProfile } from './pages/Profile/Profile';
+import { AdminReports } from '../admin/pages/Reports/Reports';
 
 function StaffRedirect() {
   const { subpage } = useParams();
@@ -30,6 +31,7 @@ export const staffRoutes = [
       { path: 'students', element: <StaffStudents /> },
       { path: 'attendance', element: <StaffAttendance /> },
       { path: 'grades', element: <RecordGrades /> },
+      { path: 'reports', element: <AdminReports readOnly /> },
       { path: 'schedule', element: <StaffTimetable /> },
       { path: 'assignments', element: <StaffAssignments /> },
       { path: 'resources', element: <StaffResources /> },

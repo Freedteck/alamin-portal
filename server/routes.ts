@@ -998,9 +998,8 @@ router.get('/reports/:studentId', requireAuth, async (req: AuthenticatedRequest,
         backendStore.getStudentDirectoryRecord(targetId),
         backendStore.getTeacherDirectoryRecord(req.user.teacherId || '')
       ]);
-      const assigned = (teacher?.assignedClasses || []).some((item: any) => item.class === student?.class) ||
-        (teacher?.classTeacherOf || []).includes(student?.class);
-      if (!student || !assigned) return res.status(403).json({ error: 'You can only view reports for students in your assigned classes.' });
+      const isClassTeacher = Boolean(student && (teacher?.classTeacherOf || []).includes(student.class));
+      if (!isClassTeacher) return res.status(403).json({ error: "Only the student's class teacher can view this report." });
     }
     const report = await backendStore.getStudentReportCard(targetId, term, session);
     if (!report) return res.status(404).json({ error: 'Student report not found.' });
@@ -1257,12 +1256,26 @@ router.delete('/documents/:id', requireAuth, requireRole('admin', 'teacher'), as
 router.get('/announcements', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const query = req.query as Record<string, string | undefined>;
+    let classes: string[] | undefined;
+    if (req.user?.role === 'student') {
+      const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
+      if (!student) return res.status(403).json({ error: 'Student profile is unavailable.' });
+      classes = student.class ? [student.class] : [];
+    } else if (req.user?.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
+      if (!teacher) return res.status(403).json({ error: 'Teacher profile is unavailable.' });
+      classes = [...new Set([
+        ...(teacher.assignedClasses || []).map((assignment: any) => assignment.class),
+        ...(teacher.classTeacherOf || [])
+      ].filter((className: unknown): className is string => typeof className === 'string' && Boolean(className)))];
+    }
     res.json(await backendStore.getAnnouncements({
       search: query.search,
       type: query.type,
       audience: query.audience,
       scope: query.scope,
       role: req.user?.role,
+      classes,
       page: query.page ? Number(query.page) : undefined,
       limit: query.limit ? Number(query.limit) : undefined
     }));

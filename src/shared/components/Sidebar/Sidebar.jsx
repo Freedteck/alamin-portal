@@ -1,10 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { LogOut, Camera } from 'lucide-react';
 import { Logo } from '../Logo/Logo';
 import { ProfileAvatar } from '../ProfileAvatar/ProfileAvatar';
 import { apiClient } from '../../lib/apiClient';
-import { schoolStore } from '../../data/schoolData';
+import { schoolStore, subscribeSchoolSync } from '../../data/schoolData';
 
 export function Sidebar({ items = [], onLogout }) {
   const navigate = useNavigate();
@@ -17,6 +17,37 @@ export function Sidebar({ items = [], onLogout }) {
     }
   });
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const refreshUser = async () => {
+      try {
+        const response = await apiClient.get('/auth/me');
+        if (!active || !response?.user) return;
+        const savedUser = JSON.parse(localStorage.getItem('alamin_user') || '{}');
+        const updatedUser = { ...savedUser, ...response.user };
+        localStorage.setItem('alamin_user', JSON.stringify(updatedUser));
+        setCurrentUser(updatedUser);
+      } catch (error) {
+        console.error('Failed to refresh sidebar user profile:', error);
+      }
+    };
+    const refreshFromStorage = (topic) => {
+      if (topic !== 'users' && topic) return;
+      try {
+        setCurrentUser(JSON.parse(localStorage.getItem('alamin_user') || '{}'));
+      } catch (error) {
+        console.error('Failed to refresh sidebar user profile:', error);
+      }
+    };
+
+    refreshUser();
+    const unsubscribe = subscribeSchoolSync(refreshFromStorage);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   const handleAvatarChange = async (e) => {
     const file = e.target.files?.[0];

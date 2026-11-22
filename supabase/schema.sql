@@ -127,6 +127,11 @@ CREATE TABLE IF NOT EXISTS public.teachers (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Keep existing installations aligned with columns added after initial setup.
+ALTER TABLE public.teachers
+  ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '';
+NOTIFY pgrst, 'reload schema';
+
 CREATE TABLE IF NOT EXISTS public.timetable_slots (
   id TEXT PRIMARY KEY,
   class TEXT NOT NULL DEFAULT '',

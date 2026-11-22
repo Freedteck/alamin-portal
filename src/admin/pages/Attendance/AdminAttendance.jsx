@@ -474,7 +474,7 @@ export function AdminAttendance() {
               <div className="p-5 rounded-lg border border-[#c9c7b6] bg-white shadow-xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#c9c7b6]/40">
                   <div className="flex items-center gap-3">
-                    <ProfileAvatar name={studentAuditData.student.name} size="2xl" shape="rounded" />
+                    <ProfileAvatar src={studentAuditData.student.avatarUrl} name={studentAuditData.student.name} size="2xl" shape="rounded" />
                     <div>
                       <h3 className="text-lg font-bold text-[#1c1c14]">
                         {studentAuditData.student.name}

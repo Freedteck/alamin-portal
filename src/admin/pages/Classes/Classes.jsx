@@ -594,7 +594,7 @@ export function ClassScheduling() {
           <div className="rounded-lg border border-[#c9c7b6] bg-white p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3.5">
               {currentClassTeacher ? (
-                <ProfileAvatar name={currentClassTeacher.name} size="md" shape="rounded" />
+                <ProfileAvatar src={currentClassTeacher.avatarUrl} name={currentClassTeacher.name} size="md" shape="rounded" />
               ) : (
                 <div className="w-10 h-10 rounded-lg bg-[#faf8f0] border border-dashed border-[#c9c7b6] flex items-center justify-center text-[#797869]">
                   <GraduationCap className="w-5 h-5 text-[#616218]" />

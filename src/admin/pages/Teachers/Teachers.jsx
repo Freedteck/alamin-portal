@@ -386,7 +386,7 @@ export function TeacherManagement() {
             </p>
           </div>
           <span className="text-xs font-semibold text-[#616218]">
-            {filteredTeachers.length} Staff
+            {totalTeachers} Staff
           </span>
         </div>
 
@@ -427,7 +427,7 @@ export function TeacherManagement() {
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
-                          <ProfileAvatar name={teacher.name} size="sm" shape="rounded" />
+                          <ProfileAvatar src={teacher.avatarUrl} name={teacher.name} size="sm" shape="rounded" />
                           <span className="font-semibold text-[#1c1c14]">{teacher.name}</span>
                         </div>
                       </td>
@@ -812,7 +812,7 @@ export function TeacherManagement() {
         {selectedTeacher && (
           <div className="space-y-6 font-['Poppins',sans-serif]">
             <div className="flex items-center gap-4 p-4 bg-[#fdf9ec] rounded-xl border border-[#c9c7b6]/70">
-              <ProfileAvatar name={selectedTeacher.name || 'Teacher'} size="lg" shape="rounded" />
+              <ProfileAvatar src={selectedTeacher.avatarUrl} name={selectedTeacher.name || 'Teacher'} size="lg" shape="rounded" />
               <div>
                 <h3 className="text-base font-bold text-[#1c1c14]">{selectedTeacher.name || 'Teacher Profile'}</h3>
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 mt-1">
