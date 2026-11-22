@@ -18,60 +18,19 @@ import {
 } from "../../../shared/data/schoolData";
 
 export function StaffDashboard() {
-  const [currentTeacher, setCurrentTeacher] = useState(null);
-  const [students, setStudents] = useState([]);
-  const [requests, setRequests] = useState([]);
-  const [attendanceLogs, setAttendanceLogs] = useState([]);
-  const [gradesMap, setGradesMap] = useState({});
-  const [assignments, setAssignments] = useState([]);
+  const [summary, setSummary] = useState(null);
 
   useEffect(() => {
     let active = true;
     const sync = async () => {
       try {
-        const [teacher, stuRes, reqRes, rawAtt, grRes, allAsg] = await Promise.all([
-          schoolStore.fetchCurrentTeacher(),
-          schoolStore.fetchStudents(),
-          schoolStore.fetchRequests(),
-          schoolStore.fetchAttendance(),
-          schoolStore.fetchGrades(),
-          schoolStore.fetchAssignments()
-        ]);
+        const result = await schoolStore.fetchStaffDashboardSummary();
         if (!active) return;
-
-        setCurrentTeacher(teacher);
-
-        const allStudentsList = Array.isArray(stuRes) ? stuRes : (stuRes?.data || []);
-        setStudents(allStudentsList);
-        setRequests(Array.isArray(reqRes) ? reqRes : []);
-        const logs = Array.isArray(rawAtt) ? rawAtt : Object.values(rawAtt || {});
-        setAttendanceLogs(logs);
-        setGradesMap(grRes || {});
-
-        const teacherClasses = (teacher?.assignedClasses || []).map((a) => a.class);
-        const teacherSubjects = (teacher?.assignedClasses || []).map((a) => a.subject);
-        const assignmentsList = Array.isArray(allAsg) ? allAsg : [];
-        if (teacher?.assignedClasses && teacher.assignedClasses.length > 0) {
-          setAssignments(
-            assignmentsList.filter(
-              (a) =>
-                a.author === teacher.name ||
-                teacherClasses.includes(a.class) ||
-                teacherSubjects.includes(a.subject)
-            )
-          );
-        } else {
-          setAssignments(assignmentsList);
-        }
+        setSummary(result);
       } catch (error) {
         console.error('Failed to load staff dashboard:', error);
         if (!active) return;
-        setCurrentTeacher(null);
-        setStudents([]);
-        setRequests([]);
-        setAttendanceLogs([]);
-        setGradesMap({});
-        setAssignments([]);
+        setSummary(null);
       }
     };
     sync();
@@ -82,24 +41,26 @@ export function StaffDashboard() {
     };
   }, []);
 
-  const pendingRequests = requests.filter((r) => r.status === "pending");
-
-  const todayStr = new Date().toISOString().split("T")[0];
-  const hasTodayRollCall = Array.isArray(attendanceLogs) && attendanceLogs.some((log) => log.date === todayStr);
+  const currentTeacher = summary?.teacher;
+  const studentCount = summary?.studentCount || 0;
+  const pendingRequestCount = summary?.pendingRequestCount || 0;
+  const hasTodayRollCall = Boolean(summary?.hasTodayRollCall);
+  const hasGrades = Boolean(summary?.hasGrades);
+  const topStudents = summary?.topStudents || [];
 
   const pendingTasks = [
-    ...(pendingRequests.length > 0
+    ...(pendingRequestCount > 0
       ? [
           {
             id: "pending-requests",
-            task: `Review ${pendingRequests.length} pending student consultation request${pendingRequests.length === 1 ? "" : "s"}`,
+            task: `Review ${pendingRequestCount} pending student consultation request${pendingRequestCount === 1 ? "" : "s"}`,
             priority: "high",
             dueDate: "Today",
             link: "/teacher/requests",
           },
         ]
       : []),
-    ...(students.length > 0 && !hasTodayRollCall
+    ...(studentCount > 0 && !hasTodayRollCall
       ? [
           {
             id: "today-rollcall",
@@ -110,7 +71,7 @@ export function StaffDashboard() {
           },
         ]
       : []),
-    ...(students.length > 0 && Object.keys(gradesMap).length === 0
+    ...(studentCount > 0 && !hasGrades
       ? [
           {
             id: "record-grades",
@@ -123,88 +84,9 @@ export function StaffDashboard() {
       : []),
   ];
 
-  const recentActivity = [
-    ...(Array.isArray(attendanceLogs) ? attendanceLogs : []).slice(0, 3).map((log) => {
-      const values = Object.values(log.records || {});
-      const presentCount = values.filter(
-        (v) => v === "present" || v === "late",
-      ).length;
-      const totalCount = values.length;
-      const pct =
-        totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
-      return {
-        id: `att-${log.id || (log.date + '_' + (log.class || log.className))}`,
-        title: `Roll call register recorded for ${log.class || log.className || 'Class'}`,
-        description: `${presentCount} out of ${totalCount} students present · ${pct}% attendance`,
-        time: log.date,
-        icon: UserCheck,
-        iconColor: "text-[#616218]",
-      };
-    }),
-    ...assignments.slice(0, 2).map((asg) => ({
-      id: `asg-${asg.id}`,
-      title: `Assignment published: ${asg.title}`,
-      description: `${asg.class} · ${asg.subject}`,
-      time: `Due ${asg.dueDate || "TBD"}`,
-      icon: FileText,
-      iconColor: "text-purple-700",
-    })),
-    ...requests.slice(0, 2).map((req) => ({
-      id: `req-${req.id}`,
-      title: `${req.status === "approved" ? "Approved" : "New"} inquiry from ${req.studentName}`,
-      description: `${req.subject} · ${req.title}`,
-      time: req.preferredDate || "Recent",
-      icon: CalendarCheck,
-      iconColor: "text-sky-700",
-    })),
-  ].slice(0, 4);
-
-  const topStudents = students
-    .flatMap((st) => {
-      const studentSessions = gradesMap[st.id];
-      if (!studentSessions) return [];
-      const entries = [];
-      Object.values(studentSessions).forEach((terms) => {
-        Object.values(terms || {}).forEach((subjects) => {
-          Object.entries(subjects || {}).forEach(([subject, rec]) => {
-            const total =
-              Number(rec.ca1 || 0) +
-              Number(rec.ca2 || 0) +
-              Number(rec.exam || 0);
-            if (total >= 75) {
-              entries.push({
-                name: st.name,
-                admissionNo: st.admissionNumber,
-                class: st.class,
-                subject,
-                grade: "A",
-                score: `${total}%`,
-                total,
-                remark: total >= 85 ? "Distinction" : "Exemplary",
-              });
-            }
-          });
-        });
-      });
-      return entries;
-    })
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 4);
-
-  let totalAttEntries = 0;
-  let presentAttEntries = 0;
-  (Array.isArray(attendanceLogs) ? attendanceLogs : []).forEach((log) => {
-    Object.values(log.records || {}).forEach((status) => {
-      totalAttEntries += 1;
-      if (status === "present" || status === "late") {
-        presentAttEntries += 1;
-      }
-    });
-  });
-  const attendanceRateLabel =
-    totalAttEntries > 0
-      ? `${Math.round((presentAttEntries / totalAttEntries) * 100)}%`
-      : "—";
+  const recentActivity = summary?.recentActivity || [];
+  const attendanceRateLabel = summary?.attendanceRate == null ? "—" : `${summary.attendanceRate}%`;
+  const totalAttEntries = summary?.totalAttendanceEntries || 0;
 
   const getPriorityBadge = (priority) => {
     switch (priority) {
@@ -271,7 +153,7 @@ export function StaffDashboard() {
             </div>
           </div>
           <div className="text-2xl font-bold text-[#1c1c14] tabular-nums mt-2">
-            {students.length}
+            {studentCount}
           </div>
           <p className="text-[11px] text-[#616218] font-medium mt-0.5">
             Students across secondary levels
@@ -305,7 +187,7 @@ export function StaffDashboard() {
             </div>
           </div>
           <div className="text-2xl font-bold text-amber-700 tabular-nums mt-2">
-            {pendingRequests.length}
+            {pendingRequestCount}
           </div>
           <p className="text-[11px] text-amber-600 mt-0.5">
             Student consultation requests
@@ -403,14 +285,19 @@ export function StaffDashboard() {
                 </div>
               ) : (
                 recentActivity.map((activity) => {
-                  const IconComponent = activity.icon;
+                  const IconComponent = activity.type === 'attendance'
+                    ? UserCheck
+                    : activity.type === 'assignment' ? FileText : CalendarCheck;
+                  const iconColor = activity.type === 'attendance'
+                    ? 'text-[#616218]'
+                    : activity.type === 'assignment' ? 'text-purple-700' : 'text-sky-700';
                   return (
                     <div
                       key={activity.id}
                       className="flex items-start gap-3 p-3 rounded-lg border border-[#c9c7b6]/60 bg-white"
                     >
                       <div
-                        className={`mt-0.5 p-1.5 rounded-md bg-[#faf8f0] ${activity.iconColor}`}
+                        className={`mt-0.5 p-1.5 rounded-md bg-[#faf8f0] ${iconColor}`}
                       >
                         <IconComponent className="w-4 h-4" />
                       </div>

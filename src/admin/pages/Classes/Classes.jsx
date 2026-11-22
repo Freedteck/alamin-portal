@@ -29,7 +29,12 @@ export function ClassScheduling() {
   const [selectedClass, setSelectedClass] = useState(SCHOOL_CLASSES[0] || 'JSS 1');
   const [teachersList, setTeachersList] = useState([]);
   const [studentsList, setStudentsList] = useState([]);
+  const [studentListTotal, setStudentListTotal] = useState(0);
   const [subjectsList, setSubjectsList] = useState([]);
+  const [classCounts, setClassCounts] = useState({});
+  const [subjectCounts, setSubjectCounts] = useState({});
+  const [enrollmentStudents, setEnrollmentStudents] = useState([]);
+  const [studentSearch, setStudentSearch] = useState('');
   const [subjectSearch, setSubjectSearch] = useState('');
 
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
@@ -79,18 +84,18 @@ export function ClassScheduling() {
 
   const loadData = async () => {
     try {
-      const [t, s, sub, cls] = await Promise.all([
-        schoolStore.fetchTeachers(),
-        schoolStore.fetchStudents(),
+      const [t, sub, overview] = await Promise.all([
+        schoolStore.fetchTeachers({ page: 1, limit: 100 }),
         schoolStore.fetchSubjects(),
-        schoolStore.fetchClasses()
+        schoolStore.fetchClassOverviewSummary()
       ]);
       if (t) setTeachersList(Array.isArray(t) ? t : (t.data || []));
-      if (s) setStudentsList(Array.isArray(s) ? s : (s.data || []));
       if (sub) setSubjectsList(sub);
-      if (cls) {
-        setClassesList(cls.map((c) => c.name || c));
-        setClassObjects(cls);
+      if (overview) {
+        setClassesList(overview.classes.map((c) => c.name || c));
+        setClassObjects(overview.classes);
+        setClassCounts(overview.classCounts || {});
+        setSubjectCounts(overview.subjectCounts || {});
       }
     } catch (error) {
       console.error('Failed to load class management data:', error);
@@ -101,6 +106,52 @@ export function ClassScheduling() {
       setClassObjects([]);
     }
   };
+
+  const loadRoster = async () => {
+    try {
+      const result = await schoolStore.fetchStudents({
+        class: selectedClass,
+        page: rosterPage,
+        limit: rosterPageSize
+      });
+      setStudentsList(Array.isArray(result) ? result : result?.data || []);
+      setStudentListTotal(Array.isArray(result) ? result.length : result?.total || 0);
+    } catch (error) {
+      console.error('Failed to load class roster:', error);
+      setStudentsList([]);
+      setStudentListTotal(0);
+    }
+  };
+
+  useEffect(() => {
+    loadRoster();
+    return subscribeSchoolSync(loadRoster);
+  }, [selectedClass, rosterPage]);
+
+  useEffect(() => {
+    if (!isAssignModalOpen || assignMode !== 'student') return;
+    let active = true;
+    schoolStore.fetchStudents({
+      class: enrollClassFilter,
+      search: studentSearch,
+      page: 1,
+      limit: 100
+    }).then((result) => {
+      if (!active) return;
+      const rows = Array.isArray(result) ? result : result?.data || [];
+      setEnrollmentStudents(rows);
+      setEnrollForm((current) => ({
+        ...current,
+        studentId: rows.some((student) => student.id === current.studentId)
+          ? current.studentId
+          : rows[0]?.id || ''
+      }));
+    }).catch((error) => {
+      console.error('Failed to load students for class enrollment:', error);
+      if (active) setEnrollmentStudents([]);
+    });
+    return () => { active = false; };
+  }, [isAssignModalOpen, assignMode, enrollClassFilter, studentSearch]);
 
   const openAssignClassTeacherModal = (className, currentTeacherId = '') => {
     setTargetClassForTeacher(className);
@@ -190,7 +241,7 @@ export function ClassScheduling() {
       )
       .map((subject) => subject.name);
   const teacherAvailableSubjects = getSubjectsForClass(assignForm.class);
-  const selectedEnrollStudent = studentsList.find((s) => s.id === enrollForm.studentId);
+  const selectedEnrollStudent = enrollmentStudents.find((s) => s.id === enrollForm.studentId);
   const studentAvailableSubjects = getSubjectsForClass(
     selectedEnrollStudent?.class || enrollClassFilter,
     selectedEnrollStudent?.department || ''
@@ -377,11 +428,8 @@ export function ClassScheduling() {
       }))
   );
 
-  const classStudents = (studentsList || []).filter((s) => s && s.class === selectedClass);
-  const paginatedRoster = classStudents.slice(
-    (rosterPage - 1) * rosterPageSize,
-    rosterPage * rosterPageSize
-  );
+  const classStudents = studentsList || [];
+  const paginatedRoster = classStudents;
 
   const currentClassObject = (classObjects || []).find((c) => c.name === selectedClass) || null;
   const currentClassTeacher =
@@ -448,8 +496,9 @@ export function ClassScheduling() {
                 subject: clsSubjects[0] || ''
               });
               setEnrollClassFilter(selectedClass);
+              setStudentSearch('');
               setEnrollForm({
-                studentId: firstInClass?.id || studentsList[0]?.id || '',
+                studentId: firstInClass?.id || '',
                 subject: stuSubjects[0] || clsSubjects[0] || ''
               });
               setIsAssignModalOpen(true);
@@ -504,7 +553,7 @@ export function ClassScheduling() {
             <span className="text-xs font-semibold text-[#797869] mr-1">Select Class:</span>
             {(classesList.length > 0 ? classesList : SCHOOL_CLASSES).map((cls) => {
               const isSelected = selectedClass === cls;
-              const count = studentsList.filter((s) => s.class === cls).length;
+              const count = classCounts[cls] || 0;
               return (
                 <button
                   type="button"
@@ -671,7 +720,7 @@ export function ClassScheduling() {
                       <div className="mt-3 pt-2.5 border-t border-[#c9c7b6]/40 flex items-center justify-between text-[11px] text-[#797869]">
                         <span>Class: {alloc.class}</span>
                         <span className="font-medium text-[#616218]">
-                          {classStudents.filter((s) => s.enrolledSubjects?.includes(alloc.subject)).length} Students Enrolled
+                          {subjectCounts[`${selectedClass}::${alloc.subject}`] || 0} Students Enrolled
                         </span>
                       </div>
                     </div>
@@ -687,7 +736,7 @@ export function ClassScheduling() {
                     Class {selectedClass} Roster
                   </h2>
                   <span className="text-xs font-semibold text-[#616218]">
-                    {classStudents.length} Students
+                    {studentListTotal} Students
                   </span>
                 </div>
 
@@ -728,7 +777,7 @@ export function ClassScheduling() {
               </div>
               <Pagination
                 currentPage={rosterPage}
-                totalItems={classStudents.length}
+                totalItems={studentListTotal}
                 pageSize={rosterPageSize}
                 onPageChange={setRosterPage}
                 itemLabel="students"
@@ -1250,13 +1299,13 @@ export function ClassScheduling() {
                   onChange={(e) => {
                     const nextCls = e.target.value;
                     setEnrollClassFilter(nextCls);
-                    const firstStudent = studentsList.find((s) => s.class === nextCls);
+                    setStudentSearch('');
                     const subs = getSubjectsForClass(
                       nextCls,
-                      firstStudent?.department || ''
+                      ''
                     );
                     setEnrollForm({
-                      studentId: firstStudent?.id || '',
+                      studentId: '',
                       subject: subs[0] || ''
                     });
                   }}
@@ -1271,13 +1320,23 @@ export function ClassScheduling() {
               </div>
 
               <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-[#1c1c14]">Search student</label>
+                <input
+                  type="search"
+                  value={studentSearch}
+                  onChange={(e) => setStudentSearch(e.target.value)}
+                  placeholder="Search by name, email or admission number"
+                  className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218]"
+                />
+              </div>
+              <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-[#1c1c14]">Select Student</label>
                 <select
                   required
                   value={enrollForm.studentId}
                   onChange={(e) => {
                     const stuId = e.target.value;
-                    const stu = studentsList.find((s) => s.id === stuId);
+                    const stu = enrollmentStudents.find((s) => s.id === stuId);
                     const subs = getSubjectsForClass(
                       stu?.class || enrollClassFilter,
                       stu?.department || ''
@@ -1289,9 +1348,7 @@ export function ClassScheduling() {
                   }}
                   className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                 >
-                  {studentsList
-                    .filter((s) => s.class === enrollClassFilter)
-                    .map((s) => (
+                  {enrollmentStudents.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
                       </option>

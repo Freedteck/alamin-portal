@@ -17,37 +17,19 @@ import {
 } from '../../../shared/data/schoolData';
 
 export function Dashboard() {
-  const [students, setStudents] = useState([]);
-  const [teachers, setTeachers] = useState([]);
-  const [attendanceMap, setAttendanceMap] = useState({});
-  const [announcements, setAnnouncements] = useState([]);
-  const [assignments, setAssignments] = useState([]);
+  const [summary, setSummary] = useState(null);
 
   useEffect(() => {
     let active = true;
     const sync = async () => {
       try {
-        const [studentsRes, teachersRes, attendanceRes, announcementsRes, assignmentsRes] = await Promise.all([
-          schoolStore.fetchStudents(),
-          schoolStore.fetchTeachers(),
-          schoolStore.fetchAttendance(),
-          schoolStore.fetchAnnouncements(),
-          schoolStore.fetchAssignments()
-        ]);
+        const result = await schoolStore.fetchAdminDashboardSummary();
         if (!active) return;
-        setStudents(Array.isArray(studentsRes) ? studentsRes : (studentsRes?.data || []));
-        setTeachers(Array.isArray(teachersRes) ? teachersRes : (teachersRes?.data || []));
-        setAttendanceMap(attendanceRes || {});
-        setAnnouncements(announcementsRes || []);
-        setAssignments(assignmentsRes || []);
+        setSummary(result);
       } catch (error) {
         console.error('Failed to load admin dashboard:', error);
         if (!active) return;
-        setStudents([]);
-        setTeachers([]);
-        setAttendanceMap({});
-        setAnnouncements([]);
-        setAssignments([]);
+        setSummary(null);
       }
     };
     sync();
@@ -58,30 +40,14 @@ export function Dashboard() {
     };
   }, []);
 
-  const totalStudents = students.length;
-  const totalTeachers = teachers.length;
-
-  const todayKey = new Date().toISOString().split('T')[0];
-  const allAttendanceEntries = Object.values(attendanceMap || {});
-  const todayEntries = allAttendanceEntries.filter((entry) => entry.date === todayKey);
-  const effectiveEntries = todayEntries.length > 0 ? todayEntries : allAttendanceEntries;
-
-  let presentTotal = 0;
-  let markedTotal = 0;
-  effectiveEntries.forEach((entry) => {
-    Object.values(entry.records || {}).forEach((status) => {
-      markedTotal += 1;
-      if (status === 'present' || status === 'late') presentTotal += 1;
-    });
-  });
-
-  const attendanceDisplay = markedTotal > 0 ? `${Math.round((presentTotal / markedTotal) * 100)}%` : '—';
-  const attendanceSubtitle =
-    markedTotal === 0
-      ? 'No roll call recorded yet'
-      : todayEntries.length > 0
-      ? "Today's Student Roll Call"
-      : 'Latest Recorded Roll Call';
+  const totalStudents = summary?.totalStudents || 0;
+  const totalTeachers = summary?.totalTeachers || 0;
+  const classCounts = summary?.classCounts || {};
+  const schoolClasses = summary?.classes?.map((item) => item.name) || SCHOOL_CLASSES;
+  const attendanceDisplay = summary?.attendancePercentage == null
+    ? '—'
+    : `${summary.attendancePercentage}%`;
+  const attendanceSubtitle = summary?.attendanceSubtitle || 'No roll call recorded yet';
 
   const stats = [
     {
@@ -102,8 +68,8 @@ export function Dashboard() {
     },
     {
       title: 'Academic Classes',
-      value: `${SCHOOL_CLASSES.length} Levels`,
-      subtitle: 'JSS 1 to SSS 3',
+      value: `${schoolClasses.length} Levels`,
+      subtitle: schoolClasses.length ? `${schoolClasses[0]} to ${schoolClasses[schoolClasses.length - 1]}` : 'No classes configured',
       icon: BookOpen,
       color: 'text-blue-700',
       bgColor: 'bg-blue-50'
@@ -118,24 +84,7 @@ export function Dashboard() {
     }
   ];
 
-  const recentActivities = [
-    ...allAttendanceEntries.slice(0, 3).map((entry) => ({
-      time: entry.timestamp || entry.date,
-      activity: `${entry.submittedBy || 'Staff'} marked ${entry.className} Attendance (${entry.date})`
-    })),
-    ...students.slice(0, 3).map((s) => ({
-      time: s.createdAt ? new Date(s.createdAt).toLocaleDateString('en-GB') : 'Enrolled',
-      activity: `Student record: ${s.name} enrolled in ${s.class}`
-    })),
-    ...announcements.slice(0, 2).map((a) => ({
-      time: a.date || 'Notice',
-      activity: `Announcement published: ${a.title}`
-    })),
-    ...assignments.slice(0, 2).map((asg) => ({
-      time: asg.dueDate || 'Task',
-      activity: `Assignment posted: ${asg.title} (${asg.class})`
-    }))
-  ].slice(0, 5);
+  const recentActivities = summary?.recentActivities || [];
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-['Poppins',sans-serif] pb-16">
@@ -253,8 +202,8 @@ export function Dashboard() {
           </div>
 
           <div className="space-y-3">
-            {SCHOOL_CLASSES.map((cls) => {
-              const classCount = students.filter((s) => s.class === cls).length;
+            {schoolClasses.map((cls) => {
+              const classCount = classCounts[cls] || 0;
               return (
                 <div
                   key={cls}

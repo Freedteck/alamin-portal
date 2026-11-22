@@ -195,6 +195,25 @@ function quotePostgrestSearch(value: string) {
     .replace(/[%_]/g, '\\$&');
 }
 
+function paginationFor(options?: { page?: number; limit?: number }) {
+  const paginated = Boolean(options?.page || options?.limit);
+  if (!paginated) return null;
+  const requestedPage = Number(options?.page);
+  const requestedLimit = Number(options?.limit);
+  return {
+    page: Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1,
+    limit: Number.isInteger(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 20
+  };
+}
+
+function applyPage<T extends { range: (from: number, to: number) => T }>(query: T, page: ReturnType<typeof paginationFor>) {
+  return page ? query.range((page.page - 1) * page.limit, page.page * page.limit - 1) : query;
+}
+
+function jsonArrayContainsFilter(column: string, values: string[]) {
+  return values.map((value) => `${column}.cs.${JSON.stringify([value])}`).join(',');
+}
+
 function toStudentDatabaseRow(student: any) {
   return {
     name: student.name,
@@ -459,192 +478,245 @@ export const backendStore = {
     return false;
   },
 
-  async getBootstrapPayload(user?: any) {
-    const [classes, subjects] = await Promise.all([this.getClasses(), this.getSubjects()]);
-    if (!user) {
-      return {
-        classes,
-        subjects,
-        students: [],
-        teachers: [],
-        timetable: [],
-        alerts: [],
-        attendance: {},
-        grades: {},
-        resources: [],
-        equipment: [],
-        maintenance: [],
-        documents: [],
-        announcements: [],
-        availability: [],
-        assignments: [],
-        requests: []
-      };
-    }
-
+  async getAdminDashboardSummary() {
+    const client = requireServerSupabase();
+    const today = new Date().toISOString().slice(0, 10);
     const [
       studentsResult,
-      teachers,
-      timetable,
-      alerts,
-      allAttendance,
-      resources,
-      equipmentResult,
-      maintenanceResult,
-      documents,
-      announcements,
-      availability,
-      assignments,
-      allRequests
+      teachersResult,
+      classesResult,
+      todayAttendanceResult,
+      recentAttendanceResult,
+      recentStudentsResult,
+      recentAnnouncementsResult,
+      recentAssignmentsResult
     ] = await Promise.all([
-      this.getStudents(),
-      this.getTeachers(),
-      this.getTimetableSlots(),
-      this.getAlerts(user.role),
-      this.getAttendance(),
-      this.getResources(),
-      this.getEquipment(),
-      this.getMaintenance(),
-      this.getDocuments(),
-      this.getAnnouncements(),
-      this.getTeacherAvailability(),
-      this.getAssignments(),
-      this.getRequests(user.role === 'student' ? user.studentId : undefined)
+      client.from('students').select('id', { count: 'exact', head: true }),
+      client.from('teachers').select('id', { count: 'exact', head: true }),
+      client.from('classes').select('name').order('name'),
+      client.from('attendance_records').select('record_key,date,class_name,submitted_by,timestamp_label,records')
+        .eq('date', today),
+      client.from('attendance_records').select('record_key,date,class_name,submitted_by,timestamp_label,records')
+        .order('date', { ascending: false }).order('updated_at', { ascending: false }).limit(3),
+      client.from('students').select('name,class,created_at').order('created_at', { ascending: false }).limit(3),
+      client.from('announcements').select('title,date').order('date', { ascending: false }).limit(2),
+      client.from('assignments').select('title,class,due_date,created_at').order('created_at', { ascending: false }).limit(2)
     ]);
-    const allStudents = Array.isArray(studentsResult) ? studentsResult : studentsResult.data || [];
-    const allTeachers = Array.isArray(teachers) ? teachers : teachers.data || [];
-    const equipment = equipmentResult.data || [];
-    const maintenance = maintenanceResult.data || [];
+    const failed = [
+      studentsResult.error, teachersResult.error, classesResult.error,
+      todayAttendanceResult.error, recentAttendanceResult.error, recentStudentsResult.error,
+      recentAnnouncementsResult.error, recentAssignmentsResult.error
+    ].find(Boolean);
+    if (failed) throw failed;
 
-    if (user.role === 'student') {
-      const studentObj = await this.getStudentDirectoryRecord(user.studentId);
-      const studentClass = studentObj?.class || '';
-      const enrolledSubjects = studentObj?.enrolledSubjects || [];
-      const studentSubjects = subjects.filter((s) =>
-        enrolledSubjects.length > 0
-          ? enrolledSubjects.includes(s.name)
-          : (s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass)))
+    const classCountRows = await Promise.all((classesResult.data || []).map(async ({ name }) => {
+      const { count, error } = await client.from('students').select('id', { count: 'exact', head: true })
+        .eq('class', name);
+      if (error) throw error;
+      return [name, count || 0] as const;
+    }));
+    const classCounts = Object.fromEntries(classCountRows);
+    const latestAttendance = todayAttendanceResult.data?.length
+      ? todayAttendanceResult.data
+      : (recentAttendanceResult.data || []).filter(
+        (row) => row.date === recentAttendanceResult.data?.[0]?.date
       );
-      const studentSubjectNames = studentSubjects.map((s) => s.name);
-      const studentGrades = user.studentId ? await this.getGrades([user.studentId]) : {};
-      const studentAttendance = await this.getAttendance(undefined, studentClass);
-      const scopedAttendance = Object.fromEntries(Object.entries(studentAttendance)
-        .filter(([, entry]: [string, any]) => entry.records?.[user.studentId])
-        .map(([key, entry]: [string, any]) => [key, {
-          ...entry,
-          records: { [user.studentId]: entry.records[user.studentId] }
-        }]));
-      const classTeachers = allTeachers.filter((teacher) =>
-        (teacher.assignedClasses || []).some((assignment: any) => assignment.class === studentClass)
-      );
-
-      return {
-        classes: classes.filter((c) => !studentClass || c.name === studentClass),
-        subjects: studentSubjects,
-        students: studentObj ? [studentObj] : [],
-        teachers: classTeachers
-          .map(({ phone, email, qualification, staffId, ...safe }) => safe),
-        timetable: timetable.filter((slot) => slot.class === studentClass || slot.class === 'All Classes'),
-        alerts,
-        attendance: scopedAttendance,
-        grades: studentGrades,
-        resources: resources.filter(
-          (r) =>
-            r.accessLevel === 'students' &&
-            (r.allClasses || (r.classes && (r.classes.includes(studentClass) || r.classes.includes('All Classes')))) &&
-            (!r.subject || r.subject === 'General' || studentSubjectNames.includes(r.subject))
-        ),
-        equipment: [],
-        maintenance: [],
-        documents: documents.filter((d) => ['all', 'student', 'students'].includes(String(d.accessLevel || '').toLowerCase())),
-        announcements: announcements.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'student'),
-        availability: [],
-        assignments: assignments.filter(
-          (a) =>
-            (!a.class || a.class === 'All Classes' || a.class === studentClass) &&
-            (!a.subject || a.subject === 'General' || studentSubjectNames.includes(a.subject))
-        ),
-        requests: allRequests.filter((request) => request.studentId === user.studentId)
-      };
+    let present = 0;
+    let marked = 0;
+    for (const row of latestAttendance) {
+      for (const status of Object.values(row.records || {})) {
+        marked += 1;
+        if (status === 'present' || status === 'late') present += 1;
+      }
     }
-
-    if (user.role === 'teacher') {
-      const teacherObj = await this.getTeacherDirectoryRecord(user.teacherId);
-      const assigned = teacherObj?.assignedClasses || [];
-      const assignedClassNames = Array.from(new Set(assigned.map((a: any) => a.class).filter(Boolean)));
-      const assignedSubjectNames = Array.from(new Set(assigned.map((a: any) => a.subject).filter(Boolean)));
-
-      const teacherSubjects = assignedSubjectNames.length > 0
-        ? subjects.filter((s) => assignedSubjectNames.includes(s.name))
-        : subjects;
-
-      const teacherClasses = assignedClassNames.length > 0
-        ? classes.filter((c) => assignedClassNames.includes(c.name))
-        : [];
-
-      const teacherStudents = assignedClassNames.length > 0
-        ? allStudents.filter((s) => assignedClassNames.includes(s.class))
-        : [];
-
-      const scopedAttendance: Record<string, any> = {};
-      Object.entries(allAttendance).forEach(([key, entry]: [string, any]) => {
-        if (assignedClassNames.includes(entry.className)) scopedAttendance[key] = entry;
-      });
-      const teacherGrades = await this.getGrades(teacherStudents.map((student) => student.id));
-
-      return {
-        classes: teacherClasses,
-        subjects: teacherSubjects,
-        students: teacherStudents,
-        teachers: allTeachers.map(({ email, phone, ...safe }) => safe),
-        timetable: timetable.filter(
-          (t) =>
-            t.teacherId === user.teacherId ||
-            (teacherObj?.name && t.teacherName === teacherObj.name) ||
-            assignedClassNames.includes(t.class)
-        ),
-        alerts,
-        attendance: scopedAttendance,
-        grades: teacherGrades,
-        resources: resources.filter(
-          (r) =>
-            r.uploadedBy === teacherObj?.name ||
-            assignedSubjectNames.includes(r.subject) ||
-            r.accessLevel === 'teachers' ||
-            (r.classes && r.classes.some((c: string) => assignedClassNames.includes(c)))
-        ),
-        equipment,
-        maintenance,
-        documents: documents.filter((d) => d.accessLevel !== 'admin'),
-        announcements: announcements.filter((a) => !a.targetRole || a.targetRole === 'all' || a.targetRole === 'teacher'),
-        availability: availability.filter((slot) => slot.teacherId === user.teacherId),
-        assignments: assignments.filter(
-          (a) =>
-            a.teacherId === user.teacherId ||
-            a.author === teacherObj?.name ||
-            (assignedClassNames.includes(a.class) && assignedSubjectNames.includes(a.subject))
-        ),
-        requests: allRequests.filter((request) => request.teacherId === user.teacherId)
-      };
-    }
-
+    const recentActivities = [
+      ...(recentAttendanceResult.data || []).map((row) => ({
+        time: row.timestamp_label || row.date,
+        activity: `Staff marked ${row.class_name} Attendance (${row.date})`
+      })),
+      ...(recentStudentsResult.data || []).map((student) => ({
+        time: student.created_at ? new Date(student.created_at).toLocaleDateString('en-GB') : 'Enrolled',
+        activity: `Student record: ${student.name} enrolled in ${student.class}`
+      })),
+      ...(recentAnnouncementsResult.data || []).map((announcement) => ({
+        time: announcement.date || 'Notice',
+        activity: `Announcement published: ${announcement.title}`
+      })),
+      ...(recentAssignmentsResult.data || []).map((assignment) => ({
+        time: assignment.due_date || 'Task',
+        activity: `Assignment posted: ${assignment.title} (${assignment.class})`
+      }))
+    ].slice(0, 5);
     return {
-      classes,
-      subjects,
-      students: allStudents,
-      teachers: allTeachers,
-      timetable,
-      alerts,
-      attendance: allAttendance,
-      grades: await this.getGrades(),
-      resources,
-      equipment,
-      maintenance,
-      documents,
-      announcements,
-      availability,
-      assignments,
-      requests: allRequests
+      totalStudents: studentsResult.count || 0,
+      totalTeachers: teachersResult.count || 0,
+      classes: classesResult.data || [],
+      classCounts,
+      attendancePercentage: marked ? Math.round((present / marked) * 100) : null,
+      attendanceSubtitle: marked
+        ? todayAttendanceResult.data?.length ? "Today's Student Roll Call" : 'Latest Recorded Roll Call'
+        : 'No roll call recorded yet',
+      recentActivities
+    };
+  },
+
+  async getStaffDashboardSummary(teacherId: string) {
+    const client = requireServerSupabase();
+    const teacher = await this.getTeacherDirectoryRecord(teacherId);
+    if (!teacher) return null;
+    const assignments = teacher.assignedClasses || [];
+    const classNames = [...new Set<string>([
+      ...assignments.map((item: any) => item.class),
+      ...(teacher.classTeacherOf || [])
+    ].filter((className: unknown): className is string => typeof className === 'string' && Boolean(className)))];
+    const [
+      studentCountResult,
+      studentsResult,
+      pendingRequestsResult,
+      requestsResult,
+      attendanceResult,
+      attendanceSummaryResult,
+      assignmentResult
+    ] = await Promise.all([
+      client.from('students').select('id', { count: 'exact', head: true })
+        .in('class', classNames.length ? classNames : ['']),
+      client.from('students').select('id')
+        .in('class', classNames.length ? classNames : ['']),
+      client.from('student_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+      client.from('student_requests').select('id,student_name,subject,title,status,preferred_date,created_at')
+        .order('created_at', { ascending: false }).limit(2),
+      client.from('attendance_records').select('record_key,date,class_name,records')
+        .in('class_name', classNames.length ? classNames : [''])
+        .order('date', { ascending: false }).limit(3),
+      client.rpc('attendance_summary', {
+        p_classes: classNames,
+        p_since: null
+      }),
+      this.getAssignments({
+        role: 'teacher',
+        teacherName: teacher.name,
+        teacherAssignments: assignments,
+        page: 1,
+        limit: 2
+      })
+    ]);
+    const failed = [
+      studentCountResult.error, studentsResult.error, pendingRequestsResult.error,
+      requestsResult.error, attendanceResult.error, attendanceSummaryResult.error
+    ].find(Boolean);
+    if (failed) throw failed;
+
+    const students = studentsResult.data || [];
+    const studentIds = students.map((student) => student.id);
+    const gradesQuery = studentIds.length
+      ? await client.from('grades').select('student_id,subject,total')
+        .in('student_id', studentIds).gte('total', 75).order('total', { ascending: false }).limit(4)
+      : { data: [], error: null };
+    if (gradesQuery.error) throw gradesQuery.error;
+    const topStudentIds = [...new Set((gradesQuery.data || []).map((grade) => grade.student_id))];
+    const { data: topStudentRows, error: topStudentsError } = topStudentIds.length
+      ? await client.from('students').select('id,name,admission_number,class').in('id', topStudentIds)
+      : { data: [], error: null };
+    if (topStudentsError) throw topStudentsError;
+    const studentById = new Map((topStudentRows || []).map((student) => [student.id, student]));
+    const topStudents = (gradesQuery.data || []).flatMap((grade) => {
+      const student = studentById.get(grade.student_id);
+      if (!student) return [];
+      const total = Number(grade.total);
+      return [{
+        name: student.name,
+        admissionNo: student.admission_number,
+        class: student.class,
+        subject: grade.subject,
+        grade: 'A',
+        score: `${total}%`,
+        total,
+        remark: total >= 85 ? 'Distinction' : 'Exemplary'
+      }];
+    });
+    const attendanceRows = attendanceResult.data || [];
+    const hasTodayRollCall = attendanceRows.some((entry) => entry.date === new Date().toISOString().slice(0, 10));
+    const assignmentRows = Array.isArray(assignmentResult) ? assignmentResult : assignmentResult.data;
+    const recentActivity = [
+      ...attendanceRows.map((entry) => {
+        const values = Object.values(entry.records || {});
+        const presentCount = values.filter((status) => status === 'present' || status === 'late').length;
+        return {
+          id: `att-${entry.record_key}`,
+          title: `Roll call register recorded for ${entry.class_name}`,
+          description: `${presentCount} out of ${values.length} students present · ${values.length ? Math.round((presentCount / values.length) * 100) : 0}% attendance`,
+          time: entry.date,
+          type: 'attendance'
+        };
+      }),
+      ...assignmentRows.map((assignment: any) => ({
+        id: `asg-${assignment.id}`,
+        title: `Assignment published: ${assignment.title}`,
+        description: `${assignment.class} · ${assignment.subject}`,
+        time: `Due ${assignment.dueDate || 'TBD'}`,
+        type: 'assignment'
+      })),
+      ...(requestsResult.data || []).map((request) => ({
+        id: `req-${request.id}`,
+        title: `${request.status === 'approved' ? 'Approved' : 'New'} inquiry from ${request.student_name}`,
+        description: `${request.subject} · ${request.title}`,
+        time: request.preferred_date || 'Recent',
+        type: 'request'
+      }))
+    ].slice(0, 4);
+    let hasGrades = false;
+    if (studentIds.length) {
+      const { data, error } = await client.from('grades').select('grade_key')
+        .in('student_id', studentIds).limit(1);
+      if (error) throw error;
+      hasGrades = Boolean(data?.length);
+    }
+    return {
+      teacher,
+      studentCount: studentCountResult.count || 0,
+      allocationCount: assignments.length,
+      pendingRequestCount: pendingRequestsResult.count || 0,
+      hasTodayRollCall,
+      hasGrades,
+      attendanceRate: attendanceSummaryResult.data?.markedCount
+        ? Math.round((attendanceSummaryResult.data.presentCount / attendanceSummaryResult.data.markedCount) * 100)
+        : null,
+      totalAttendanceEntries: attendanceSummaryResult.data?.markedCount || 0,
+      recentActivity,
+      topStudents
+    };
+  },
+
+  async getClassOverviewSummary() {
+    const client = requireServerSupabase();
+    const [{ data: classes, error: classesError }, { data: teachers, error: teachersError }] = await Promise.all([
+      client.from('classes').select('id,name,category,class_teacher_id,class_teacher_name').order('name'),
+      client.from('teachers').select('assigned_classes')
+    ]);
+    if (classesError) throw classesError;
+    if (teachersError) throw teachersError;
+    const classCounts = await Promise.all((classes || []).map(async (schoolClass) => {
+      const { count, error } = await client.from('students').select('id', { count: 'exact', head: true })
+        .eq('class', schoolClass.name);
+      if (error) throw error;
+      return [schoolClass.name, count || 0] as const;
+    }));
+    const subjectPairs = [...new Map((teachers || []).flatMap((teacher) =>
+      (teacher.assigned_classes || []).map((assignment: any) => [
+        `${assignment.class}::${assignment.subject}`,
+        { className: assignment.class, subject: assignment.subject }
+      ])
+    )).values()];
+    const subjectCounts = await Promise.all(subjectPairs.map(async ({ className, subject }) => {
+      const { count, error } = await client.from('students').select('id', { count: 'exact', head: true })
+        .eq('class', className).contains('enrolled_subjects', [subject]);
+      if (error) throw error;
+      return [`${className}::${subject}`, count || 0] as const;
+    }));
+    return {
+      classes: (classes || []).map(mapClassRow),
+      classCounts: Object.fromEntries(classCounts),
+      subjectCounts: Object.fromEntries(subjectCounts)
     };
   },
 
@@ -1007,8 +1079,18 @@ export const backendStore = {
     return true;
   },
 
-  async getSubjects() {
-    const { data, error } = await requireServerSupabase().from('subjects').select('*').order('name');
+  async getSubjects(options?: { class?: string; department?: string; names?: string[] }) {
+    let query = requireServerSupabase().from('subjects').select('*').order('name');
+    if (options?.names) {
+      query = options.names.length ? query.in('name', options.names) : query.eq('id', '');
+    }
+    if (options?.class && options.class !== 'All Classes') {
+      query = query.or(`all_classes.eq.true,${jsonArrayContainsFilter('classes', [options.class])}`);
+    }
+    if (options?.department) {
+      query = query.or(`all_departments.eq.true,${jsonArrayContainsFilter('departments', [options.department])}`);
+    }
+    const { data, error } = await query;
     if (error) throw error;
     return (data || []).map(mapSubjectRow);
   },
@@ -1027,6 +1109,19 @@ export const backendStore = {
         return sub.allDepartments || (sub.departments || []).includes(department);
       })
       .map((s) => s.name);
+  },
+
+  async getStudentClassCounts() {
+    const client = requireServerSupabase();
+    const { data: classes, error: classesError } = await client.from('classes').select('name').order('name');
+    if (classesError) throw classesError;
+    const counts = await Promise.all((classes || []).map(async ({ name }) => {
+      const { count, error } = await client.from('students').select('id', { count: 'exact', head: true })
+        .eq('class', name);
+      if (error) throw error;
+      return [name, count || 0] as const;
+    }));
+    return Object.fromEntries(counts);
   },
 
   async addSubject(subjectData: any) {
@@ -1168,12 +1263,7 @@ export const backendStore = {
     const records = (data || []).map(mapStudentRow);
     if (!paginated) return records;
 
-    const { data: classRows, error: classError } = await client.from('students').select('class');
-    if (classError) throw classError;
-    const classCounts: Record<string, number> = {};
-    for (const row of classRows || []) {
-      if (row.class) classCounts[row.class] = (classCounts[row.class] || 0) + 1;
-    }
+    const classCounts = await this.getStudentClassCounts();
     return {
       data: records,
       total: count || 0,
@@ -1578,19 +1668,22 @@ export const backendStore = {
     return true;
   },
 
-  async getTimetableSlots(className?: string) {
-    const client = requireServerSupabase();
-    const queries = className
-      ? [
-        client.from('timetable_slots').select('*').eq('class', className),
-        client.from('timetable_slots').select('*').eq('class', 'All Classes')
-      ]
-      : [client.from('timetable_slots').select('*')];
-    const results = await Promise.all(queries);
-    const failed = results.find(({ error }) => error);
-    if (failed?.error) throw failed.error;
-    return results.flatMap(({ data }) => mapDatabaseRows(data))
-      .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+  async getTimetableSlots(className?: string, teacher?: { id?: string; name?: string; classes?: string[] }) {
+    let query = requireServerSupabase().from('timetable_slots').select('*');
+    if (className) {
+      query = query.in('class', [className, 'All Classes']);
+    }
+    if (teacher) {
+      const filters = [`teacher_id.eq."${quotePostgrestSearch(teacher.id || '')}"`];
+      if (teacher.name) filters.push(`teacher_name.eq."${quotePostgrestSearch(teacher.name)}"`);
+      for (const assignedClass of teacher.classes || []) {
+        filters.push(`class.eq."${quotePostgrestSearch(assignedClass)}"`);
+      }
+      query = query.or(filters.join(','));
+    }
+    const { data, error } = await query.order('start_time').order('day');
+    if (error) throw error;
+    return mapDatabaseRows(data);
   },
 
   async addTimetableSlot(slotData: any) {
@@ -1817,6 +1910,71 @@ export const backendStore = {
       timestamp: row.timestamp_label,
       records: row.records || {}
     }]));
+  },
+
+  async getAttendanceOverviewSummary(date: string) {
+    const client = requireServerSupabase();
+    const [classes, attendance] = await Promise.all([
+      this.getClasses(),
+      this.getAttendance(date)
+    ]);
+    const classNames = classes.map((item: any) => item.name || item).filter(Boolean);
+    const classCounts = await Promise.all(classNames.map(async (className: string) => {
+      const { count, error } = await client.from('students')
+        .select('id', { count: 'exact', head: true })
+        .eq('class', className);
+      if (error) throw error;
+      return count || 0;
+    }));
+
+    const absentStudentIds = new Set<string>();
+    const classStatus = classNames.map((className: string, index: number) => {
+      const record = attendance[`${date}_${className}`] || null;
+      const counts = { present: 0, absent: 0, late: 0 };
+      Object.entries(record?.records || {}).forEach(([studentId, value]) => {
+        if (value === 'present') counts.present += 1;
+        else if (value === 'absent') {
+          counts.absent += 1;
+          absentStudentIds.add(studentId);
+        } else if (value === 'late') counts.late += 1;
+      });
+      const totalStudents = classCounts[index];
+      return {
+        class: className,
+        isSubmitted: Boolean(record),
+        submittedBy: record?.submittedBy || 'Pending Submission',
+        timestamp: record?.timestamp || '—',
+        totalStudents,
+        ...counts,
+        rate: totalStudents > 0
+          ? Math.round(((counts.present + counts.late) / totalStudents) * 100)
+          : 0
+      };
+    });
+
+    let absentStudents: any[] = [];
+    if (absentStudentIds.size > 0) {
+      const { data, error } = await client.from('students')
+        .select('*')
+        .in('id', [...absentStudentIds]);
+      if (error) throw error;
+      absentStudents = (data || []).map(mapStudentRow);
+    }
+
+    const totalStudents = classStatus.reduce((total, item) => total + item.totalStudents, 0);
+    const totalPresent = classStatus.reduce((total, item) => total + item.present, 0);
+    const totalAbsent = classStatus.reduce((total, item) => total + item.absent, 0);
+    const totalMarked = totalPresent + totalAbsent;
+    return {
+      classes: classNames,
+      classStatus,
+      absentStudents,
+      totalStudents,
+      submittedClasses: classStatus.filter((item) => item.isSubmitted).length,
+      totalPresent,
+      totalAbsent,
+      overallRate: totalMarked > 0 ? Math.round((totalPresent / totalMarked) * 100) : 0
+    };
   },
 
   async saveClassAttendance(date: string, className: string, submittedBy: string, records: Record<string, any>) {
@@ -2121,14 +2279,67 @@ export const backendStore = {
     };
   },
 
-  async getResources() {
-    const { data, error } = await requireServerSupabase().from('resources').select('*').order('upload_date', { ascending: false });
+  async getResources(options?: {
+    search?: string;
+    subject?: string;
+    type?: string;
+    class?: string;
+    role?: string;
+    teacherName?: string;
+    teacherAssignments?: Array<{ class?: string; subject?: string }>;
+    studentSubjects?: string[];
+    page?: number;
+    limit?: number;
+  }) {
+    const page = paginationFor(options);
+    let query = requireServerSupabase().from('resources').select('*', { count: 'exact' });
+    if (options?.role === 'student') {
+      query = query.in('access_level', ['all', 'student', 'students']);
+      if (options.class) query = query.or(jsonArrayContainsFilter('classes', ['All Classes', options.class]));
+      if (options.studentSubjects?.length) {
+        query = query.or(`subject.eq.,subject.eq.General,subject.in.(${options.studentSubjects.map((subject) => `"${quotePostgrestSearch(subject)}"`).join(',')})`);
+      }
+    } else if (options?.role === 'teacher') {
+      const assignments = options.teacherAssignments || [];
+      const filters = [
+        `uploaded_by.eq."${quotePostgrestSearch(options.teacherName || '')}"`,
+        'access_level.in.("all","teachers","staff")',
+        'classes.cs.["All Classes"]',
+        ...assignments.map((item) => {
+          const subjectFilter = item.subject ? `subject.eq."${quotePostgrestSearch(item.subject)}"` : 'subject.eq.""';
+          const classFilter = item.class
+            ? `or(${jsonArrayContainsFilter('classes', ['All Classes', item.class])})`
+            : 'classes.cs.["All Classes"]';
+          return `and(${subjectFilter},${classFilter})`;
+        })
+      ];
+      query = query.or(filters.join(','));
+    }
+    if (options?.search?.trim()) {
+      const term = `"%${quotePostgrestSearch(options.search.trim())}%"`;
+      query = query.or(`title.ilike.${term},subject.ilike.${term},file_name.ilike.${term}`);
+    }
+    if (options?.subject && options.subject !== 'all') query = query.eq('subject', options.subject);
+    if (options?.type && options.type !== 'all') query = query.eq('type', options.type);
+    if (options?.class && options.class !== 'all') {
+      query = query.or(jsonArrayContainsFilter('classes', ['All Classes', options.class]));
+    }
+    query = query.order('upload_date', { ascending: false });
+    query = applyPage(query, page);
+    const { data, error, count } = await query;
     if (error) throw error;
-    return (data || []).map((row) => ({
+    const records = (data || []).map((row) => ({
       ...mapDatabaseRow(row),
       allClasses: (row.classes || []).includes('All Classes'),
       classes: row.classes || ['All Classes']
     }));
+    return page ? {
+      data: records,
+      total: count || 0,
+      page: page.page,
+      limit: page.limit,
+      totalPages: Math.ceil((count || 0) / page.limit)
+    } : records;
   },
 
   async addResource(data: any) {
@@ -2322,10 +2533,53 @@ export const backendStore = {
     return mapMaintenanceRow(data);
   },
 
-  async getDocuments() {
-    const { data, error } = await requireServerSupabase().from('documents').select('*').order('upload_date', { ascending: false });
+  async getDocuments(options?: {
+    search?: string;
+    category?: string;
+    access?: string;
+    role?: string;
+    classes?: string[];
+    page?: number;
+    limit?: number;
+  }) {
+    const page = paginationFor(options);
+    let query = requireServerSupabase().from('documents').select('*', { count: 'exact' });
+    if (options?.role === 'student') {
+      query = query.in('access_level', ['all', 'student', 'students']);
+      if (options.classes?.length) query = query.or(jsonArrayContainsFilter('allowed_classes', ['All Classes', ...options.classes]));
+      else query = query.contains('allowed_classes', ['All Classes']);
+    } else if (options?.role === 'teacher') {
+      query = query.in('access_level', ['all', 'staff', 'teacher', 'teachers']);
+      if (options.classes?.length) query = query.or(jsonArrayContainsFilter('allowed_classes', ['All Classes', ...options.classes]));
+      else query = query.contains('allowed_classes', ['All Classes']);
+    }
+    if (options?.search?.trim()) {
+      const term = `"%${quotePostgrestSearch(options.search.trim())}%"`;
+      query = query.or(`name.ilike.${term},category.ilike.${term},file_name.ilike.${term}`);
+    }
+    if (options?.category && options.category !== 'all') query = query.eq('category', options.category);
+    if (options?.access && options.access !== 'all') query = query.eq('access_level', options.access);
+    query = query.order('upload_date', { ascending: false });
+    query = applyPage(query, page);
+    const { data, error, count } = await query;
     if (error) throw error;
-    return mapDatabaseRows(data);
+    const records = mapDatabaseRows(data);
+    return page ? {
+      data: records,
+      total: count || 0,
+      page: page.page,
+      limit: page.limit,
+      totalPages: Math.ceil((count || 0) / page.limit)
+    } : records;
+  },
+
+  async getDocumentFacets(role?: string, classes: string[] = []) {
+    const { data, error } = await requireServerSupabase().rpc('document_facets', {
+      p_role: role || null,
+      p_classes: classes
+    });
+    if (error) throw error;
+    return data || { categories: [], categoryCounts: {}, documentCount: 0, restrictedCount: 0 };
   },
 
   async addDocument(data: any) {
@@ -2382,16 +2636,47 @@ export const backendStore = {
     return true;
   },
 
-  async getAnnouncements() {
-    const { data, error } = await requireServerSupabase().from('announcements')
-      .select('*')
-      .order('is_pinned', { ascending: false })
-      .order('date', { ascending: false });
+  async getAnnouncements(options?: {
+    search?: string;
+    type?: string;
+    audience?: string;
+    scope?: string;
+    role?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const page = paginationFor(options);
+    let query = requireServerSupabase().from('announcements').select('*', { count: 'exact' });
+    if (options?.role === 'student') {
+      query = query.or('target_role.is.null,target_role.eq.all,target_role.eq.student');
+    } else if (options?.role === 'teacher') {
+      query = query.in('target_role', ['all', 'teacher']);
+    }
+    if (options?.search?.trim()) {
+      const term = `"%${quotePostgrestSearch(options.search.trim())}%"`;
+      query = query.or(`title.ilike.${term},content.ilike.${term}`);
+    }
+    if (options?.type && options.type !== 'all') query = query.eq('type', options.type);
+    if (options?.audience && options.audience !== 'all') {
+      query = query.or(`target_audiences.cs.${JSON.stringify(['Everyone'])},target_audiences.cs.${JSON.stringify([options.audience])}`);
+    }
+    if (options?.scope === 'admin') query = query.neq('author_role', 'Teaching Staff');
+    if (options?.scope === 'mine') query = query.eq('author_role', 'Teaching Staff');
+    query = query.order('is_pinned', { ascending: false }).order('date', { ascending: false });
+    query = applyPage(query, page);
+    const { data, error, count } = await query;
     if (error) throw error;
-    return (data || []).map((row) => ({
+    const records = (data || []).map((row) => ({
       ...mapDatabaseRow(row),
       targetAudiences: row.target_audiences || ['Everyone']
     }));
+    return page ? {
+      data: records,
+      total: count || 0,
+      page: page.page,
+      limit: page.limit,
+      totalPages: Math.ceil((count || 0) / page.limit)
+    } : records;
   },
 
   async addAnnouncement(data: any) {
@@ -2505,11 +2790,52 @@ export const backendStore = {
     return true;
   },
 
-  async getAssignments() {
-    const { data, error } = await requireServerSupabase().from('assignments')
-      .select('*').order('created_at', { ascending: false });
+  async getAssignments(options?: {
+    search?: string;
+    class?: string;
+    subject?: string;
+    role?: string;
+    studentClass?: string;
+    studentSubjects?: string[];
+    teacherName?: string;
+    teacherAssignments?: Array<{ class?: string; subject?: string }>;
+    page?: number;
+    limit?: number;
+  }) {
+    const page = paginationFor(options);
+    let query = requireServerSupabase().from('assignments').select('*', { count: 'exact' });
+    if (options?.role === 'student') {
+      if (options.studentClass) query = query.in('class', ['All Classes', options.studentClass]);
+      if (options.studentSubjects?.length) {
+        query = query.or(`subject.eq.,subject.eq.General,subject.in.(${options.studentSubjects.map((subject) => `"${quotePostgrestSearch(subject)}"`).join(',')})`);
+      }
+    } else if (options?.role === 'teacher') {
+      const filters = [`teacher_name.eq."${quotePostgrestSearch(options.teacherName || '')}"`];
+      for (const item of options.teacherAssignments || []) {
+        if (item.class && item.subject) {
+          filters.push(`and(class.eq."${quotePostgrestSearch(item.class)}",subject.eq."${quotePostgrestSearch(item.subject)}")`);
+        }
+      }
+      query = query.or(filters.join(','));
+    }
+    if (options?.search?.trim()) {
+      const term = `"%${quotePostgrestSearch(options.search.trim())}%"`;
+      query = query.or(`title.ilike.${term},subject.ilike.${term}`);
+    }
+    if (options?.class && options.class !== 'all') query = query.eq('class', options.class);
+    if (options?.subject && options.subject !== 'all') query = query.eq('subject', options.subject);
+    query = query.order('created_at', { ascending: false });
+    query = applyPage(query, page);
+    const { data, error, count } = await query;
     if (error) throw error;
-    return mapDatabaseRows(data);
+    const records = mapDatabaseRows(data);
+    return page ? {
+      data: records,
+      total: count || 0,
+      page: page.page,
+      limit: page.limit,
+      totalPages: Math.ceil((count || 0) / page.limit)
+    } : records;
   },
 
   async getAssignmentById(id: string) {

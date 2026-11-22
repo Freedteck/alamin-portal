@@ -85,9 +85,19 @@ export function initializeSchoolSync() {
 }
 
 export const schoolStore = {
+  async fetchAdminDashboardSummary() {
+    return await apiClient.get('/dashboard/admin');
+  },
+  async fetchStaffDashboardSummary() {
+    return await apiClient.get('/dashboard/staff');
+  },
+
   // Classes
   async fetchClasses() {
     return await apiClient.get('/classes');
+  },
+  async fetchClassOverviewSummary() {
+    return await apiClient.get('/classes/summary');
   },
   async addClass(classData) {
     const res = await apiClient.post('/classes', classData);
@@ -159,6 +169,9 @@ export const schoolStore = {
       throw new Error('Unexpected response while loading the current student.');
     }
     return students[0] || null;
+  },
+  async fetchStudentById(id) {
+    return await apiClient.get(`/students/${id}`);
   },
   async createStudentAsync(studentData) {
     const res = await apiClient.post('/students', studentData);
@@ -312,6 +325,10 @@ export const schoolStore = {
   },
 
   // Attendance
+  async fetchAttendanceSummary(date) {
+    const query = new URLSearchParams({ date });
+    return await apiClient.get(`/attendance/summary?${query.toString()}`);
+  },
   async fetchAttendance(params = {}) {
     const query = new URLSearchParams();
     if (params.date) query.set('date', params.date);
@@ -620,7 +637,6 @@ export const schoolStore = {
   },
   async executeSessionRollover(payload) {
     const res = await apiClient.post('/academic/rollover-session', payload);
-    await this.fetchStudents();
     notifyChange('students');
     return res;
   },

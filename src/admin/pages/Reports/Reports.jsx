@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Printer } from 'lucide-react';
 import { Logo } from '../../../shared/components/Logo/Logo';
+import { SearchInput } from '../../../shared/components/SearchInput/SearchInput';
+import { Pagination } from '../../../shared/components/Pagination/Pagination';
 import {
   schoolStore,
   SCHOOL_CLASSES,
@@ -14,6 +16,10 @@ export function AdminReports() {
   const studentParam = searchParams.get('student');
 
   const [students, setStudents] = useState([]);
+  const [totalStudents, setTotalStudents] = useState(0);
+  const [studentPage, setStudentPage] = useState(1);
+  const [studentSearchTerm, setStudentSearchTerm] = useState('');
+  const [linkedStudent, setLinkedStudent] = useState(null);
   const [selectedClassFilter, setSelectedClassFilter] = useState('all');
   const [selectedStudentId, setSelectedStudentId] = useState('');
   const [selectedSession, setSelectedSession] = useState(ACADEMIC_SESSIONS[0]);
@@ -24,19 +30,20 @@ export function AdminReports() {
     let active = true;
     const sync = async () => {
       try {
-        const res = await schoolStore.fetchStudents();
+        const res = await schoolStore.fetchStudents({
+          page: studentPage,
+          limit: 20,
+          class: selectedClassFilter,
+          search: studentSearchTerm
+        });
         if (!active) return;
-        const list = Array.isArray(res) ? res : (res?.data || []);
+        const list = Array.isArray(res?.data) ? res.data : [];
         setStudents(list);
-        if (studentParam && list.some((s) => s.id === studentParam)) {
-          const target = list.find((s) => s.id === studentParam);
-          setSelectedStudentId(studentParam);
-          if (target) setSelectedClassFilter(target.class);
-        } else if (list.length > 0 && !selectedStudentId) {
+        setTotalStudents(res?.total || 0);
+        if (!studentParam && list.length > 0 && !list.some((student) => student.id === selectedStudentId)) {
           setSelectedStudentId(list[0].id);
         } else if (list.length === 0) {
-          setSelectedStudentId('');
-          setReportCard(null);
+          if (!studentParam) setSelectedStudentId('');
         }
       } catch (error) {
         console.error('Failed to load report students:', error);
@@ -49,6 +56,24 @@ export function AdminReports() {
       active = false;
       unsubscribe();
     };
+  }, [studentParam, selectedClassFilter, studentPage, studentSearchTerm]);
+
+  useEffect(() => {
+    let active = true;
+    if (!studentParam) {
+      setLinkedStudent(null);
+      return () => { active = false; };
+    }
+    schoolStore.fetchStudentById(studentParam).then((student) => {
+      if (!active) return;
+      setLinkedStudent(student);
+      setSelectedStudentId(student.id);
+      setSelectedClassFilter(student.class || 'all');
+    }).catch((error) => {
+      console.error('Failed to load report student:', error);
+      if (active) setLinkedStudent(null);
+    });
+    return () => { active = false; };
   }, [studentParam]);
 
   useEffect(() => {
@@ -94,16 +119,14 @@ export function AdminReports() {
       </div>
 
       <div className="rounded-lg border border-[#c9c7b6] bg-white p-4 shadow-xs print:hidden">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="space-y-1">
             <label className="text-xs font-semibold text-[#797869]">Class</label>
             <select
               value={selectedClassFilter}
               onChange={(e) => {
-                const cls = e.target.value;
-                setSelectedClassFilter(cls);
-                const matching = students.filter((s) => cls === 'all' || s.class === cls);
-                if (matching.length > 0) setSelectedStudentId(matching[0].id);
+                setSelectedClassFilter(e.target.value);
+                setStudentPage(1);
               }}
               className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
             >
@@ -117,24 +140,44 @@ export function AdminReports() {
           </div>
 
           <div className="space-y-1">
+            <label className="text-xs font-semibold text-[#797869]">Search Students</label>
+            <SearchInput
+              value={studentSearchTerm}
+              onChange={(e) => {
+                setStudentSearchTerm(e.target.value);
+                setStudentPage(1);
+              }}
+              placeholder="Name or admission number..."
+            />
+          </div>
+
+          <div className="space-y-1">
             <label className="text-xs font-semibold text-[#797869]">Select Enrolled Student</label>
             <select
               value={selectedStudentId}
               onChange={(e) => setSelectedStudentId(e.target.value)}
               className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm font-semibold text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
             >
-              {students.filter((st) => selectedClassFilter === 'all' || st.class === selectedClassFilter).length === 0 ? (
+              {linkedStudent && !students.some((student) => student.id === linkedStudent.id) && (
+                <option value={linkedStudent.id}>{linkedStudent.name}</option>
+              )}
+              {students.length === 0 ? (
                 <option value="">No students enrolled</option>
               ) : (
-                students
-                  .filter((st) => selectedClassFilter === 'all' || st.class === selectedClassFilter)
-                  .map((st) => (
+                students.map((st) => (
                     <option key={st.id} value={st.id}>
                       {st.name}
                     </option>
                   ))
               )}
             </select>
+            <Pagination
+              currentPage={studentPage}
+              totalItems={totalStudents}
+              pageSize={20}
+              onPageChange={setStudentPage}
+              itemLabel="students"
+            />
           </div>
 
           <div className="space-y-1">

@@ -43,7 +43,7 @@ export function AdminTimetable() {
   const loadData = async () => {
     try {
       const [tRes, timetableRes, alRes, subjectsRes, classesRes] = await Promise.all([
-        schoolStore.fetchTeachers(),
+        schoolStore.fetchTeachers({ page: 1, limit: 100 }),
         schoolStore.fetchTimetable(selectedClass),
         schoolStore.fetchAlerts(),
         schoolStore.fetchSubjects(),

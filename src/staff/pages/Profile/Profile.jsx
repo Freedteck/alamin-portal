@@ -92,13 +92,15 @@ export function StaffProfile() {
       const teacher = await schoolStore.fetchCurrentTeacher();
       const [availability, resources, allocationStudents, subjects] = await Promise.all([
         schoolStore.fetchAvailability(),
-        schoolStore.fetchResources(),
+        schoolStore.fetchResources({ page: 1, limit: 100 }),
         Promise.all((teacher.assignedClasses || []).map(async (assignment) => {
           const result = await schoolStore.fetchStudents({
+            page: 1,
+            limit: 1,
             class: assignment.class,
             ...(assignment.subject ? { subject: assignment.subject } : {})
           });
-          return Array.isArray(result) ? result : result?.data || [];
+          return result?.total || 0;
         })),
         schoolStore.fetchSubjects()
       ]);
@@ -133,7 +135,7 @@ export function StaffProfile() {
         class: assignment.class,
         subject: assignment.subject,
         sessions: 'Weekly Schedule',
-        students: allocationStudents[index].length
+        students: allocationStudents[index]
       })));
 
       setAvailabilitySlots(
@@ -141,7 +143,7 @@ export function StaffProfile() {
           (slot) => slot.teacherName === resolvedName || (resolvedId && slot.teacherId === resolvedId)
         )
       );
-      setSharedResources(Array.isArray(resources) ? resources : []);
+      setSharedResources(Array.isArray(resources) ? resources : resources?.data || []);
       setSubjectNames(Array.isArray(subjects) ? subjects.map((subject) => subject.name) : []);
       if (resolvedId) {
         loadLeaves(resolvedId);

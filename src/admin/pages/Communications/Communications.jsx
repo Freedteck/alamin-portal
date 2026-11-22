@@ -34,6 +34,7 @@ export function AdminCommunications() {
   const [announcements, setAnnouncements] = useState([]);
   const [totalAnnouncements, setTotalAnnouncements] = useState(0);
   const [recipients, setRecipients] = useState([]);
+  const [recipientSearchTerm, setRecipientSearchTerm] = useState('');
   const [isAddAnnOpen, setIsAddAnnOpen] = useState(false);
   const [confirmDeleteAnn, setConfirmDeleteAnn] = useState(null);
   const [toast, setToast] = useState(null);
@@ -89,28 +90,6 @@ export function AdminCommunications() {
     }
   };
 
-  const refreshRecipients = async () => {
-    try {
-      const [teachersRes, studentsRes] = await Promise.all([
-        schoolStore.fetchTeachers(),
-        schoolStore.fetchStudents()
-      ]);
-      const teachers = (Array.isArray(teachersRes) ? teachersRes : teachersRes?.data || [])
-        .map((t) => ({ name: t.name, role: 'Teacher' }));
-      const students = (Array.isArray(studentsRes) ? studentsRes : studentsRes?.data || [])
-        .map((s) => ({ name: s.name, role: s.class }));
-      setRecipients([
-        { name: 'All Teaching Staff', role: 'Group' },
-        { name: 'All Parents', role: 'Group' },
-        ...teachers,
-        ...students
-      ]);
-    } catch (error) {
-      console.error('Failed to load communication recipients:', error);
-      setRecipients([]);
-    }
-  };
-
   useEffect(() => {
     refreshData();
     const unsubscribe = subscribeSchoolSync(refreshData);
@@ -121,9 +100,37 @@ export function AdminCommunications() {
   }, [currentPage, searchTerm, filterAudience]);
 
   useEffect(() => {
-    refreshRecipients();
-    return subscribeSchoolSync(refreshRecipients);
-  }, []);
+    let active = true;
+    const loadRecipients = async () => {
+      try {
+        const [teachersRes, studentsRes] = await Promise.all([
+          schoolStore.fetchTeachers({ page: 1, limit: 100, search: recipientSearchTerm }),
+          schoolStore.fetchStudents({ page: 1, limit: 100, search: recipientSearchTerm })
+        ]);
+        if (!active) return;
+        const teachers = (Array.isArray(teachersRes) ? teachersRes : teachersRes?.data || [])
+          .map((teacher) => ({ name: teacher.name, role: 'Teacher' }));
+        const students = (Array.isArray(studentsRes) ? studentsRes : studentsRes?.data || [])
+          .map((student) => ({ name: student.name, role: student.class }));
+        setRecipients([
+          { name: 'All Teaching Staff', role: 'Group' },
+          { name: 'All Parents', role: 'Group' },
+          ...teachers,
+          ...students
+        ]);
+      } catch (error) {
+        if (!active) return;
+        console.error('Failed to load communication recipients:', error);
+        setRecipients([]);
+      }
+    };
+    loadRecipients();
+    const unsubscribe = subscribeSchoolSync(loadRecipients);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [recipientSearchTerm]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -416,6 +423,11 @@ export function AdminCommunications() {
             <form onSubmit={handleSendMessage} className="space-y-3">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-[#1c1c14] block">Recipient</label>
+                <SearchInput
+                  value={recipientSearchTerm}
+                  onChange={(e) => setRecipientSearchTerm(e.target.value)}
+                  placeholder="Search students and staff..."
+                />
                 <select
                   value={msgForm.recipient}
                   onChange={(e) => setMsgForm({ ...msgForm, recipient: e.target.value })}

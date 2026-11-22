@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import {
   schoolStore,
-  SCHOOL_CLASSES,
   subscribeSchoolSync
 } from '../../../shared/data/schoolData';
 import { SearchInput } from '../../../shared/components/SearchInput/SearchInput';
@@ -28,8 +27,10 @@ export function AdminAttendance() {
 
   const [activeTab, setActiveTab] = useState(initialStudentId ? 'student' : 'overview');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [allStudents, setAllStudents] = useState([]);
-  const [allAttendance, setAllAttendance] = useState({});
+  const [attendanceSummary, setAttendanceSummary] = useState(null);
+  const [studentResult, setStudentResult] = useState({ data: [], total: 0 });
+  const [studentPage, setStudentPage] = useState(1);
+  const studentPageSize = 10;
   const [registerPage, setRegisterPage] = useState(1);
   const [registerPageSize, setRegisterPageSize] = useState(5);
   const [auditPage, setAuditPage] = useState(1);
@@ -44,23 +45,12 @@ export function AdminAttendance() {
     let active = true;
     const sync = async () => {
       try {
-        const [studentsRes, attRes] = await Promise.all([
-          schoolStore.fetchStudents(),
-          schoolStore.fetchAttendance({ date: selectedDate })
-        ]);
+        const summary = await schoolStore.fetchAttendanceSummary(selectedDate);
         if (!active) return;
-        const students = Array.isArray(studentsRes) ? studentsRes : (studentsRes?.data || []);
-        setAllStudents(students);
-        setAllAttendance(attRes || {});
-        if (!selectedStudentId && students.length > 0) {
-          setSelectedStudentId(students[0].id);
-        } else if (students.length === 0) {
-          setSelectedStudentId('');
-        }
+        setAttendanceSummary(summary);
       } catch (error) {
         console.error('Failed to load attendance overview:', error);
-        setAllStudents([]);
-        setAllAttendance({});
+        setAttendanceSummary(null);
       }
     };
     sync();
@@ -74,6 +64,31 @@ export function AdminAttendance() {
       unsubscribe();
     };
   }, [selectedDate]);
+
+  useEffect(() => {
+    let active = true;
+    schoolStore.fetchStudents({
+      page: studentPage,
+      limit: studentPageSize,
+      class: studentClassFilter,
+      search: studentSearchTerm
+    }).then((result) => {
+      if (!active) return;
+      setStudentResult({
+        data: Array.isArray(result?.data) ? result.data : [],
+        total: result?.total || 0
+      });
+      if (!selectedStudentId && result?.data?.length) {
+        setSelectedStudentId(result.data[0].id);
+      }
+    }).catch((error) => {
+      console.error('Failed to search attendance students:', error);
+      if (active) setStudentResult({ data: [], total: 0 });
+    });
+    return () => {
+      active = false;
+    };
+  }, [studentPage, studentClassFilter, studentSearchTerm, selectedStudentId]);
 
   useEffect(() => {
     let active = true;
@@ -96,76 +111,16 @@ export function AdminAttendance() {
     return () => {
       active = false;
     };
-  }, [selectedStudentId, allAttendance]);
+  }, [selectedStudentId]);
 
-  const classStatus = SCHOOL_CLASSES.map((cls) => {
-    const classStudents = allStudents.filter((s) => s.class === cls);
-    const key = `${selectedDate}_${cls}`;
-    const record = allAttendance[key] || null;
-
-    let present = 0;
-    let absent = 0;
-    let late = 0;
-
-    if (record && record.records) {
-      Object.values(record.records).forEach((st) => {
-        if (st === 'present') present++;
-        else if (st === 'absent') absent++;
-        else if (st === 'late') late++;
-      });
-    }
-
-    const totalStudents = classStudents.length;
-    const isSubmitted = !!record;
-    const rate = totalStudents > 0 ? Math.round(((present + late) / totalStudents) * 100) : 0;
-
-    return {
-      class: cls,
-      isSubmitted,
-      submittedBy: record?.submittedBy || 'Pending Submission',
-      timestamp: record?.timestamp || '—',
-      totalStudents,
-      present,
-      absent,
-      late,
-      rate
-    };
-  });
-
-  const absentStudentsList = [];
-  SCHOOL_CLASSES.forEach((cls) => {
-    const key = `${selectedDate}_${cls}`;
-    const record = allAttendance[key];
-    if (record && record.records) {
-      Object.entries(record.records).forEach(([studentId, status]) => {
-        if (status === 'absent') {
-          const student = allStudents.find((s) => s.id === studentId);
-          if (student) {
-            absentStudentsList.push(student);
-          }
-        }
-      });
-    }
-  });
-
-  const totalSchoolStudents = allStudents.length;
-  const submittedClassesCount = classStatus.filter((c) => c.isSubmitted).length;
-  const totalPresentToday = classStatus.reduce((acc, c) => acc + c.present, 0);
-  const totalAbsentToday = classStatus.reduce((acc, c) => acc + c.absent, 0);
-  const totalMarkedToday = totalPresentToday + totalAbsentToday;
-  const overallRate =
-    totalMarkedToday > 0
-      ? Math.round((totalPresentToday / totalMarkedToday) * 100)
-      : 0;
-
-  const filteredStudentList = allStudents.filter((s) => {
-    const term = studentSearchTerm.toLowerCase();
-    const matchesClass = studentClassFilter === 'all' || s.class === studentClassFilter;
-    const matchesSearch =
-      s.name.toLowerCase().includes(term) ||
-      (s.admissionNumber && s.admissionNumber.toLowerCase().includes(term));
-    return matchesClass && matchesSearch;
-  });
+  const classStatus = attendanceSummary?.classStatus || [];
+  const absentStudentsList = attendanceSummary?.absentStudents || [];
+  const totalSchoolStudents = attendanceSummary?.totalStudents || 0;
+  const submittedClassesCount = attendanceSummary?.submittedClasses || 0;
+  const totalPresentToday = attendanceSummary?.totalPresent || 0;
+  const totalAbsentToday = attendanceSummary?.totalAbsent || 0;
+  const overallRate = attendanceSummary?.overallRate || 0;
+  const filteredStudentList = studentResult.data;
 
   const openStudentAudit = (studentId) => {
     setSelectedStudentId(studentId);
@@ -277,7 +232,7 @@ export function AdminAttendance() {
                 Classes Submitted
               </span>
               <div className="text-2xl font-bold text-[#1c1c14] mt-1 tabular-nums">
-                {submittedClassesCount} / {SCHOOL_CLASSES.length}
+                {submittedClassesCount} / {(attendanceSummary?.classes || []).length}
               </div>
               <span className="text-[11px] text-[#797869]">Secondary registers</span>
             </div>
@@ -451,7 +406,10 @@ export function AdminAttendance() {
               <div className="sm:col-span-2">
                 <SearchInput
                   value={studentSearchTerm}
-                  onChange={(e) => setStudentSearchTerm(e.target.value)}
+                  onChange={(e) => {
+                    setStudentSearchTerm(e.target.value);
+                    setStudentPage(1);
+                  }}
                   placeholder="Filter student list by name or admission number..."
                 />
               </div>
@@ -459,18 +417,13 @@ export function AdminAttendance() {
                 <select
                   value={studentClassFilter}
                   onChange={(e) => {
-                    const cls = e.target.value;
-                    setStudentClassFilter(cls);
-                    const matching = allStudents.filter((s) => cls === 'all' || s.class === cls);
-                    if (matching.length > 0 && !matching.some((m) => m.id === selectedStudentId)) {
-                      setSelectedStudentId(matching[0].id);
-                      setSearchParams({ student: matching[0].id });
-                    }
+                    setStudentClassFilter(e.target.value);
+                    setStudentPage(1);
                   }}
                   className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                 >
                   <option value="all">All Classes</option>
-                  {SCHOOL_CLASSES.map((cls) => (
+                  {(attendanceSummary?.classes || []).map((cls) => (
                     <option key={cls} value={cls}>
                       {cls}
                     </option>
@@ -486,6 +439,9 @@ export function AdminAttendance() {
                   }}
                   className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-sm font-semibold text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
                 >
+                  {studentAuditData?.student && !filteredStudentList.some((st) => st.id === selectedStudentId) && (
+                    <option value={selectedStudentId}>{studentAuditData.student.name}</option>
+                  )}
                   {filteredStudentList.length === 0 ? (
                     <option value="">No students enrolled yet</option>
                   ) : (
@@ -498,6 +454,13 @@ export function AdminAttendance() {
                 </select>
               </div>
             </div>
+            <Pagination
+              currentPage={studentPage}
+              totalItems={studentResult.total}
+              pageSize={studentPageSize}
+              onPageChange={setStudentPage}
+              itemLabel="students"
+            />
           </div>
 
           {!studentAuditData && (

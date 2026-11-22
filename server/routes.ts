@@ -54,32 +54,6 @@ function isPasswordResetRateLimited(req: Request) {
   return current.count > 5;
 }
 
-const paginateList = <T,>(items: T[], req: Request, extra: Record<string, unknown> = {}) => {
-  const query = req.query as Record<string, string | undefined>;
-  if (!query.page && !query.limit) return items;
-
-  const requestedPage = Number(query.page);
-  const requestedLimit = Number(query.limit);
-  const limit = Number.isInteger(requestedLimit) && requestedLimit > 0
-    ? Math.min(requestedLimit, 100)
-    : 20;
-  const total = items.length;
-  const totalPages = Math.ceil(total / limit);
-  const page = Math.min(
-    Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1,
-    Math.max(totalPages, 1)
-  );
-
-  return {
-    data: items.slice((page - 1) * limit, page * limit),
-    total,
-    page,
-    limit,
-    totalPages,
-    ...extra
-  };
-};
-
 const getDatabasePagination = (req: Request): { page?: number; limit?: number } => {
   const query = req.query as Record<string, string | undefined>;
   if (!query.page && !query.limit) return {};
@@ -119,11 +93,21 @@ router.get('/health', (_req: Request, res: Response) => {
   });
 });
 
-router.get('/bootstrap', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/dashboard/admin', requireAuth, requireRole('admin'), async (_req: Request, res: Response) => {
   try {
-    res.json(await backendStore.getBootstrapPayload(req.user));
+    res.json(await backendStore.getAdminDashboardSummary());
   } catch (error) {
-    respondWithDatabaseError(res, 'bootstrap data', error);
+    respondWithDatabaseError(res, 'admin dashboard summary', error);
+  }
+});
+
+router.get('/dashboard/staff', requireAuth, requireRole('teacher'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const summary = await backendStore.getStaffDashboardSummary(req.user?.teacherId || '');
+    if (!summary) return res.status(404).json({ error: 'Teacher profile not found.' });
+    res.json(summary);
+  } catch (error) {
+    respondWithDatabaseError(res, 'staff dashboard summary', error);
   }
 });
 
@@ -331,6 +315,14 @@ router.get('/classes', requireAuth, async (_req: Request, res: Response) => {
   }
 });
 
+router.get('/classes/summary', requireAuth, requireRole('admin'), async (_req: Request, res: Response) => {
+  try {
+    res.json(await backendStore.getClassOverviewSummary());
+  } catch (error) {
+    respondWithDatabaseError(res, 'class summary', error);
+  }
+});
+
 router.post('/classes', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   try {
     const result = await backendStore.addClass(req.body || {});
@@ -383,39 +375,26 @@ router.delete('/classes/:id', requireAuth, requireRole('admin'), async (req: Req
 
 router.get('/subjects', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    let subjects = await backendStore.getSubjects();
+    const { class: className, department } = req.query as Record<string, string | undefined>;
+    let names: string[] | undefined;
     if (req.user?.role === 'student') {
       const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
-      const enrolled = student?.enrolledSubjects || [];
-      if (enrolled.length > 0) {
-        subjects = subjects.filter((s: any) => enrolled.includes(s.name));
-      } else {
-        const studentClass = student?.class || '';
-        subjects = subjects.filter(
-          (s: any) => s.allClasses || (Array.isArray(s.classes) && s.classes.includes(studentClass))
-        );
-      }
+      if (!student) return res.status(403).json({ error: 'Student profile is unavailable.' });
+      names = student.enrolledSubjects?.length ? student.enrolledSubjects : undefined;
+      const { data: subjects } = await backendStore.getSubjects({
+        class: className || student.class,
+        department: department || student.department,
+        names
+      }).then((data: any) => ({ data }));
+      return res.json(subjects);
     } else if (req.user?.role === 'teacher') {
       const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
-      const assigned = teacher?.assignedClasses || [];
-      const assignedSubjects = Array.from(new Set(assigned.map((a: any) => a.subject).filter(Boolean)));
-      if (assignedSubjects.length > 0) {
-        subjects = subjects.filter((s: any) => assignedSubjects.includes(s.name));
-      }
+      if (!teacher) return res.status(403).json({ error: 'Teacher profile is unavailable.' });
+      names = [...new Set<string>((teacher?.assignedClasses || [])
+        .map((assignment: any) => assignment.subject)
+        .filter((subject: unknown): subject is string => typeof subject === 'string' && Boolean(subject)))];
     }
-
-    const { class: className, department } = req.query as Record<string, string | undefined>;
-    if (className) {
-      subjects = subjects.filter((subject: any) =>
-        subject.allClasses || (Array.isArray(subject.classes) && subject.classes.includes(className))
-      );
-    }
-    if (department) {
-      subjects = subjects.filter((subject: any) =>
-        subject.allDepartments || !Array.isArray(subject.departments) || subject.departments.includes(department)
-      );
-    }
-    res.json(subjects);
+    res.json(await backendStore.getSubjects({ class: className, department, names }));
   } catch (error) {
     respondWithDatabaseError(res, 'subjects', error);
   }
@@ -763,16 +742,19 @@ router.get('/timetable', requireAuth, async (req: AuthenticatedRequest, res: Res
     }
     if (req.user?.role === 'teacher') {
       const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
-      const teacherClasses = (teacher?.assignedClasses || []).map((ac: any) => ac.class);
-      const allSlots = await backendStore.getTimetableSlots(queryClass);
-      return res.json(
-        allSlots.filter(
-          (t: any) =>
-            t.teacherId === req.user?.teacherId ||
-            (teacher?.name && t.teacherName === teacher.name) ||
-            (teacherClasses.length > 0 && teacherClasses.includes(t.class))
-        )
-      );
+      if (!teacher) return res.status(403).json({ error: 'Teacher profile is unavailable.' });
+      const teacherClasses = [...new Set([
+        ...(teacher?.assignedClasses || []).map((assignment: any) => assignment.class),
+        ...(teacher?.classTeacherOf || [])
+      ].filter(Boolean))];
+      if (queryClass && !teacherClasses.includes(queryClass)) {
+        return res.status(403).json({ error: 'You can only view timetable slots for your assigned classes.' });
+      }
+      return res.json(await backendStore.getTimetableSlots(queryClass, {
+        id: req.user.teacherId,
+        name: teacher?.name,
+        classes: teacherClasses
+      }));
     }
     res.json(await backendStore.getTimetableSlots(queryClass));
   } catch (error) {
@@ -848,6 +830,16 @@ router.delete('/alerts/:id', requireAuth, async (req: Request, res: Response) =>
 });
 
 /* ── Attendance ──────────────────────────────────────────────────────────── */
+
+router.get('/attendance/summary', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
+  const date = typeof req.query.date === 'string' ? req.query.date : '';
+  if (!date) return res.status(400).json({ error: 'date is required.' });
+  try {
+    res.json(await backendStore.getAttendanceOverviewSummary(date));
+  } catch (error) {
+    respondWithDatabaseError(res, 'attendance', error);
+  }
+});
 
 router.get('/attendance', requireAuth, async (req: Request, res: Response) => {
   const { date, class: requestedClass } = req.query as Record<string, string | undefined>;
@@ -1022,59 +1014,53 @@ router.get('/reports/:studentId', requireAuth, async (req: AuthenticatedRequest,
 
 router.get('/resources', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-  const all = await backendStore.getResources();
-  let resources = all;
+  const query = req.query as Record<string, string | undefined>;
+  const options: Record<string, any> = {
+    search: query.search,
+    subject: query.subject,
+    type: query.type,
+    class: query.class,
+    page: query.page ? Number(query.page) : undefined,
+    limit: query.limit ? Number(query.limit) : undefined,
+    role: req.user?.role
+  };
+  let visibleSubjectNames: string[] | undefined;
   if (req.user?.role === 'student') {
     const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
     if (!student) return res.status(403).json({ error: 'Student profile is unavailable.' });
-    const studentClass = student.class || '';
-    const studentSubjects = student.enrolledSubjects || [];
-    resources = all.filter(
-      (r: any) =>
-        ['all', 'student', 'students'].includes(r.accessLevel) &&
-        (r.allClasses || (r.classes && r.classes.includes(studentClass))) &&
-        (!r.subject || r.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(r.subject))
-    );
+    if (query.class && query.class !== 'all' && query.class !== student.class) {
+      return res.status(403).json({ error: 'You can only view resources for your class.' });
+    }
+    options.class = student.class;
+    options.studentSubjects = student.enrolledSubjects || [];
+    visibleSubjectNames = student.enrolledSubjects?.length ? student.enrolledSubjects : undefined;
   } else if (req.user?.role === 'teacher') {
     const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
-    const teacherSubjects = (teacher?.assignedClasses || []).map((ac: any) => ac.subject);
-    const teacherClasses = [
-      ...(teacher?.assignedClasses || []).map((ac: any) => ac.class),
-      ...(teacher?.classTeacherOf || [])
-    ];
-    resources = all.filter((resource: any) =>
-      resource.uploadedBy === teacher?.name ||
-      ['all', 'teachers', 'staff'].includes(resource.accessLevel) ||
-      ((!resource.subject || teacherSubjects.includes(resource.subject)) &&
-        (resource.allClasses || (resource.classes || []).some((className: string) => teacherClasses.includes(className))))
-    );
+    if (!teacher) return res.status(403).json({ error: 'Teacher profile is unavailable.' });
+    options.teacherName = teacher?.name || '';
+    options.teacherAssignments = teacher?.assignedClasses || [];
+    visibleSubjectNames = (teacher?.assignedClasses || []).map((assignment: any) => assignment.subject);
   }
-
-  const query = req.query as Record<string, string | undefined>;
-  const search = (query.search || '').trim().toLowerCase();
-  const subjects = [...new Set(resources.map((resource: any) => resource.subject).filter(Boolean))];
-  const resourceCount = resources.length;
-  if (search) {
-    resources = resources.filter((resource: any) =>
-      `${resource.title || ''} ${resource.subject || ''} ${resource.fileName || ''}`.toLowerCase().includes(search)
-    );
-  }
-  if (query.subject && query.subject !== 'all') {
-    resources = resources.filter((resource: any) => resource.subject === query.subject);
-  }
-  if (query.type && query.type !== 'all') {
-    resources = resources.filter((resource: any) => resource.type === query.type);
-  }
-  if (query.class && query.class !== 'all') {
-    resources = resources.filter((resource: any) =>
-      resource.allClasses || (resource.classes || ['All Classes']).includes('All Classes') ||
-      (resource.classes || []).includes(query.class)
-    );
-  }
-
-  res.json(paginateList(resources, req, { subjects, resourceCount }));
+  const [result, summary, subjects] = await Promise.all([
+    backendStore.getResources(options),
+    backendStore.getResources({
+      role: options.role,
+      teacherName: options.teacherName,
+      teacherAssignments: options.teacherAssignments,
+      studentSubjects: options.studentSubjects,
+      class: options.role === 'student' ? options.class : undefined,
+      page: 1,
+      limit: 1
+    }),
+    backendStore.getSubjects({
+      class: options.role === 'student' && !visibleSubjectNames ? options.class : undefined,
+      names: visibleSubjectNames
+    })
+  ]);
+  if (Array.isArray(result)) return res.json(result);
+  res.json({ ...result, subjects: subjects.map((subject: any) => subject.name), resourceCount: Array.isArray(summary) ? summary.length : summary.total });
   } catch (error) {
-    respondWithDatabaseError(res, 'student or teacher profile', error);
+    respondWithDatabaseError(res, 'resources', error);
   }
 });
 
@@ -1196,59 +1182,33 @@ router.patch('/maintenance/:id', requireAuth, requireRole('admin', 'teacher'), a
 
 router.get('/documents', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-  const documents = await backendStore.getDocuments();
-  let visibleDocuments = documents;
+  const query = req.query as Record<string, string | undefined>;
+  const options: Record<string, any> = {
+    search: query.search,
+    category: query.category,
+    access: query.access,
+    role: req.user?.role,
+    page: query.page ? Number(query.page) : undefined,
+    limit: query.limit ? Number(query.limit) : undefined
+  };
   if (req.user?.role === 'student') {
     const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
     if (!student) return res.status(403).json({ error: 'Student profile is unavailable.' });
-    const studentClass = student.class || '';
-    visibleDocuments = documents.filter((document: any) =>
-      ['all', 'student', 'students'].includes(document.accessLevel) &&
-      ((document.allowedClasses || ['All Classes']).includes('All Classes') ||
-        (studentClass && (document.allowedClasses || []).includes(studentClass)))
-    );
+    options.classes = student.class ? [student.class] : [];
   } else if (req.user?.role === 'teacher') {
     const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
-    const teacherClasses = [
+    if (!teacher) return res.status(403).json({ error: 'Teacher profile is unavailable.' });
+    options.classes = [
       ...(teacher?.assignedClasses || []).map((item: any) => item.class),
       ...(teacher?.classTeacherOf || [])
     ];
-    visibleDocuments = documents.filter((document: any) =>
-      ['all', 'staff', 'teacher', 'teachers'].includes(document.accessLevel) &&
-      ((document.allowedClasses || ['All Classes']).includes('All Classes') ||
-        teacherClasses.some((className) => (document.allowedClasses || []).includes(className)))
-    );
   }
-  const categories = [...new Set(visibleDocuments.map((document: any) => document.category).filter(Boolean))];
-  const categoryCounts = visibleDocuments.reduce((counts: Record<string, number>, document: any) => {
-    if (document.category) counts[document.category] = (counts[document.category] || 0) + 1;
-    return counts;
-  }, {});
-  const restrictedCount = visibleDocuments.filter(
-    (document: any) => document.accessLevel === 'staff' || document.accessLevel === 'admin'
-  ).length;
-  const query = req.query as Record<string, string | undefined>;
-  const search = (query.search || '').trim().toLowerCase();
-  let filteredDocuments = visibleDocuments;
-
-  if (search) {
-    filteredDocuments = filteredDocuments.filter((document: any) =>
-      `${document.name || ''} ${document.category || ''} ${document.fileName || ''}`.toLowerCase().includes(search)
-    );
-  }
-  if (query.category && query.category !== 'all') {
-    filteredDocuments = filteredDocuments.filter((document: any) => document.category === query.category);
-  }
-  if (query.access && query.access !== 'all') {
-    filteredDocuments = filteredDocuments.filter((document: any) => document.accessLevel === query.access);
-  }
-
-  res.json(paginateList(filteredDocuments, req, {
-    categories,
-    categoryCounts,
-    documentCount: visibleDocuments.length,
-    restrictedCount
-  }));
+  const [result, facets] = await Promise.all([
+    backendStore.getDocuments(options),
+    backendStore.getDocumentFacets(options.role, options.classes || [])
+  ]);
+  if (Array.isArray(result)) return res.json(result);
+  res.json({ ...result, ...facets });
   } catch (error) {
     respondWithDatabaseError(res, 'documents', error);
   }
@@ -1296,42 +1256,16 @@ router.delete('/documents/:id', requireAuth, requireRole('admin', 'teacher'), as
 
 router.get('/announcements', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-  const query = req.query as Record<string, string | undefined>;
-  const search = (query.search || '').trim().toLowerCase();
-  const type = query.type || '';
-  const audience = query.audience || '';
-  const scope = query.scope || '';
-
-  let announcements = (await backendStore.getAnnouncements()).filter((announcement: any) => {
-    if (req.user?.role === 'student' &&
-      announcement.targetRole && announcement.targetRole !== 'all' && announcement.targetRole !== 'student') {
-      return false;
-    }
-    if (req.user?.role === 'teacher' &&
-      announcement.targetRole !== 'all' && announcement.targetRole !== 'teacher') {
-      return false;
-    }
-    if (search && !`${announcement.title || ''} ${announcement.content || ''}`.toLowerCase().includes(search)) {
-      return false;
-    }
-    if (type && type !== 'all' && announcement.type !== type) return false;
-    if (audience && audience !== 'all') {
-      const targets = announcement.targetAudiences || announcement.targetAudience || ['Everyone'];
-      if (!Array.isArray(targets) || (!targets.includes(audience) && !targets.includes('Everyone'))) {
-        return false;
-      }
-    }
-    if (scope === 'admin' && announcement.authorRole === 'Teaching Staff') return false;
-    if (scope === 'mine' && announcement.authorRole !== 'Teaching Staff') return false;
-    return true;
-  });
-
-  if (query.page || query.limit) {
-    announcements = [...announcements].sort(
-      (a: any, b: any) => Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned))
-    );
-  }
-  res.json(paginateList(announcements, req));
+    const query = req.query as Record<string, string | undefined>;
+    res.json(await backendStore.getAnnouncements({
+      search: query.search,
+      type: query.type,
+      audience: query.audience,
+      scope: query.scope,
+      role: req.user?.role,
+      page: query.page ? Number(query.page) : undefined,
+      limit: query.limit ? Number(query.limit) : undefined
+    }));
   } catch (error) {
     respondWithDatabaseError(res, 'announcements', error);
   }
@@ -1427,49 +1361,39 @@ router.delete('/availability/:id', requireAuth, requireRole('admin', 'teacher'),
 
 router.get('/assignments', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-  const all = await backendStore.getAssignments();
-  let assignments = all;
+  const query = req.query as Record<string, string | undefined>;
+  const options: Record<string, any> = {
+    search: query.search,
+    class: query.class,
+    subject: query.subject,
+    role: req.user?.role,
+    page: query.page ? Number(query.page) : undefined,
+    limit: query.limit ? Number(query.limit) : undefined
+  };
+  let subjectNames: string[] | undefined;
   if (req.user?.role === 'student') {
     const student = await backendStore.getStudentDirectoryRecord(req.user.studentId || '');
     if (!student) return res.status(403).json({ error: 'Student profile is unavailable.' });
-    const studentClass = student.class || '';
-    const studentSubjects = student?.enrolledSubjects || [];
-    assignments = all.filter(
-      (a: any) =>
-        (!studentClass || a.class === 'All Classes' || a.class === studentClass) &&
-        (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
-    );
+    options.studentClass = student.class;
+    options.studentSubjects = student.enrolledSubjects || [];
+    subjectNames = student.enrolledSubjects?.length ? student.enrolledSubjects : undefined;
+    if (!subjectNames) options.subjectClass = student.class;
   } else if (req.user?.role === 'teacher') {
     const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
-    const teacherSubjects = (teacher?.assignedClasses || []).map((ac: any) => ac.subject);
-    const teacherClasses = [
-      ...(teacher?.assignedClasses || []).map((ac: any) => ac.class),
-      ...(teacher?.classTeacherOf || [])
-    ];
-    assignments = all.filter((assignment: any) =>
-      assignment.teacherName === teacher?.name ||
-      (teacherClasses.includes(assignment.class) && teacherSubjects.includes(assignment.subject))
-    );
+    if (!teacher) return res.status(403).json({ error: 'Teacher profile is unavailable.' });
+    options.teacherName = teacher?.name || '';
+    options.teacherAssignments = teacher?.assignedClasses || [];
+    subjectNames = (teacher?.assignedClasses || []).map((assignment: any) => assignment.subject);
   }
-
-  const query = req.query as Record<string, string | undefined>;
-  const search = (query.search || '').trim().toLowerCase();
-  const subjects = [...new Set(assignments.map((assignment: any) => assignment.subject).filter(Boolean))];
-  if (search) {
-    assignments = assignments.filter((assignment: any) =>
-      `${assignment.title || ''} ${assignment.subject || ''}`.toLowerCase().includes(search)
-    );
-  }
-  if (query.class && query.class !== 'all') {
-    assignments = assignments.filter((assignment: any) => assignment.class === query.class);
-  }
-  if (query.subject && query.subject !== 'all') {
-    assignments = assignments.filter((assignment: any) => assignment.subject === query.subject);
-  }
-
-  res.json(paginateList(assignments, req, { subjects }));
+  const result = await backendStore.getAssignments(options);
+  if (Array.isArray(result)) return res.json(result);
+  const subjects = await backendStore.getSubjects({
+    class: options.subjectClass,
+    names: subjectNames
+  });
+  res.json({ ...result, subjects: subjects.map((subject: any) => subject.name) });
   } catch (error) {
-    respondWithDatabaseError(res, 'student or teacher profile', error);
+    respondWithDatabaseError(res, 'assignments', error);
   }
 });
 

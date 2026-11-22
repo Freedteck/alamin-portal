@@ -758,3 +758,78 @@ INSERT INTO public.subjects (id, name, all_classes, classes, all_departments, de
   ('sub-1', 'Mathematics', true, '["JSS 1","JSS 2","JSS 3","SSS 1","SSS 2","SSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb),
   ('sub-2', 'English Language', true, '["JSS 1","JSS 2","JSS 3","SSS 1","SSS 2","SSS 3"]'::jsonb, true, '["Science","Humanities","Business"]'::jsonb)
 ON CONFLICT (id) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.document_facets(p_role TEXT, p_classes TEXT[] DEFAULT '{}')
+RETURNS JSONB
+LANGUAGE SQL
+STABLE
+SET search_path = public
+AS $$
+  WITH grouped AS (
+    SELECT category,
+      COUNT(*) AS document_count,
+      COUNT(*) FILTER (WHERE access_level IN ('staff', 'admin')) AS restricted_count
+    FROM public.documents
+    WHERE
+      (
+        p_role IS NULL OR p_role = 'admin'
+        OR (
+          p_role = 'student'
+          AND LOWER(access_level) IN ('all', 'student', 'students')
+          AND (
+            allowed_classes @> '["All Classes"]'::jsonb
+            OR allowed_classes ?| COALESCE(p_classes, ARRAY[]::text[])
+          )
+        )
+        OR (
+          p_role = 'teacher'
+          AND LOWER(access_level) IN ('all', 'staff', 'teacher', 'teachers')
+          AND (
+            allowed_classes @> '["All Classes"]'::jsonb
+            OR allowed_classes ?| COALESCE(p_classes, ARRAY[]::text[])
+          )
+        )
+      )
+    GROUP BY category
+  )
+  SELECT jsonb_build_object(
+    'categories', COALESCE(jsonb_agg(category ORDER BY category), '[]'::jsonb),
+    'categoryCounts', COALESCE(jsonb_object_agg(category, document_count), '{}'::jsonb),
+    'documentCount', COALESCE(SUM(document_count), 0),
+    'restrictedCount', COALESCE(SUM(restricted_count), 0)
+  )
+  FROM grouped;
+$$;
+
+REVOKE ALL ON FUNCTION public.document_facets(TEXT, TEXT[]) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.document_facets(TEXT, TEXT[]) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.attendance_summary(p_classes TEXT[] DEFAULT NULL, p_since DATE DEFAULT NULL)
+RETURNS JSONB
+LANGUAGE SQL
+STABLE
+SET search_path = public
+AS $$
+  WITH selected AS (
+    SELECT records
+    FROM public.attendance_records
+    WHERE (p_classes IS NULL OR class_name = ANY(p_classes))
+      AND (p_since IS NULL OR date::date >= p_since)
+  ),
+  stats AS (
+    SELECT
+      (SELECT COUNT(*) FROM selected) AS entry_count,
+      (SELECT COUNT(*) FROM selected CROSS JOIN LATERAL jsonb_each(selected.records)) AS marked_count,
+      (SELECT COUNT(*) FROM selected CROSS JOIN LATERAL jsonb_each(selected.records) AS status(key, value)
+        WHERE status.value #>> '{}' IN ('present', 'late')) AS present_count
+  )
+  SELECT jsonb_build_object(
+    'entryCount', entry_count,
+    'markedCount', marked_count,
+    'presentCount', present_count
+  )
+  FROM stats;
+$$;
+
+REVOKE ALL ON FUNCTION public.attendance_summary(TEXT[], DATE) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.attendance_summary(TEXT[], DATE) TO service_role;

@@ -43,7 +43,7 @@ export function StudentBookings() {
       const [student, list, teacherList, availability, subjects] = await Promise.all([
         schoolStore.fetchCurrentStudent(),
         schoolStore.fetchRequests(),
-        schoolStore.fetchTeachers(),
+        schoolStore.fetchTeachers({ page: 1, limit: 100 }),
         schoolStore.fetchAvailability(),
         schoolStore.fetchSubjects()
       ]);

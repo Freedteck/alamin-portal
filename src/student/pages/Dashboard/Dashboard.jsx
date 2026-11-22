@@ -31,8 +31,8 @@ export function StudentDashboard() {
       const activeStudent = await schoolStore.fetchCurrentStudent();
       const [timetableRes, assignmentsRes, announcementsRes] = await Promise.all([
         schoolStore.fetchTimetable(activeStudent?.class),
-        schoolStore.fetchAssignments(),
-        schoolStore.fetchAnnouncements()
+        schoolStore.fetchAssignments({ page: 1, limit: 4 }),
+        schoolStore.fetchAnnouncements({ page: 1, limit: 3 })
       ]);
       setUser(activeStudent);
 
@@ -44,14 +44,7 @@ export function StudentDashboard() {
           .slice(0, 4);
         setUpcomingClasses(classSlots);
 
-        const studentSubjects = activeStudent.enrolledSubjects || [];
-        const asgs = (Array.isArray(assignmentsRes) ? assignmentsRes : [])
-          .filter(
-            (a) =>
-              (a.class === 'All Classes' || a.class === activeStudent.class) &&
-              (!a.subject || a.subject === 'General' || studentSubjects.length === 0 || studentSubjects.includes(a.subject))
-          )
-          .slice(0, 4)
+        const asgs = (assignmentsRes?.data || [])
           .map((a) => {
             const submitted = a.submissions?.some((sub) => sub.studentId === activeStudent.id);
             return {
@@ -64,9 +57,7 @@ export function StudentDashboard() {
           });
         setPendingAssignments(asgs);
 
-        const notices = (Array.isArray(announcementsRes) ? announcementsRes : [])
-          .filter((n) => !n.targetRole || n.targetRole === 'all' || n.targetRole === 'student')
-          .slice(0, 3)
+        const notices = (announcementsRes?.data || [])
           .map((n) => ({
             title: n.title,
             message: n.content,
