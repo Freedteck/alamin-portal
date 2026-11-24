@@ -1,9 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  GraduationCap,
-  Users,
-  Shield,
   Send,
   CalendarCheck,
   AlertCircle,
@@ -18,7 +15,6 @@ import { submitPublicEnquiry } from '../lib/schoolSync';
 
 export function Login({ initialModal = null }) {
   const navigate = useNavigate();
-  const [role, setRole] = useState('student');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -53,8 +49,6 @@ export function Login({ initialModal = null }) {
     meetingType: 'In-Person Consultation'
   });
 
-  const roleLabel = role === 'teacher' ? 'Staff' : role.charAt(0).toUpperCase() + role.slice(1);
-
   const handleLogin = async (e) => {
     e.preventDefault();
     if (!email.trim() || !password.trim()) {
@@ -72,10 +66,9 @@ export function Login({ initialModal = null }) {
         password
       });
 
-      const resolvedRole = response?.user?.role || role;
-      if (response?.user?.role && response.user.role !== role) {
-        const actualLabel = response.user.role === 'teacher' ? 'Staff' : response.user.role;
-        setErrorMsg(`This account belongs to the ${actualLabel} portal. Switch tab to sign in.`);
+      const resolvedRole = response?.user?.role;
+      if (!['admin', 'teacher', 'student'].includes(resolvedRole)) {
+        setErrorMsg('This account does not have a supported portal role. Please contact the school office.');
         return;
       }
 
@@ -147,196 +140,139 @@ export function Login({ initialModal = null }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#fdf9ec] flex flex-col justify-center items-center px-4 py-8 font-['Poppins',sans-serif]">
-      <div className="w-full max-w-md space-y-6">
-        <div className="flex flex-col items-center text-center space-y-3">
-          <Logo variant="dark" className="h-14 sm:h-16" showText={true} />
+    <div className="min-h-screen bg-[#fdf9ec] font-['Poppins',sans-serif] md:grid md:grid-cols-2">
+      <section
+        className="relative flex min-h-[36vh] flex-col justify-between bg-cover bg-center px-6 py-6 sm:px-10 sm:py-8 md:min-h-screen md:px-12 md:py-10 lg:px-16"
+        style={{
+          backgroundImage:
+            "linear-gradient(180deg, rgba(20, 28, 12, 0.42), rgba(20, 28, 12, 0.72)), url('/assets/login-classroom.jpg')"
+        }}
+        aria-label="Al-Amin Group of Schools"
+      >
+        <Logo variant="white" className="h-14 sm:h-16" showText />
+        <div className="max-w-xl pb-2 text-white md:pb-6">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-[#e7e78f]">
+            Learn • Lead • Succeed
+          </p>
+          <h1 className="text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl lg:text-5xl">
+            Welcome to Al-Amin Group of Schools
+          </h1>
+          <p className="mt-4 max-w-lg text-sm leading-relaxed text-white/85 sm:text-base">
+            Your school community, learning resources, and academic progress—all in one place.
+          </p>
+        </div>
+      </section>
+
+      <section className="flex min-h-[64vh] items-center justify-center px-5 py-10 sm:px-8 md:min-h-screen md:px-10 lg:px-16">
+        <div className="w-full max-w-md space-y-6">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1c1c14]">
-              Al-Amin Group of Schools
-            </h1>
-            <p className="text-xs sm:text-sm text-[#606043] max-w-sm mx-auto mt-1">
-              Management & Academic Portal for Students, Staff, and Administrators
+            <p className="text-sm font-semibold text-[#616218]">School portal</p>
+            <h2 className="mt-1 text-2xl font-bold tracking-tight text-[#1c1c14] sm:text-3xl">
+              Sign in to your account
+            </h2>
+            <p className="mt-2 text-sm text-[#606043]">
+              Use the email or ID linked to your school account.
             </p>
           </div>
-        </div>
 
-        <div className="bg-white rounded-2xl p-6 sm:p-8 border border-[#c9c7b6] shadow-xl">
-          <div className="grid grid-cols-3 p-1.5 rounded-xl bg-[#f0ebd5] mb-6">
-            <button
-              type="button"
-              onClick={() => {
-                setRole('student');
-                setEmail('');
-                setPassword('');
-                setErrorMsg('');
-                setInfoMsg('');
-              }}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                role === 'student'
-                  ? 'bg-white text-[#1c1c14] shadow-sm'
-                  : 'text-[#606043] hover:text-[#1c1c14]'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Student</span>
-            </button>
+          <div className="rounded-2xl border border-[#c9c7b6] bg-white p-6 shadow-xl sm:p-8">
+            {errorMsg && (
+              <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
 
-            <button
-              type="button"
-              onClick={() => {
-                setRole('teacher');
-                setEmail('');
-                setPassword('');
-                setErrorMsg('');
-                setInfoMsg('');
-              }}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                role === 'teacher'
-                  ? 'bg-white text-[#1c1c14] shadow-sm'
-                  : 'text-[#606043] hover:text-[#1c1c14]'
-              }`}
-            >
-              <GraduationCap className="w-3.5 h-3.5" />
-              <span>Staff</span>
-            </button>
+            {infoMsg && (
+              <div className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                <span>{infoMsg}</span>
+              </div>
+            )}
 
-            <button
-              type="button"
-              onClick={() => {
-                setRole('admin');
-                setEmail('');
-                setPassword('');
-                setErrorMsg('');
-                setInfoMsg('');
-              }}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                role === 'admin'
-                  ? 'bg-white text-[#1c1c14] shadow-sm'
-                  : 'text-[#606043] hover:text-[#1c1c14]'
-              }`}
-            >
-              <Shield className="w-3.5 h-3.5" />
-              <span>Admin</span>
-            </button>
-          </div>
-
-          <div className="text-center text-xs font-medium text-[#606043] mb-5">
-            {`${roleLabel} Portal Access`}
-          </div>
-
-          {errorMsg && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
-          {infoMsg && (
-            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-              <span>{infoMsg}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label htmlFor="login-email" className="block text-xs font-semibold text-[#1c1c14] mb-1.5">
-                {role === 'student'
-                  ? 'Portal Email or Admission Number'
-                  : role === 'teacher'
-                  ? 'School Email or Staff ID'
-                  : 'Admin Email'}
-              </label>
-              <input
-                id="login-email"
-                type={role === 'admin' ? 'email' : 'text'}
-                placeholder={
-                  role === 'student'
-                    ? 'e.g. 26/ASS/JA001 or student email'
-                    : role === 'teacher'
-                    ? 'e.g. ASS/staff/001 or staff email'
-                    : 'Enter administrator email'
-                }
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  setErrorMsg('');
-                }}
-                className="w-full h-10 px-3 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
-                required
-              />
-            </div>
-
-            <div>
-              <label htmlFor="login-password" className="block text-xs font-semibold text-[#1c1c14] mb-1.5">
-                Password
-              </label>
-              <div className="relative">
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <label htmlFor="login-email" className="mb-1.5 block text-xs font-semibold text-[#1c1c14]">
+                  Email, admission number, or staff ID
+                </label>
                 <input
-                  id="login-password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter your password"
-                  value={password}
+                  id="login-email"
+                  type="text"
+                  autoComplete="username"
+                  placeholder="Enter your email or ID"
+                  value={email}
                   onChange={(e) => {
-                    setPassword(e.target.value);
+                    setEmail(e.target.value);
                     setErrorMsg('');
                   }}
-                  className="w-full h-10 pl-3 pr-10 rounded-lg border border-[#c9c7b6] bg-white text-[#1c1c14] placeholder-[#797869] text-sm focus:outline-none focus:ring-2 focus:ring-[#616218]/20 focus:border-[#616218] hover:border-[#797869] transition-all shadow-xs"
+                  className="h-11 w-full rounded-lg border border-[#c9c7b6] bg-white px-3 text-sm text-[#1c1c14] placeholder-[#797869] shadow-xs transition-all hover:border-[#797869] focus:border-[#616218] focus:outline-none focus:ring-2 focus:ring-[#616218]/20"
                   required
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-[#797869] hover:text-[#1c1c14] rounded-md focus:outline-none focus:ring-2 focus:ring-[#616218]/20 transition-colors cursor-pointer"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
               </div>
-            </div>
 
-            <div className="pt-2 space-y-2.5">
+              <div>
+                <label htmlFor="login-password" className="mb-1.5 block text-xs font-semibold text-[#1c1c14]">
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    id="login-password"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      setErrorMsg('');
+                    }}
+                    className="h-11 w-full rounded-lg border border-[#c9c7b6] bg-white pl-3 pr-10 text-sm text-[#1c1c14] placeholder-[#797869] shadow-xs transition-all hover:border-[#797869] focus:border-[#616218] focus:outline-none focus:ring-2 focus:ring-[#616218]/20"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 cursor-pointer rounded-md p-1 text-[#797869] transition-colors hover:text-[#1c1c14] focus:outline-none focus:ring-2 focus:ring-[#616218]/20"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full h-10 px-4 bg-[#616218] hover:bg-[#494900] disabled:opacity-60 text-white font-semibold text-xs rounded-lg shadow-xs inline-flex items-center justify-center transition-colors cursor-pointer"
+                className="inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-lg bg-[#616218] px-4 text-sm font-semibold text-white shadow-xs transition-colors hover:bg-[#494900] disabled:opacity-60"
               >
-                {isSubmitting ? 'Please wait...' : `Login as ${roleLabel}`}
+                {isSubmitting ? 'Please wait...' : 'Sign in'}
               </button>
+              <p className="pt-1 text-center text-[11px] leading-relaxed text-[#797869]">
+                Need help accessing your account? Contact the school office.
+              </p>
+            </form>
+          </div>
 
-              {role !== 'admin' && (
-                <p className="text-[11px] text-center text-[#797869] pt-1 leading-relaxed">
-                  Accounts are created exclusively by the School Administrator. Contact the school office for account or password assistance.
-                </p>
-              )}
-            </div>
-          </form>
-        </div>
-
-        <div className="space-y-3 text-center">
-
-          <div className="flex items-center justify-center gap-3 text-xs font-semibold text-[#616218] pt-1">
+          <div className="flex items-center justify-center gap-3 text-xs font-semibold text-[#616218]">
             <button
               type="button"
               onClick={() => setIsEnquireModalOpen(true)}
-              className="hover:underline flex items-center gap-1 cursor-pointer"
+              className="flex cursor-pointer items-center gap-1 hover:underline"
             >
-              <Send className="w-3.5 h-3.5" />
+              <Send className="h-3.5 w-3.5" />
               <span>Enquire Now</span>
             </button>
             <span className="text-[#c9c7b6]">•</span>
             <button
               type="button"
               onClick={() => setIsAppointmentModalOpen(true)}
-              className="hover:underline flex items-center gap-1 cursor-pointer"
+              className="flex cursor-pointer items-center gap-1 hover:underline"
             >
-              <CalendarCheck className="w-3.5 h-3.5" />
+              <CalendarCheck className="h-3.5 w-3.5" />
               <span>Book Appointment</span>
             </button>
           </div>
         </div>
-      </div>
+      </section>
 
       <Modal
         isOpen={isEnquireModalOpen}
