@@ -8,6 +8,7 @@
     "start": "node server.ts",
     "build": "vite build",
     "lint": "tsc --noEmit",
+    "test": "tsx --test test/*.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

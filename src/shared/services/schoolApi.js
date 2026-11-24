@@ -337,11 +337,7 @@ export const schoolStore = {
     return await apiClient.get(`/attendance${qs ? `?${qs}` : ''}`);
   },
   async fetchStudentAttendanceHistory(studentId) {
-    try {
-      return await apiClient.get(`/attendance/student/${studentId}`);
-    } catch {
-      return null;
-    }
+    return await apiClient.get(`/attendance/student/${studentId}`);
   },
   async saveAttendance(arg1, arg2, arg3, arg4) {
     let date, className, submittedBy, records;

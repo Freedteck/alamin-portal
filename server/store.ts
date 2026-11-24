@@ -325,6 +325,14 @@ export const backendStore = {
     return isServerSupabaseConfigured ? 'supabase-postgres' : 'supabase-unavailable';
   },
 
+  async checkDatabaseConnection() {
+    const { error } = await requireServerSupabase()
+      .from('portal_users')
+      .select('id', { head: true })
+      .limit(1);
+    if (error) throw error;
+  },
+
   async ensureInitialAdmin() {
     const client = requireServerSupabase();
     const { data: admins, error: adminError } = await client.from('portal_users')

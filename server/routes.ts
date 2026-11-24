@@ -84,13 +84,25 @@ router.get('/ping', (_req: Request, res: Response) => {
   res.json({ pong: true, time: new Date().toISOString() });
 });
 
-router.get('/health', (_req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    service: 'Al-Amin Group of Schools REST API',
-    storageMode: backendStore.getStorageMode(),
-    timestamp: new Date().toISOString()
-  });
+router.get('/health', async (_req: Request, res: Response) => {
+  try {
+    await backendStore.checkDatabaseConnection();
+    res.json({
+      status: 'ok',
+      database: 'connected',
+      service: 'Al-Amin Group of Schools REST API',
+      storageMode: backendStore.getStorageMode(),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('[Al-Amin API] Health check failed:', error);
+    res.status(503).json({
+      status: 'unavailable',
+      database: 'unavailable',
+      service: 'Al-Amin Group of Schools REST API',
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 router.get('/dashboard/admin', requireAuth, requireRole('admin'), async (_req: Request, res: Response) => {
@@ -400,7 +412,7 @@ router.get('/subjects', requireAuth, async (req: AuthenticatedRequest, res: Resp
   }
 });
 
-router.post('/subjects', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.post('/subjects', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   try {
     const created = await backendStore.addSubject(req.body || {});
     if (!created) return res.status(400).json({ error: 'Subject name is required.' });
@@ -410,7 +422,7 @@ router.post('/subjects', requireAuth, requireRole('admin', 'teacher'), async (re
   }
 });
 
-router.put('/subjects/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.put('/subjects/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   try {
     const updated = await backendStore.updateSubject(paramStr(req.params.id), req.body || {});
     if (!updated) return res.status(404).json({ error: 'Subject not found.' });
@@ -567,7 +579,7 @@ router.delete('/students/:id', requireAuth, requireRole('admin'), async (req: Re
 
 /* ── Teachers ────────────────────────────────────────────────────────────── */
 
-router.get('/teachers', requireAuth, async (req: Request, res: Response) => {
+router.get('/teachers', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { search, class: className, subject, status, page, limit } = req.query as Record<string, string>;
   try {
     const result = await backendStore.getTeachers({
@@ -578,7 +590,23 @@ router.get('/teachers', requireAuth, async (req: Request, res: Response) => {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined
     });
-    res.json(result);
+    if (req.user?.role === 'admin') {
+      res.json(result);
+      return;
+    }
+
+    const publicTeacher = (teacher: any) => ({
+      id: teacher.id,
+      name: teacher.name,
+      department: teacher.department,
+      position: teacher.position,
+      avatarUrl: teacher.avatarUrl
+    });
+    if (Array.isArray(result)) {
+      res.json(result.map(publicTeacher));
+      return;
+    }
+    res.json({ ...result, data: (result.data || []).map(publicTeacher) });
   } catch (error) {
     respondWithDatabaseError(res, 'teachers', error);
   }
@@ -597,9 +625,13 @@ router.get('/teachers/me', requireAuth, async (req: AuthenticatedRequest, res: R
   }
 });
 
-router.get('/teachers/:id', requireAuth, async (req: Request, res: Response) => {
+router.get('/teachers/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const teacherId = paramStr(req.params.id);
+  if (req.user?.role !== 'admin' && (req.user?.role !== 'teacher' || req.user.teacherId !== teacherId)) {
+    return res.status(403).json({ error: 'You can only view your own teacher profile.' });
+  }
   try {
-    const teacher = await backendStore.getTeacherDirectoryRecord(paramStr(req.params.id));
+    const teacher = await backendStore.getTeacherDirectoryRecord(teacherId);
     if (!teacher) return res.status(404).json({ error: 'Teacher not found.' });
     res.json(teacher);
   } catch (error) {
@@ -642,9 +674,20 @@ router.post('/teachers/:id/credentials', requireAuth, requireRole('admin'), asyn
   }
 });
 
-router.put('/teachers/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.put('/teachers/:id', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
+  const teacherId = paramStr(req.params.id);
+  if (req.user?.role === 'teacher' && req.user.teacherId !== teacherId) {
+    return res.status(403).json({ error: 'You can only update your own teacher profile.' });
+  }
   try {
-    const updated = await backendStore.updateTeacherInDatabase(paramStr(req.params.id), req.body || {});
+    const updates = req.user?.role === 'admin'
+      ? req.body || {}
+      : Object.fromEntries(
+          Object.entries(req.body || {}).filter(([key]) =>
+            ['name', 'email', 'phone', 'address', 'dateOfBirth', 'startDate', 'position', 'qualification', 'qualifications', 'emergencyContact', 'department'].includes(key)
+          )
+        );
+    const updated = await backendStore.updateTeacherInDatabase(teacherId, updates);
     if (!updated) return res.status(404).json({ error: 'Teacher not found.' });
     if ('error' in updated) return res.status(409).json(updated);
     res.json(updated);
@@ -1063,18 +1106,24 @@ router.get('/resources', requireAuth, async (req: AuthenticatedRequest, res: Res
   }
 });
 
-router.post('/resources', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.post('/resources', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const { title } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Resource title is required.' });
   try {
-    const created = await backendStore.addResource(req.body);
+    let resource = req.body || {};
+    if (req.user?.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
+      if (!teacher) return res.status(403).json({ error: 'Teacher profile is unavailable.' });
+      resource = { ...resource, uploadedBy: teacher.name };
+    }
+    const created = await backendStore.addResource(resource);
     res.status(201).json(created);
   } catch (error) {
     respondWithDatabaseError(res, 'resources', error);
   }
 });
 
-router.put('/resources/:id', requireAuth, async (req: Request, res: Response) => {
+router.put('/resources/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   try {
     const updated = await backendStore.updateResource(paramStr(req.params.id), req.body || {});
     if (!updated) return res.status(404).json({ error: 'Resource not found.' });
@@ -1084,7 +1133,7 @@ router.put('/resources/:id', requireAuth, async (req: Request, res: Response) =>
   }
 });
 
-router.delete('/resources/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.delete('/resources/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
   try {
     const deleted = await backendStore.deleteResource(id);
@@ -1113,7 +1162,7 @@ router.get('/equipment', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/equipment', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.post('/equipment', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { name } = req.body || {};
   if (!name) return res.status(400).json({ error: 'Equipment name is required.' });
   try {
@@ -1124,7 +1173,7 @@ router.post('/equipment', requireAuth, requireRole('admin', 'teacher'), async (r
   }
 });
 
-router.delete('/equipment/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.delete('/equipment/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
   try {
     const deleted = await backendStore.deleteEquipment(id);
@@ -1165,7 +1214,7 @@ router.post('/maintenance', requireAuth, requireRole('admin', 'teacher'), async 
   }
 });
 
-router.patch('/maintenance/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.patch('/maintenance/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { status } = req.body || {};
   if (!status) return res.status(400).json({ error: 'Status is required.' });
   try {
@@ -1213,7 +1262,7 @@ router.get('/documents', requireAuth, async (req: AuthenticatedRequest, res: Res
   }
 });
 
-router.post('/documents', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.post('/documents', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { name } = req.body || {};
   if (!name) return res.status(400).json({ error: 'Document name is required.' });
   try {
@@ -1224,7 +1273,7 @@ router.post('/documents', requireAuth, requireRole('admin', 'teacher'), async (r
   }
 });
 
-router.patch('/documents/:id/access', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.patch('/documents/:id/access', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { accessLevel, allowedClasses } = req.body || {};
   if (!accessLevel) return res.status(400).json({ error: 'accessLevel is required.' });
   try {
@@ -1240,7 +1289,7 @@ router.patch('/documents/:id/access', requireAuth, requireRole('admin', 'teacher
   }
 });
 
-router.delete('/documents/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.delete('/documents/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
   try {
     const deleted = await backendStore.deleteDocument(id);
@@ -1410,20 +1459,88 @@ router.get('/assignments', requireAuth, async (req: AuthenticatedRequest, res: R
   }
 });
 
-router.post('/assignments', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.post('/assignments', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const { title, subject } = req.body || {};
   if (!title || !subject) return res.status(400).json({ error: 'Title and subject are required.' });
   try {
-    const created = await backendStore.addAssignment(req.body);
+    let assignment = req.body || {};
+    if (req.user?.role === 'teacher') {
+      const teacher = await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '');
+      const canTeachSubject = (teacher?.assignedClasses || []).some(
+        (item: any) => item.class === assignment.class && item.subject === assignment.subject
+      );
+      if (!teacher || !canTeachSubject) {
+        return res.status(403).json({ error: 'You can only publish assignments for your assigned classes and subjects.' });
+      }
+      const {
+        title: safeTitle,
+        subject: safeSubject,
+        class: safeClass,
+        description,
+        dueDate,
+        totalMarks,
+        maxMarks,
+        type,
+        attachmentName,
+        attachmentSize,
+        attachmentPath,
+        attachmentUrl,
+        attachments
+      } = assignment;
+      assignment = {
+        title: safeTitle,
+        subject: safeSubject,
+        class: safeClass,
+        description,
+        dueDate,
+        totalMarks,
+        maxMarks,
+        type,
+        attachmentName,
+        attachmentSize,
+        attachmentPath,
+        attachmentUrl,
+        attachments,
+        teacherName: teacher.name
+      };
+    }
+    const created = await backendStore.addAssignment(assignment);
     res.status(201).json(created);
   } catch (error) {
     respondWithDatabaseError(res, 'classes', error);
   }
 });
 
-router.put('/assignments/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.put('/assignments/:id', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const updated = await backendStore.updateAssignment(paramStr(req.params.id), req.body || {});
+    const assignmentId = paramStr(req.params.id);
+    let patch = req.body || {};
+    if (req.user?.role === 'teacher') {
+      const [teacher, existing] = await Promise.all([
+        backendStore.getTeacherDirectoryRecord(req.user.teacherId || ''),
+        backendStore.getAssignmentById(assignmentId)
+      ]);
+      if (!teacher || !existing || existing.teacherName !== teacher.name) {
+        return res.status(403).json({ error: 'You can only update your own assignments.' });
+      }
+      const nextClass = patch.class || existing.class;
+      const nextSubject = patch.subject || existing.subject;
+      const isAssigned = (teacher.assignedClasses || []).some(
+        (item: any) => item.class === nextClass && item.subject === nextSubject
+      );
+      if (!isAssigned) {
+        return res.status(403).json({ error: 'You can only assign work for your assigned classes and subjects.' });
+      }
+      const allowedFields = [
+        'title', 'subject', 'class', 'description', 'dueDate', 'totalMarks',
+        'maxMarks', 'type', 'attachmentName', 'attachmentSize',
+        'attachmentPath', 'attachmentUrl', 'attachments'
+      ];
+      patch = Object.fromEntries(
+        Object.entries(patch).filter(([key]) => allowedFields.includes(key))
+      );
+    }
+    const updated = await backendStore.updateAssignment(assignmentId, patch);
     if (!updated) return res.status(404).json({ error: 'Assignment not found.' });
     res.json(updated);
   } catch (error) {
@@ -1431,9 +1548,18 @@ router.put('/assignments/:id', requireAuth, requireRole('admin', 'teacher'), asy
   }
 });
 
-router.delete('/assignments/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.delete('/assignments/:id', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const id = paramStr(req.params.id);
   try {
+    if (req.user?.role === 'teacher') {
+      const [teacher, existing] = await Promise.all([
+        backendStore.getTeacherDirectoryRecord(req.user.teacherId || ''),
+        backendStore.getAssignmentById(id)
+      ]);
+      if (!teacher || !existing || existing.teacherName !== teacher.name) {
+        return res.status(403).json({ error: 'You can only delete your own assignments.' });
+      }
+    }
     const deleted = await backendStore.deleteAssignment(id);
     if (!deleted) return res.status(404).json({ error: 'Assignment not found.' });
     res.json({ ok: true, id });
@@ -1496,7 +1622,7 @@ router.get('/requests', requireAuth, async (req: AuthenticatedRequest, res: Resp
   }
 });
 
-router.post('/requests', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/requests', requireAuth, requireRole('student'), async (req: AuthenticatedRequest, res: Response) => {
   const { title } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Request title is required.' });
   try {
@@ -1555,7 +1681,7 @@ router.post('/enquiries', async (req: Request, res: Response) => {
 
 /* ── Direct Messages ─────────────────────────────────────────────────────── */
 
-router.get('/messages', requireAuth, async (_req: Request, res: Response) => {
+router.get('/messages', requireAuth, requireRole('admin'), async (_req: Request, res: Response) => {
   try {
     res.json(await backendStore.getDirectMessages());
   } catch (error) {
@@ -1585,7 +1711,7 @@ router.post('/messages', requireAuth, requireRole('admin'), async (req: Authenti
 
 /* ── Staff Leaves ────────────────────────────────────────────────────────── */
 
-router.get('/staff-leaves', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/staff-leaves', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const teacherId = req.user?.role === 'teacher' ? req.user.teacherId : (typeof req.query.teacherId === 'string' ? req.query.teacherId : undefined);
   try {
     res.json(await backendStore.getStaffLeaves(teacherId));
@@ -1603,9 +1729,12 @@ router.post('/staff-leaves', requireAuth, requireRole('admin', 'teacher'), async
     const teacher = req.user?.teacherId
       ? await backendStore.getTeacherDirectoryRecord(req.user.teacherId)
       : null;
+    if (req.user?.role === 'teacher' && !teacher) {
+      return res.status(403).json({ error: 'Teacher profile is unavailable.' });
+    }
     const created = await backendStore.addStaffLeave({
-      teacherId: teacher?.id || req.body?.teacherId || '',
-      teacherName: teacher?.name || req.body?.teacherName || req.user?.name || 'Staff',
+      teacherId: teacher?.id || (req.user?.role === 'admin' ? req.body?.teacherId : '') || '',
+      teacherName: teacher?.name || (req.user?.role === 'admin' ? req.body?.teacherName : '') || req.user?.name || 'Staff',
       type: type || 'Casual Leave',
       startDate,
       endDate,

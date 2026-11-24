@@ -48,6 +48,8 @@ export function StaffAttendance() {
   );
   const [studentClassFilter, setStudentClassFilter] = useState("all");
   const [studentAuditData, setStudentAuditData] = useState(null);
+  const [isLoadingStudentAudit, setIsLoadingStudentAudit] = useState(false);
+  const [studentAuditError, setStudentAuditError] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
   const [studentPage, setStudentPage] = useState(1);
   const studentPageSize = 10;
@@ -120,6 +122,9 @@ export function StaffAttendance() {
           data: Array.isArray(result?.data) ? result.data : [],
           total: result?.total || 0,
         });
+        if (!selectedStudentId && result?.data?.length) {
+          setSelectedStudentId(result.data[0].id);
+        }
       })
       .catch((error) => {
         console.error("Failed to search attendance students:", error);
@@ -128,7 +133,7 @@ export function StaffAttendance() {
     return () => {
       active = false;
     };
-  }, [studentPage, studentClassFilter, studentSearch, syncTick]);
+  }, [studentPage, studentClassFilter, studentSearch, selectedStudentId, syncTick]);
 
   useEffect(() => {
     setRollPage(1);
@@ -198,15 +203,28 @@ export function StaffAttendance() {
     const loadAudit = async () => {
       if (!selectedStudentId) {
         setStudentAuditData(null);
+        setStudentAuditError("");
+        setIsLoadingStudentAudit(false);
         return;
       }
+      setStudentAuditData(null);
+      setStudentAuditError("");
+      setIsLoadingStudentAudit(true);
       try {
         const audit =
           await schoolStore.fetchStudentAttendanceHistory(selectedStudentId);
-        if (active) setStudentAuditData(audit);
+        if (active) {
+          setStudentAuditData(audit);
+          if (!audit?.student) setStudentAuditError("Student record was not found.");
+        }
       } catch (error) {
         console.error("Failed to load student attendance history:", error);
-        if (active) setStudentAuditData(null);
+        if (active) {
+          setStudentAuditData(null);
+          setStudentAuditError(error?.message || "Could not load this student's attendance record.");
+        }
+      } finally {
+        if (active) setIsLoadingStudentAudit(false);
       }
     };
     loadAudit();
@@ -810,9 +828,19 @@ export function StaffAttendance() {
             />
           </div>
 
-          {!studentAuditData || !studentAuditData.student ? (
+          {isLoadingStudentAudit ? (
+            <div className="rounded-lg border border-[#c9c7b6] bg-white p-8 text-center text-xs text-[#797869]" role="status">
+              Loading student attendance record...
+            </div>
+          ) : studentAuditError ? (
+            <div className="rounded-lg border border-red-200 bg-white p-8 text-center text-xs text-red-700" role="alert">
+              {studentAuditError}
+            </div>
+          ) : !studentAuditData || !studentAuditData.student ? (
             <div className="rounded-lg border border-[#c9c7b6] bg-white p-8 text-center text-xs text-[#797869]">
-              No students enrolled yet or no record found.
+              {selectedStudentId
+                ? "No student attendance record is available."
+                : "No students are available in your assigned classes."}
             </div>
           ) : (
             <div className="space-y-6">

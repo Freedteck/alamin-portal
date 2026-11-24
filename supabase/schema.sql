@@ -462,6 +462,33 @@ ALTER TABLE public.direct_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.staff_leaves ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.help_tickets ENABLE ROW LEVEL SECURITY;
 
+-- Browser clients must use the Express API, which performs role-scoped checks.
+-- The server uses the service_role key and bypasses these restrictive policies.
+DO $$
+DECLARE
+  app_table TEXT;
+  app_tables TEXT[] := ARRAY[
+    'portal_users', 'profiles', 'institution_settings', 'classes', 'subjects',
+    'students', 'teachers', 'timetable_slots', 'timetable_alerts',
+    'attendance_records', 'grades', 'resources', 'equipment',
+    'maintenance_requests', 'documents', 'announcements', 'teacher_availability',
+    'assignments', 'student_requests', 'enquiries', 'direct_messages',
+    'staff_leaves', 'help_tickets'
+  ];
+BEGIN
+  FOREACH app_table IN ARRAY app_tables LOOP
+    EXECUTE format(
+      'DROP POLICY IF EXISTS "Deny direct API access" ON public.%I',
+      app_table
+    );
+    EXECUTE format(
+      'CREATE POLICY "Deny direct API access" ON public.%I AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false) WITH CHECK (false)',
+      app_table
+    );
+  END LOOP;
+END
+$$;
+
 -- Portal users table is strictly server-side (Express uses SUPABASE_SECRET_KEY, bypassing RLS)
 DROP POLICY IF EXISTS "No direct client access to portal_users" ON public.portal_users;
 CREATE POLICY "No direct client access to portal_users" ON public.portal_users
