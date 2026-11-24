@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, LoaderCircle, X } from 'lucide-react';
-import { subscribeApiActivity } from '../../lib/apiClient';
+import { apiClient, subscribeApiActivity } from '../../lib/apiClient';
 
 export function GlobalApiStatus() {
   const [isLoading, setIsLoading] = useState(false);
@@ -17,6 +17,10 @@ export function GlobalApiStatus() {
       }
 
       if (activity.type === 'error') {
+        if (activity.error.status === 401 && !apiClient.getToken()) {
+          setError(null);
+          return;
+        }
         setError(activity.error);
       }
 
@@ -25,10 +29,14 @@ export function GlobalApiStatus() {
         setIsLoading(false);
       }
     });
+    const unsubscribeAuth = apiClient.onAuthChange(({ authenticated }) => {
+      if (!authenticated) setError(null);
+    });
 
     return () => {
       window.clearTimeout(loadingTimer);
       unsubscribe();
+      unsubscribeAuth();
     };
   }, []);
 

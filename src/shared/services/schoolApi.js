@@ -71,7 +71,6 @@ export function initializeSchoolSync() {
         eventSource.close();
         eventSource = null;
       }
-      notifyChange('logout');
     }
   });
 
