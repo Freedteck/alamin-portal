@@ -201,7 +201,7 @@ export function StaffAnnouncements() {
         {announcements.length > 0 ? (
           announcements.map((ann) => {
             const targets = ann.targetAudiences || ann.targetAudience || ['Everyone'];
-            const isOwn = ann.authorRole === 'Teaching Staff';
+            const isOwn = ann.creatorId === currentTeacher?.id;
             return (
               <div
                 key={ann.id}

@@ -318,6 +318,7 @@ export function ClassScheduling() {
         showClassBadge={selectedClass === 'All Classes'}
         allowRowMerge={true}
         onRescheduleSlot={openReschedule}
+        canRescheduleSlot={(slot) => slot.teacherId === currentTeacher?.id}
       />
 
       {/* Reschedule Lesson Modal */}

@@ -16,9 +16,15 @@ CREATE TABLE IF NOT EXISTS public.portal_users (
   teacher_id TEXT NOT NULL DEFAULT '',
   password_hash TEXT NOT NULL,
   avatar_url TEXT NOT NULL DEFAULT '',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  auth_version BIGINT NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.portal_users
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS auth_version BIGINT NOT NULL DEFAULT 1;
 
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -254,6 +260,7 @@ CREATE TABLE IF NOT EXISTS public.announcements (
   priority TEXT NOT NULL DEFAULT 'medium',
   author TEXT NOT NULL DEFAULT '',
   author_role TEXT NOT NULL DEFAULT '',
+  creator_id TEXT,
   date TEXT NOT NULL DEFAULT '',
   event_date TEXT NOT NULL DEFAULT '',
   event_time TEXT NOT NULL DEFAULT '',
@@ -265,6 +272,9 @@ CREATE TABLE IF NOT EXISTS public.announcements (
   views INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.announcements
+  ADD COLUMN IF NOT EXISTS creator_id TEXT;
 
 CREATE TABLE IF NOT EXISTS public.teacher_availability (
   id TEXT PRIMARY KEY,

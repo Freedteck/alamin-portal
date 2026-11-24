@@ -165,7 +165,10 @@ router.post('/auth/login', async (req: Request, res: Response) => {
       }
     }
     const token = signAuthToken(user);
-    res.json({ token, user });
+    const responseUser = { ...user };
+    delete responseUser.authVersion;
+    delete responseUser.isActive;
+    res.json({ token, user: responseUser });
   } catch (error) {
     respondWithDatabaseError(res, 'authentication', error);
   }
@@ -805,7 +808,7 @@ router.get('/timetable', requireAuth, async (req: AuthenticatedRequest, res: Res
   }
 });
 
-router.post('/timetable', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.post('/timetable', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   try {
     const created = await backendStore.addTimetableSlot(req.body || {});
     res.status(201).json(created);
@@ -814,7 +817,7 @@ router.post('/timetable', requireAuth, requireRole('admin', 'teacher'), async (r
   }
 });
 
-router.put('/timetable/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.put('/timetable/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   try {
     const updated = await backendStore.updateTimetableSlot(paramStr(req.params.id), req.body || {});
     if (!updated) return res.status(404).json({ error: 'Timetable slot not found.' });
@@ -824,7 +827,7 @@ router.put('/timetable/:id', requireAuth, requireRole('admin', 'teacher'), async
   }
 });
 
-router.delete('/timetable/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.delete('/timetable/:id', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const id = paramStr(req.params.id);
   try {
     const deleted = await backendStore.deleteTimetableSlot(id);
@@ -836,13 +839,40 @@ router.delete('/timetable/:id', requireAuth, requireRole('admin', 'teacher'), as
 });
 
 router.post('/timetable/reschedule', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
-  const { slotId, targetDay, targetStartTime, targetEndTime, actorTeacherName } = req.body || {};
+  const { slotId, targetDay, targetStartTime, targetEndTime } = req.body || {};
   if (!slotId || !targetDay || !targetStartTime || !targetEndTime) {
     return res.status(400).json({ error: 'slotId, targetDay, targetStartTime, and targetEndTime are required.' });
   }
-  const actor = actorTeacherName || req.user?.name || 'Teaching Staff';
   try {
-    const result = await backendStore.rescheduleTeacherSlot(slotId, targetDay, targetStartTime, targetEndTime, actor);
+    let actorName = req.user?.name || 'School Administrator';
+    let actorTeacherId: string | undefined;
+    if (req.user?.role === 'teacher') {
+      const [teacher, slot] = await Promise.all([
+        backendStore.getTeacherDirectoryRecord(req.user.teacherId || ''),
+        backendStore.getTimetableSlotById(slotId)
+      ]);
+      if (!slot) return res.status(404).json({ error: 'Class period not found.' });
+      if (!teacher) return res.status(403).json({ error: 'Teacher profile is unavailable.' });
+      const ownsSlot = slot.teacherId === teacher.id;
+      const assigned = (teacher.assignedClasses || []).some(
+        (assignment: any) =>
+          assignment.class === slot.class &&
+          assignment.subject === slot.subject
+      );
+      if (slot.type !== 'lesson' || !ownsSlot || !assigned) {
+        return res.status(403).json({ error: 'You can only reschedule your own lessons for assigned classes and subjects.' });
+      }
+      actorName = teacher.name;
+      actorTeacherId = teacher.id;
+    }
+    const result = await backendStore.rescheduleTeacherSlot(
+      slotId,
+      targetDay,
+      targetStartTime,
+      targetEndTime,
+      actorName,
+      actorTeacherId
+    );
     if (!result.success) {
       return res.status(409).json(result);
     }
@@ -1324,6 +1354,7 @@ router.get('/announcements', requireAuth, async (req: AuthenticatedRequest, res:
       audience: query.audience,
       scope: query.scope,
       role: req.user?.role,
+      userId: req.user?.teacherId || req.user?.id,
       classes,
       page: query.page ? Number(query.page) : undefined,
       limit: query.limit ? Number(query.limit) : undefined
@@ -1333,20 +1364,53 @@ router.get('/announcements', requireAuth, async (req: AuthenticatedRequest, res:
   }
 });
 
-router.post('/announcements', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.post('/announcements', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const { title, content } = req.body || {};
   if (!title || !content) return res.status(400).json({ error: 'Title and content are required.' });
   try {
-    const created = await backendStore.addAnnouncement(req.body);
+    const teacher = req.user?.role === 'teacher'
+      ? await backendStore.getTeacherDirectoryRecord(req.user.teacherId || '')
+      : null;
+    if (req.user?.role === 'teacher' && !teacher) {
+      return res.status(403).json({ error: 'Teacher profile is unavailable.' });
+    }
+    const trustedFields = teacher
+      ? {
+          author: teacher.name,
+          authorRole: 'Teaching Staff',
+          creatorId: teacher.id,
+          isPinned: false
+        }
+      : { creatorId: req.user?.id || '' };
+    const created = await backendStore.addAnnouncement({
+      ...(req.body || {}),
+      ...trustedFields
+    });
     res.status(201).json(created);
   } catch (error) {
     respondWithDatabaseError(res, 'announcements', error);
   }
 });
 
-router.put('/announcements/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.put('/announcements/:id', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const updated = await backendStore.updateAnnouncement(paramStr(req.params.id), req.body || {});
+    const id = paramStr(req.params.id);
+    let patch = req.body || {};
+    if (req.user?.role === 'teacher') {
+      const announcement = await backendStore.getAnnouncementById(id);
+      if (!announcement) return res.status(404).json({ error: 'Announcement not found.' });
+      if (announcement.creatorId !== req.user.teacherId) {
+        return res.status(403).json({ error: 'You can only update announcements you created.' });
+      }
+      const allowedFields = [
+        'title', 'content', 'type', 'priority', 'eventDate',
+        'eventTime', 'location', 'targetAudiences', 'attachments', 'status'
+      ];
+      patch = Object.fromEntries(
+        Object.entries(patch).filter(([key]) => allowedFields.includes(key))
+      );
+    }
+    const updated = await backendStore.updateAnnouncement(id, patch);
     if (!updated) return res.status(404).json({ error: 'Announcement not found.' });
     res.json(updated);
   } catch (error) {
@@ -1354,9 +1418,16 @@ router.put('/announcements/:id', requireAuth, requireRole('admin', 'teacher'), a
   }
 });
 
-router.delete('/announcements/:id', requireAuth, requireRole('admin', 'teacher'), async (req: Request, res: Response) => {
+router.delete('/announcements/:id', requireAuth, requireRole('admin', 'teacher'), async (req: AuthenticatedRequest, res: Response) => {
   const id = paramStr(req.params.id);
   try {
+    if (req.user?.role === 'teacher') {
+      const announcement = await backendStore.getAnnouncementById(id);
+      if (!announcement) return res.status(404).json({ error: 'Announcement not found.' });
+      if (announcement.creatorId !== req.user.teacherId) {
+        return res.status(403).json({ error: 'You can only delete announcements you created.' });
+      }
+    }
     const deleted = await backendStore.deleteAnnouncement(id);
     if (!deleted) return res.status(404).json({ error: 'Announcement not found.' });
     res.json({ ok: true, id });

@@ -15,6 +15,10 @@ DECLARE
 BEGIN
   FOREACH app_table IN ARRAY app_tables LOOP
     EXECUTE format(
+      'ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',
+      app_table
+    );
+    EXECUTE format(
       'DROP POLICY IF EXISTS "Deny direct API access" ON public.%I',
       app_table
     );

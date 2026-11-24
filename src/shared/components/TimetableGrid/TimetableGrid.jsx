@@ -56,6 +56,7 @@ export function TimetableGrid({
   onEditSlot,
   onDeleteSlot,
   onRescheduleSlot,
+  canRescheduleSlot,
   onAddAtSlot
 }) {
   const boundarySet = new Set(BASELINE_BOUNDARIES);
@@ -240,7 +241,7 @@ export function TimetableGrid({
           )}
         </div>
 
-        {onRescheduleSlot && isLesson && (
+        {onRescheduleSlot && isLesson && (!canRescheduleSlot || canRescheduleSlot(slot)) && (
           <div className="pt-0.5">
             <button
               type="button"

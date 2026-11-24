@@ -4,10 +4,14 @@ import express from 'express';
 
 process.env.JWT_SECRET = 'test-secret-with-at-least-thirty-two-characters';
 
-const [{ default: apiRouter }, { signAuthToken }] = await Promise.all([
+const [{ default: apiRouter }, auth, { backendStore }] = await Promise.all([
   import('../server/routes.ts'),
-  import('../server/auth.ts')
+  import('../server/auth.ts'),
+  import('../server/store.ts')
 ]);
+const { signAuthToken, setAuthAccountResolver } = auth;
+const authAccounts = new Map();
+setAuthAccountResolver(async (userId) => authAccounts.get(userId) || null);
 
 const app = express();
 app.use(express.json());
@@ -44,6 +48,19 @@ function authHeader(role, userId = `test-${role}`) {
 }
 
 async function request(path, { role, userId, method = 'GET', body } = {}) {
+  if (role) {
+    const id = userId || `test-${role}`;
+    if (!authAccounts.has(id)) {
+      authAccounts.set(id, {
+        id,
+        role,
+        authVersion: 1,
+        isActive: true,
+        ...(role === 'teacher' ? { teacherId: id } : {}),
+        ...(role === 'student' ? { studentId: id } : {})
+      });
+    }
+  }
   return fetch(`${baseUrl}${path}`, {
     method,
     headers: {
@@ -144,4 +161,227 @@ test('only students may submit student requests', async () => {
 test('students cannot access staff leave records', async () => {
   const response = await request('/staff-leaves', { role: 'student' });
   assert.equal(response.status, 403);
+});
+
+test('revoked and inactive accounts cannot use existing tokens', async (t) => {
+  await t.test('rejects a stale authorization version', async () => {
+    authAccounts.set('stale-teacher', {
+      id: 'stale-teacher',
+      role: 'teacher',
+      teacherId: 'stale-teacher',
+      authVersion: 2,
+      isActive: true
+    });
+    const response = await request('/staff-leaves', {
+      role: 'teacher',
+      userId: 'stale-teacher'
+    });
+    assert.equal(response.status, 401);
+  });
+
+  await t.test('rejects a deactivated account', async () => {
+    authAccounts.set('inactive-teacher', {
+      id: 'inactive-teacher',
+      role: 'teacher',
+      teacherId: 'inactive-teacher',
+      authVersion: 1,
+      isActive: false
+    });
+    const response = await request('/staff-leaves', {
+      role: 'teacher',
+      userId: 'inactive-teacher'
+    });
+    assert.equal(response.status, 401);
+  });
+});
+
+test('teachers cannot create, edit, or delete timetable slots', async (t) => {
+  const cases = [
+    { path: '/timetable', method: 'POST', body: { class: 'JSS 1' } },
+    { path: '/timetable/slot-1', method: 'PUT', body: { class: 'JSS 1' } },
+    { path: '/timetable/slot-1', method: 'DELETE' }
+  ];
+  for (const route of cases) {
+    await t.test(`${route.method} ${route.path}`, async () => {
+      const response = await request(route.path, { ...route, role: 'teacher' });
+      assert.equal(response.status, 403);
+    });
+  }
+});
+
+test('teachers cannot reschedule another teacher’s timetable slot', async () => {
+  const originalGetTeacher = backendStore.getTeacherDirectoryRecord;
+  const originalGetSlot = backendStore.getTimetableSlotById;
+  let rescheduleCalled = false;
+  const originalReschedule = backendStore.rescheduleTeacherSlot;
+  backendStore.getTeacherDirectoryRecord = async (id) => ({
+    id,
+    name: 'Current Teacher',
+    assignedClasses: [{ class: 'JSS 1', subject: 'Mathematics' }]
+  });
+  backendStore.getTimetableSlotById = async () => ({
+    id: 'slot-1',
+    class: 'JSS 1',
+    subject: 'Mathematics',
+    type: 'lesson',
+    teacherId: 'another-teacher',
+    teacherName: 'Another Teacher'
+  });
+  backendStore.rescheduleTeacherSlot = async () => {
+    rescheduleCalled = true;
+    return { success: true };
+  };
+  try {
+    const response = await request('/timetable/reschedule', {
+      role: 'teacher',
+      method: 'POST',
+      body: {
+        slotId: 'slot-1',
+        targetDay: 'Tuesday',
+        targetStartTime: '10:00',
+        targetEndTime: '11:00'
+      }
+    });
+    assert.equal(response.status, 403);
+    assert.equal(rescheduleCalled, false);
+  } finally {
+    backendStore.getTeacherDirectoryRecord = originalGetTeacher;
+    backendStore.getTimetableSlotById = originalGetSlot;
+    backendStore.rescheduleTeacherSlot = originalReschedule;
+  }
+});
+
+test('teachers can reschedule their own assigned timetable lesson', async () => {
+  const originalGetTeacher = backendStore.getTeacherDirectoryRecord;
+  const originalGetSlot = backendStore.getTimetableSlotById;
+  const originalReschedule = backendStore.rescheduleTeacherSlot;
+  let rescheduleArgs;
+  backendStore.getTeacherDirectoryRecord = async (id) => ({
+    id,
+    name: 'Current Teacher',
+    assignedClasses: [{ class: 'JSS 1', subject: 'Mathematics' }]
+  });
+  backendStore.getTimetableSlotById = async () => ({
+    id: 'slot-1',
+    class: 'JSS 1',
+    subject: 'Mathematics',
+    type: 'lesson',
+    teacherId: 'test-teacher',
+    teacherName: 'Current Teacher'
+  });
+  backendStore.rescheduleTeacherSlot = async (...args) => {
+    rescheduleArgs = args;
+    return { success: true };
+  };
+  try {
+    const response = await request('/timetable/reschedule', {
+      role: 'teacher',
+      method: 'POST',
+      body: {
+        slotId: 'slot-1',
+        targetDay: 'Tuesday',
+        targetStartTime: '10:00',
+        targetEndTime: '11:00',
+        actorTeacherName: 'Forged Name'
+      }
+    });
+    assert.equal(response.status, 200);
+    assert.equal(rescheduleArgs[4], 'Current Teacher');
+    assert.equal(rescheduleArgs[5], 'test-teacher');
+  } finally {
+    backendStore.getTeacherDirectoryRecord = originalGetTeacher;
+    backendStore.getTimetableSlotById = originalGetSlot;
+    backendStore.rescheduleTeacherSlot = originalReschedule;
+  }
+});
+
+test('teachers may only update and delete announcements they created', async (t) => {
+  const originalGetAnnouncement = backendStore.getAnnouncementById;
+  const originalUpdate = backendStore.updateAnnouncement;
+  const originalDelete = backendStore.deleteAnnouncement;
+  let receivedPatch;
+  backendStore.getAnnouncementById = async () => ({
+    id: 'announcement-1',
+    creatorId: 'another-teacher'
+  });
+  backendStore.updateAnnouncement = async (_id, patch) => {
+    receivedPatch = patch;
+    return { id: 'announcement-1' };
+  };
+  backendStore.deleteAnnouncement = async () => true;
+  try {
+    await t.test('cannot update another teacher’s announcement', async () => {
+      const response = await request('/announcements/announcement-1', {
+        role: 'teacher',
+        method: 'PUT',
+        body: { title: 'Forged change' }
+      });
+      assert.equal(response.status, 403);
+    });
+    await t.test('cannot delete another teacher’s announcement', async () => {
+      const response = await request('/announcements/announcement-1', {
+        role: 'teacher',
+        method: 'DELETE'
+      });
+      assert.equal(response.status, 403);
+    });
+
+    backendStore.getAnnouncementById = async () => ({
+      id: 'announcement-1',
+      creatorId: 'test-teacher'
+    });
+    await t.test('cannot change ownership metadata on own announcement', async () => {
+      const response = await request('/announcements/announcement-1', {
+        role: 'teacher',
+        method: 'PUT',
+        body: {
+          title: 'Updated title',
+          creatorId: 'another-teacher',
+          authorRole: 'School Administration'
+        }
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(receivedPatch, { title: 'Updated title' });
+    });
+  } finally {
+    backendStore.getAnnouncementById = originalGetAnnouncement;
+    backendStore.updateAnnouncement = originalUpdate;
+    backendStore.deleteAnnouncement = originalDelete;
+  }
+});
+
+test('teacher announcement creation uses trusted creator identity', async () => {
+  const originalGetTeacher = backendStore.getTeacherDirectoryRecord;
+  const originalAddAnnouncement = backendStore.addAnnouncement;
+  let createdInput;
+  backendStore.getTeacherDirectoryRecord = async (id) => ({
+    id,
+    name: 'Current Teacher'
+  });
+  backendStore.addAnnouncement = async (input) => {
+    createdInput = input;
+    return { id: 'new-announcement' };
+  };
+  try {
+    const response = await request('/announcements', {
+      role: 'teacher',
+      method: 'POST',
+      body: {
+        title: 'Class update',
+        content: 'Test',
+        author: 'Forged Author',
+        authorRole: 'Admin',
+        creatorId: 'another-teacher',
+        isPinned: true
+      }
+    });
+    assert.equal(response.status, 201);
+    assert.equal(createdInput.author, 'Current Teacher');
+    assert.equal(createdInput.authorRole, 'Teaching Staff');
+    assert.equal(createdInput.creatorId, 'test-teacher');
+    assert.equal(createdInput.isPinned, false);
+  } finally {
+    backendStore.getTeacherDirectoryRecord = originalGetTeacher;
+    backendStore.addAnnouncement = originalAddAnnouncement;
+  }
 });

@@ -775,12 +775,7 @@ export const backendStore = {
     }
 
     if (!user || !verifyPassword(password, user.password_hash)) return null;
-    const { password_hash: _ignored, student_id, teacher_id, ...safeUser } = user;
-    return {
-      ...safeUser,
-      studentId: student_id || undefined,
-      teacherId: teacher_id || undefined
-    };
+    return this.getCurrentAuthAccountFromDatabase(user.id);
   },
 
   async isEmailTakenInDatabase(email: string, linkedId?: string) {
@@ -815,7 +810,7 @@ export const backendStore = {
     const linkedColumn = studentId ? 'student_id' : 'teacher_id';
     const linkedValue = studentId || teacherId || '';
     const [{ data: linkedUser, error: linkedError }, taken] = await Promise.all([
-      client.from('portal_users').select('id').eq(linkedColumn, linkedValue).maybeSingle(),
+      client.from('portal_users').select('id,auth_version').eq(linkedColumn, linkedValue).maybeSingle(),
       this.isEmailTakenInDatabase(cleanEmail)
     ]);
     if (linkedError) throw linkedError;
@@ -841,6 +836,7 @@ export const backendStore = {
       student_id: studentId || '',
       teacher_id: teacherId || '',
       password_hash: hashPassword(rawPassword),
+      auth_version: linkedUser ? Number(linkedUser.auth_version || 1) + 1 : 1,
       updated_at: new Date().toISOString()
     };
     const { error } = await client.from('portal_users').upsert(userRecord, { onConflict: 'id' });
@@ -879,8 +875,17 @@ export const backendStore = {
       if (owner?.id !== linkedUser.id) return { error: `An account with email "${cleanEmail}" already exists.` };
     }
 
+    const { data: account, error: accountError } = await client.from('portal_users')
+      .select('auth_version')
+      .eq('id', linkedUser.id)
+      .single();
+    if (accountError) throw accountError;
     const { error } = await client.from('portal_users')
-      .update({ email: cleanEmail, name: String(name || '').trim() })
+      .update({
+        email: cleanEmail,
+        name: String(name || '').trim(),
+        auth_version: Number(account.auth_version || 1) + 1
+      })
       .eq('id', linkedUser.id);
     if (error) throw error;
     return null;
@@ -904,6 +909,64 @@ export const backendStore = {
       avatarUrl: data.avatar_url || '',
       createdAt: data.created_at
     };
+  },
+
+  async getCurrentAuthAccountFromDatabase(id: string) {
+    const client = requireServerSupabase();
+    const { data, error } = await client.from('portal_users')
+      .select('id,email,name,role,student_id,teacher_id,auth_version,is_active')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data || !data.is_active) return null;
+
+    if (data.role === 'teacher') {
+      if (!data.teacher_id) return null;
+      const { data: teacher, error: teacherError } = await client.from('teachers')
+        .select('status')
+        .eq('id', data.teacher_id)
+        .maybeSingle();
+      if (teacherError) throw teacherError;
+      if (!teacher || String(teacher.status || '').toLowerCase() !== 'active') return null;
+    } else if (data.role === 'student') {
+      if (!data.student_id) return null;
+      const { data: student, error: studentError } = await client.from('students')
+        .select('status')
+        .eq('id', data.student_id)
+        .maybeSingle();
+      if (studentError) throw studentError;
+      if (!student || String(student.status || '').toLowerCase() !== 'active') return null;
+    }
+
+    return {
+      id: data.id,
+      email: data.email,
+      name: data.name,
+      role: data.role,
+      studentId: data.student_id || undefined,
+      teacherId: data.teacher_id || undefined,
+      authVersion: Number(data.auth_version || 1),
+      isActive: true
+    };
+  },
+
+  async syncPortalAccountStatus(role: 'teacher' | 'student', entityId: string, isActive: boolean) {
+    const linkedColumn = role === 'teacher' ? 'teacher_id' : 'student_id';
+    const client = requireServerSupabase();
+    const { data: account, error: lookupError } = await client.from('portal_users')
+      .select('id,is_active,auth_version')
+      .eq(linkedColumn, entityId)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!account || account.is_active === isActive) return;
+    const { error } = await client.from('portal_users')
+      .update({
+        is_active: isActive,
+        auth_version: Number(account.auth_version || 1) + 1,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', account.id);
+    if (error) throw error;
   },
 
   async updateUserAvatarInDatabase(userId: string, avatarUrl: string) {
@@ -1390,6 +1453,9 @@ export const backendStore = {
         return emailUpdate;
       }
     }
+    if (String(merged.status || '').toLowerCase() !== String(existing.status || '').toLowerCase()) {
+      await this.syncPortalAccountStatus('student', id, String(merged.status || '').toLowerCase() === 'active');
+    }
     broadcastChange('students', 'updated');
     return mapStudentRow(data);
   },
@@ -1605,6 +1671,9 @@ export const backendStore = {
         return emailUpdate;
       }
     }
+    if (String(merged.status || '').toLowerCase() !== String(existing.status || '').toLowerCase()) {
+      await this.syncPortalAccountStatus('teacher', id, String(merged.status || '').toLowerCase() === 'active');
+    }
     broadcastChange('teachers', 'updated');
     return mapTeacherRow(data);
   },
@@ -1706,6 +1775,16 @@ export const backendStore = {
     return mapDatabaseRows(data);
   },
 
+  async getTimetableSlotById(id: string) {
+    const { data, error } = await requireServerSupabase()
+      .from('timetable_slots')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? mapDatabaseRow(data) : null;
+  },
+
   async addTimetableSlot(slotData: any) {
     const defaultCls = await this.getDefaultClassName();
     const newSlot = {
@@ -1756,11 +1835,29 @@ export const backendStore = {
     targetDay: string,
     targetStartTime: string,
     targetEndTime: string,
-    actorTeacherName: string
+    actorTeacherName: string,
+    actorTeacherId?: string
   ) {
     const allSlots = await this.getTimetableSlots();
     const targetSlot = allSlots.find((s) => s.id === slotId);
     if (!targetSlot) return { success: false, message: 'Class period not found.' };
+    if (targetSlot.type !== 'lesson') {
+      return { success: false, message: 'Only lesson periods can be rescheduled.' };
+    }
+
+    let actorTeacher: any = null;
+    if (actorTeacherId) {
+      actorTeacher = await this.getTeacherDirectoryRecord(actorTeacherId);
+      const ownsSlot = targetSlot.teacherId === actorTeacherId;
+      const assigned = (actorTeacher?.assignedClasses || []).some(
+        (assignment: any) =>
+          assignment.class === targetSlot.class &&
+          assignment.subject === targetSlot.subject
+      );
+      if (!actorTeacher || !ownsSlot || !assigned) {
+        return { success: false, message: 'You can only reschedule your own lessons for assigned classes and subjects.' };
+      }
+    }
 
     const fixedBlock = allSlots.find(
       (s) =>
@@ -1790,6 +1887,12 @@ export const backendStore = {
         s.type === 'lesson' &&
         slotsOverlap(s.startTime, s.endTime, targetStartTime, targetEndTime)
     );
+    if (actorTeacherId && occupiedLesson) {
+      const ownsOccupiedSlot = occupiedLesson.teacherId === actorTeacherId;
+      if (!ownsOccupiedSlot) {
+        return { success: false, message: 'This time overlaps another teacher’s lesson. Choose a free time.' };
+      }
+    }
 
     const changedSlots: any[] = [];
     const affectedTeacher = occupiedLesson ? occupiedLesson.teacherName : null;
@@ -2663,6 +2766,7 @@ export const backendStore = {
     audience?: string;
     scope?: string;
     role?: string;
+    userId?: string;
     classes?: string[];
     page?: number;
     limit?: number;
@@ -2693,7 +2797,7 @@ export const backendStore = {
       orGroups.push(jsonArrayContainsFilter('target_audiences', ['Everyone', options.audience]));
     }
     if (options?.scope === 'admin') query = query.neq('author_role', 'Teaching Staff');
-    if (options?.scope === 'mine') query = query.eq('author_role', 'Teaching Staff');
+    if (options?.scope === 'mine') query = query.eq('creator_id', options.userId || '');
     if (orGroups.length === 1) {
       query = query.or(orGroups[0]);
     } else if (orGroups.length > 1) {
@@ -2705,6 +2809,7 @@ export const backendStore = {
     if (error) throw error;
     const records = (data || []).map((row) => ({
       ...mapDatabaseRow(row),
+      creatorId: row.creator_id || '',
       targetAudiences: row.target_audiences || ['Everyone']
     }));
     return page ? {
@@ -2735,6 +2840,7 @@ export const backendStore = {
       priority: newAnn.priority || 'medium',
       author: newAnn.author || '',
       author_role: newAnn.authorRole || '',
+      creator_id: newAnn.creatorId || '',
       date: newAnn.date,
       event_date: newAnn.eventDate || '',
       event_time: newAnn.eventTime || '',
@@ -2747,7 +2853,24 @@ export const backendStore = {
     }).select('*').single();
     if (error) throw error;
     broadcastChange('announcements', 'created');
-    return { ...mapDatabaseRow(row), targetAudiences: row.target_audiences || ['Everyone'] };
+    return {
+      ...mapDatabaseRow(row),
+      creatorId: row.creator_id || '',
+      targetAudiences: row.target_audiences || ['Everyone']
+    };
+  },
+
+  async getAnnouncementById(id: string) {
+    const { data, error } = await requireServerSupabase().from('announcements')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? {
+      ...mapDatabaseRow(data),
+      creatorId: data.creator_id || '',
+      targetAudiences: data.target_audiences || ['Everyone']
+    } : null;
   },
 
   async updateAnnouncement(id: string, patch: any) {
@@ -2761,7 +2884,11 @@ export const backendStore = {
     if (error) throw error;
     if (!data) return null;
     broadcastChange('announcements', 'updated');
-    return { ...mapDatabaseRow(data), targetAudiences: data.target_audiences || ['Everyone'] };
+    return {
+      ...mapDatabaseRow(data),
+      creatorId: data.creator_id || '',
+      targetAudiences: data.target_audiences || ['Everyone']
+    };
   },
 
   async deleteAnnouncement(id: string) {
@@ -3325,8 +3452,18 @@ export const backendStore = {
       return { error: 'Invalid or expired OTP verification code.' };
     }
 
-    const { error } = await requireServerSupabase().from('portal_users')
-      .update({ password_hash: hashPassword(cleanPassword), updated_at: new Date().toISOString() })
+    const client = requireServerSupabase();
+    const { data: account, error: accountError } = await client.from('portal_users')
+      .select('auth_version')
+      .eq('id', user.id)
+      .single();
+    if (accountError) throw accountError;
+    const { error } = await client.from('portal_users')
+      .update({
+        password_hash: hashPassword(cleanPassword),
+        auth_version: Number(account.auth_version || 1) + 1,
+        updated_at: new Date().toISOString()
+      })
       .eq('id', user.id);
     if (error) throw error;
     passwordResetOtps.delete(user.email.toLowerCase());
