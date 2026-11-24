@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import express, { type Request, type Response } from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
@@ -19,6 +20,20 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+let backendInitialization: Promise<void> | null = null;
+
+export async function initializeBackend() {
+  if (!backendInitialization) {
+    backendInitialization = (async () => {
+      if (!isServerSupabaseConfigured) {
+        throw new Error('SUPABASE_URL and SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_ROLE_KEY) are required.');
+      }
+      await backendStore.ensureInitialAdmin();
+    })();
+  }
+  return backendInitialization;
+}
+
 app.get('/api/openapi.json', (_req: Request, res: Response) => {
   res.json(openApiSpec);
 });
@@ -33,6 +48,18 @@ app.use(
     }
   })
 );
+
+app.use('/api', async (_req: Request, res: Response, next) => {
+  try {
+    await initializeBackend();
+    next();
+  } catch (error) {
+    console.error('[Al-Amin API] Backend initialization failed:', error);
+    res.status(503).json({
+      error: 'The backend is not configured or the database is unavailable.'
+    });
+  }
+});
 
 app.use('/api', apiRouter);
 
@@ -52,10 +79,7 @@ app.use('/api', (_req: Request, res: Response) => {
 });
 
 async function startServer() {
-  if (!isServerSupabaseConfigured) {
-    throw new Error('SUPABASE_URL and SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_ROLE_KEY) are required.');
-  }
-  await backendStore.ensureInitialAdmin();
+  await initializeBackend();
 
   if (!isProduction && process.env.API_ONLY !== 'true') {
     const { createServer: createViteServer } = await import('vite');
@@ -81,6 +105,15 @@ async function startServer() {
   });
 }
 
-startServer();
+const isDirectExecution =
+  Boolean(process.argv[1]) &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isDirectExecution) {
+  startServer().catch((error) => {
+    console.error('[Al-Amin Backend API] Failed to start:', error);
+    process.exitCode = 1;
+  });
+}
 
 export default app;
