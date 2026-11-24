@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
-import { SearchInput } from '../../../shared/components/SearchInput/SearchInput';
-import { Modal } from '../../../shared/components/Modal/Modal';
-import { TableActions } from '../../../shared/components/TableActions/TableActions';
-import { Pagination } from '../../../shared/components/Pagination/Pagination';
-import { ProfileAvatar } from '../../../shared/components/ProfileAvatar/ProfileAvatar';
+import React, { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
+import { SearchInput } from "../../../shared/components/SearchInput/SearchInput";
+import { Modal } from "../../../shared/components/Modal/Modal";
+import { TableActions } from "../../../shared/components/TableActions/TableActions";
+import { Pagination } from "../../../shared/components/Pagination/Pagination";
+import { ProfileAvatar } from "../../../shared/components/ProfileAvatar/ProfileAvatar";
 import {
   UserPlus,
   Eye,
@@ -14,14 +14,27 @@ import {
   AlertTriangle,
   KeyRound,
   Copy,
-  Check
-} from 'lucide-react';
-import { schoolStore, SCHOOL_CLASSES, subscribeSchoolSync } from '../../../shared/data/schoolData';
+  Check,
+} from "lucide-react";
+import {
+  schoolStore,
+  SCHOOL_CLASSES,
+  subscribeSchoolSync,
+} from "../../../shared/data/schoolData";
+import { formatDate } from "../../../shared/utils/helpers";
+
+function formatStudentDate(value) {
+  if (!value) return "-";
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? new Date(`${value}T00:00:00`)
+    : new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : formatDate(date);
+}
 
 export function StudentManagement() {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [selectedClass, setSelectedClass] = useState('all');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [selectedClass, setSelectedClass] = useState("all");
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentToDelete, setStudentToDelete] = useState(null);
   const [studentsList, setStudentsList] = useState([]);
@@ -30,11 +43,11 @@ export function StudentManagement() {
   const [isLoading, setIsLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
-  const [resetPasswordInput, setResetPasswordInput] = useState('');
+  const [resetPasswordInput, setResetPasswordInput] = useState("");
   const [showResetPassword, setShowResetPassword] = useState(false);
   const [isResettingCreds, setIsResettingCreds] = useState(false);
   const [resetResult, setResetResult] = useState(null);
-  const [copiedField, setCopiedField] = useState('');
+  const [copiedField, setCopiedField] = useState("");
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -54,7 +67,7 @@ export function StudentManagement() {
         page: currentPage,
         limit: pageSize,
         search: debouncedSearch,
-        class: selectedClass
+        class: selectedClass,
       });
       if (res && res.data) {
         setStudentsList(res.data);
@@ -67,7 +80,7 @@ export function StudentManagement() {
         setTotalStudents(res.length);
       }
     } catch (err) {
-      console.error('Failed to load students:', err);
+      console.error("Failed to load students:", err);
     } finally {
       setIsLoading(false);
     }
@@ -79,7 +92,7 @@ export function StudentManagement() {
 
   useEffect(() => {
     return subscribeSchoolSync((topic) => {
-      if (topic === 'students' || !topic) {
+      if (topic === "students" || !topic) {
         loadStudents();
       }
     });
@@ -99,7 +112,7 @@ export function StudentManagement() {
     if (!value || !navigator?.clipboard) return;
     navigator.clipboard.writeText(value);
     setCopiedField(label);
-    setTimeout(() => setCopiedField(''), 1800);
+    setTimeout(() => setCopiedField(""), 1800);
   };
 
   const handleResetStudentPassword = async (e) => {
@@ -107,19 +120,27 @@ export function StudentManagement() {
     if (!selectedStudent) return;
     const trimmed = resetPasswordInput.trim();
     if (trimmed && trimmed.length < 6) {
-      setResetResult({ error: 'Password must be at least 6 characters (or leave blank to auto-generate).' });
+      setResetResult({
+        error:
+          "Password must be at least 6 characters (or leave blank to auto-generate).",
+      });
       return;
     }
     setIsResettingCreds(true);
     setResetResult(null);
     try {
-      const result = await schoolStore.resetStudentCredentials(selectedStudent.id, {
-        ...(trimmed ? { password: trimmed } : {})
-      });
+      const result = await schoolStore.resetStudentCredentials(
+        selectedStudent.id,
+        {
+          ...(trimmed ? { password: trimmed } : {}),
+        },
+      );
       setResetResult({ credentials: result.credentials });
-      setResetPasswordInput('');
+      setResetPasswordInput("");
     } catch (err) {
-      setResetResult({ error: err?.message || 'Unable to reset student portal password.' });
+      setResetResult({
+        error: err?.message || "Unable to reset student portal password.",
+      });
     } finally {
       setIsResettingCreds(false);
     }
@@ -156,18 +177,19 @@ export function StudentManagement() {
             <button
               type="button"
               key={cls}
-              onClick={() => setSelectedClass(isSelected ? 'all' : cls)}
+              onClick={() => setSelectedClass(isSelected ? "all" : cls)}
               className={`p-3 rounded-lg border text-left transition-all cursor-pointer ${
                 isSelected
-                  ? 'bg-[#616218] text-white border-[#616218] shadow-xs'
-                  : 'bg-white text-[#1c1c14] border-[#c9c7b6] hover:bg-[#faf8f0]'
+                  ? "bg-[#616218] text-white border-[#616218] shadow-xs"
+                  : "bg-white text-[#1c1c14] border-[#c9c7b6] hover:bg-[#faf8f0]"
               }`}
             >
               <div className="text-[11px] font-semibold opacity-80 uppercase tracking-wide">
                 {cls}
               </div>
               <div className="text-xl font-bold mt-0.5 tabular-nums">
-                {count} <span className="text-xs font-normal opacity-75">students</span>
+                {count}{" "}
+                <span className="text-xs font-normal opacity-75">students</span>
               </div>
             </button>
           );
@@ -181,7 +203,7 @@ export function StudentManagement() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search by student name, admission number, state, or parent name..."
-              onClear={() => setSearchTerm('')}
+              onClear={() => setSearchTerm("")}
             />
           </div>
           <div className="w-full sm:w-56 shrink-0">
@@ -236,13 +258,20 @@ export function StudentManagement() {
                 </tr>
               ) : (
                 studentsList.map((student) => (
-                  <tr key={student.id} className="hover:bg-[#fbf9f1] transition-colors">
+                  <tr
+                    key={student.id}
+                    className="hover:bg-[#fbf9f1] transition-colors"
+                  >
                     <td className="py-3.5 px-5 font-mono font-bold text-xs text-[#616218]">
                       {student.admissionNumber}
                     </td>
                     <td className="py-3.5 px-4 font-semibold text-[#1c1c14]">
                       <div className="flex items-center gap-2.5">
-                        <ProfileAvatar src={student.avatarUrl} name={student.name} size="sm" />
+                        <ProfileAvatar
+                          src={student.avatarUrl}
+                          name={student.name}
+                          size="sm"
+                        />
                         <span>{student.name}</span>
                       </div>
                     </td>
@@ -261,27 +290,27 @@ export function StudentManagement() {
                       <TableActions
                         actions={[
                           {
-                            label: 'View Profile',
+                            label: "View Profile",
                             icon: Eye,
                             onClick: () => {
                               setResetResult(null);
-                              setResetPasswordInput('');
+                              setResetPasswordInput("");
                               setSelectedStudent(student);
-                            }
+                            },
                           },
                           {
-                            label: 'Attendance Record',
-                            to: `/admin/attendance?student=${student.id}`
+                            label: "Attendance Record",
+                            to: `/admin/attendance?student=${student.id}`,
                           },
                           {
-                            label: 'Report Card',
-                            to: `/admin/reports?student=${student.id}`
+                            label: "Report Card",
+                            to: `/admin/reports?student=${student.id}`,
                           },
                           {
-                            label: 'Remove Student',
+                            label: "Remove Student",
                             onClick: () => setStudentToDelete(student),
-                            danger: true
-                          }
+                            danger: true,
+                          },
                         ]}
                       />
                     </td>
@@ -306,7 +335,7 @@ export function StudentManagement() {
         isOpen={!!selectedStudent}
         onClose={() => setSelectedStudent(null)}
         title="Student Profile"
-        subtitle={selectedStudent ? (selectedStudent.name || '') : ''}
+        subtitle={selectedStudent ? selectedStudent.name || "" : ""}
         size="md"
         footer={
           selectedStudent && (
@@ -339,9 +368,15 @@ export function StudentManagement() {
         {selectedStudent && (
           <div className="space-y-6 text-sm">
             <div className="flex items-center gap-4 p-4 bg-[#faf8f0] rounded-xl border border-[#c9c7b6]/70">
-              <ProfileAvatar src={selectedStudent.avatarUrl} name={selectedStudent.name || 'Student'} size="lg" />
+              <ProfileAvatar
+                src={selectedStudent.avatarUrl}
+                name={selectedStudent.name || "Student"}
+                size="lg"
+              />
               <div className="min-w-0">
-                <h3 className="font-bold text-base text-[#1c1c14]">{selectedStudent.name || 'Student Profile'}</h3>
+                <h3 className="font-bold text-base text-[#1c1c14]">
+                  {selectedStudent.name || "Student Profile"}
+                </h3>
                 <p className="text-xs text-[#797869] mt-0.5">Active Student</p>
               </div>
             </div>
@@ -353,43 +388,76 @@ export function StudentManagement() {
                 </span>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <span className="text-[#797869] block">Admission Number</span>
-                    <span className="font-mono font-bold text-[#616218]">{selectedStudent.admissionNumber}</span>
+                    <span className="text-[#797869] block">
+                      Admission Number
+                    </span>
+                    <span className="font-mono font-bold text-[#616218]">
+                      {selectedStudent.admissionNumber}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Class</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.class}</span>
+                    <span className="font-semibold text-[#1c1c14]">
+                      {selectedStudent.class}
+                    </span>
                   </div>
                   {selectedStudent.department && (
                     <div>
                       <span className="text-[#797869] block">Department</span>
-                      <span className="font-semibold text-[#1c1c14]">{selectedStudent.department}</span>
+                      <span className="font-semibold text-[#1c1c14]">
+                        {selectedStudent.department}
+                      </span>
                     </div>
                   )}
                   <div>
-                    <span className="text-[#797869] block">Enrollment Date</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.enrollmentDate || '-'}</span>
+                    <span className="text-[#797869] block">
+                      Enrollment Date
+                    </span>
+                    <span className="font-semibold text-[#1c1c14]">
+                      {formatStudentDate(
+                        selectedStudent.enrollmentDate ||
+                          selectedStudent.createdAt,
+                      )}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Gender</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.gender || '-'}</span>
+                    <span className="font-semibold text-[#1c1c14]">
+                      {selectedStudent.gender || "-"}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Date of Birth</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.dateOfBirth || '-'}</span>
+                    <span className="font-semibold text-[#1c1c14]">
+                      {formatStudentDate(
+                        selectedStudent.dateOfBirth || selectedStudent.dob,
+                      )}
+                    </span>
                   </div>
                   <div>
-                    <span className="text-[#797869] block">State of Origin</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.stateOfOrigin || '-'}</span>
+                    <span className="text-[#797869] block">
+                      State of Origin
+                    </span>
+                    <span className="font-semibold text-[#1c1c14]">
+                      {selectedStudent.stateOfOrigin || "-"}
+                    </span>
                   </div>
                   <div>
-                    <span className="text-[#797869] block">Local Government Area</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.lga || '-'}</span>
+                    <span className="text-[#797869] block">
+                      Local Government Area
+                    </span>
+                    <span className="font-semibold text-[#1c1c14]">
+                      {selectedStudent.lga || "-"}
+                    </span>
                   </div>
                 </div>
                 <div className="pt-1">
-                  <span className="text-[#797869] block">Residential Address</span>
-                  <span className="font-semibold text-[#1c1c14]">{selectedStudent.address || '-'}</span>
+                  <span className="text-[#797869] block">
+                    Residential Address
+                  </span>
+                  <span className="font-semibold text-[#1c1c14]">
+                    {selectedStudent.address || "-"}
+                  </span>
                 </div>
               </div>
 
@@ -400,19 +468,27 @@ export function StudentManagement() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <span className="text-[#797869] block">Guardian Name</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentName || '-'}</span>
+                    <span className="font-semibold text-[#1c1c14]">
+                      {selectedStudent.parentName || "-"}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Contact Phone</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentPhone || '-'}</span>
+                    <span className="font-semibold text-[#1c1c14]">
+                      {selectedStudent.parentPhone || "-"}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Email Address</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentEmail || '-'}</span>
+                    <span className="font-semibold text-[#1c1c14]">
+                      {selectedStudent.parentEmail || "-"}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[#797869] block">Occupation</span>
-                    <span className="font-semibold text-[#1c1c14]">{selectedStudent.parentOccupation || '-'}</span>
+                    <span className="font-semibold text-[#1c1c14]">
+                      {selectedStudent.parentOccupation || "-"}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -433,7 +509,10 @@ export function StudentManagement() {
                 </div>
               </div>
 
-              <form onSubmit={handleResetStudentPassword} className="p-4 bg-[#faf8f0] rounded-xl border border-[#c9c7b6]/70 space-y-3 text-xs">
+              <form
+                onSubmit={handleResetStudentPassword}
+                className="p-4 bg-[#faf8f0] rounded-xl border border-[#c9c7b6]/70 space-y-3 text-xs"
+              >
                 <div className="flex items-center gap-2 border-b border-[#c9c7b6]/40 pb-2">
                   <KeyRound className="w-4 h-4 text-[#616218]" />
                   <span className="font-bold text-[#616218] uppercase tracking-wider text-[11px]">
@@ -441,15 +520,25 @@ export function StudentManagement() {
                   </span>
                 </div>
                 <p className="text-[11px] text-[#797869]">
-                  Student signs in with Admission No. <strong className="font-mono text-[#1c1c14]">{selectedStudent.admissionNumber}</strong>
+                  Student signs in with Admission No.{" "}
+                  <strong className="font-mono text-[#1c1c14]">
+                    {selectedStudent.admissionNumber}
+                  </strong>
                   {selectedStudent.email ? (
-                    <> or Portal Email <strong className="text-[#1c1c14]">{selectedStudent.email}</strong></>
-                  ) : null}.
+                    <>
+                      {" "}
+                      or Portal Email{" "}
+                      <strong className="text-[#1c1c14]">
+                        {selectedStudent.email}
+                      </strong>
+                    </>
+                  ) : null}
+                  .
                 </p>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <div className="relative flex-1">
                     <input
-                      type={showResetPassword ? 'text' : 'password'}
+                      type={showResetPassword ? "text" : "password"}
                       value={resetPasswordInput}
                       onChange={(e) => setResetPasswordInput(e.target.value)}
                       placeholder="New password (leave blank to auto-generate)"
@@ -460,7 +549,11 @@ export function StudentManagement() {
                       onClick={() => setShowResetPassword((v) => !v)}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#797869] hover:text-[#1c1c14] cursor-pointer"
                     >
-                      {showResetPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      {showResetPassword ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
                     </button>
                   </div>
                   <button
@@ -468,12 +561,14 @@ export function StudentManagement() {
                     disabled={isResettingCreds}
                     className="inline-flex items-center justify-center h-9 px-3.5 rounded-lg bg-[#616218] hover:bg-[#494900] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-60"
                   >
-                    {isResettingCreds ? 'Updating...' : 'Reset Password'}
+                    {isResettingCreds ? "Updating..." : "Reset Password"}
                   </button>
                 </div>
 
                 {resetResult?.error && (
-                  <p className="text-[11px] text-rose-700 font-medium">{resetResult.error}</p>
+                  <p className="text-[11px] text-rose-700 font-medium">
+                    {resetResult.error}
+                  </p>
                 )}
 
                 {resetResult?.credentials && (
@@ -482,23 +577,45 @@ export function StudentManagement() {
                       Updated Portal Credentials
                     </div>
                     <div className="flex items-center justify-between text-xs">
-                      <span>Email: <strong>{resetResult.credentials.email}</strong></span>
+                      <span>
+                        Email: <strong>{resetResult.credentials.email}</strong>
+                      </span>
                       <button
                         type="button"
-                        onClick={() => handleCopy(resetResult.credentials.email, 'stu-email')}
+                        onClick={() =>
+                          handleCopy(resetResult.credentials.email, "stu-email")
+                        }
                         className="text-emerald-700 hover:text-emerald-900 cursor-pointer"
                       >
-                        {copiedField === 'stu-email' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedField === "stu-email" ? (
+                          <Check className="w-3.5 h-3.5" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
                       </button>
                     </div>
                     <div className="flex items-center justify-between text-xs">
-                      <span>Temporary Password: <strong className="font-mono">{resetResult.credentials.temporaryPassword}</strong></span>
+                      <span>
+                        Temporary Password:{" "}
+                        <strong className="font-mono">
+                          {resetResult.credentials.temporaryPassword}
+                        </strong>
+                      </span>
                       <button
                         type="button"
-                        onClick={() => handleCopy(resetResult.credentials.temporaryPassword, 'stu-pass')}
+                        onClick={() =>
+                          handleCopy(
+                            resetResult.credentials.temporaryPassword,
+                            "stu-pass",
+                          )
+                        }
                         className="text-emerald-700 hover:text-emerald-900 cursor-pointer"
                       >
-                        {copiedField === 'stu-pass' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedField === "stu-pass" ? (
+                          <Check className="w-3.5 h-3.5" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
                       </button>
                     </div>
                   </div>
@@ -543,7 +660,9 @@ export function StudentManagement() {
                 Remove {studentToDelete.name}?
               </p>
               <p>
-                This will remove <strong>{studentToDelete.admissionNumber}</strong> from the school student roster.
+                This will remove{" "}
+                <strong>{studentToDelete.admissionNumber}</strong> from the
+                school student roster.
               </p>
             </div>
           </div>
